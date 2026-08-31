@@ -1,11 +1,11 @@
 ---
 name: adversarial-pre-push-review
-description: Gate a completed feature before push through an independent alternate-model review of its specifications, diff, tests, documentation, and operational risks. Use whenever feature changes are ready to be pushed.
+description: Gate any proposed push through an independent alternate-model review of its governing specifications or intent, diff, tests, documentation, and operational risks. Use whenever local commits are ready to be pushed.
 ---
 
 # Adversarial Pre-push Review
 
-Do not push feature changes until this gate passes. The reviewer must use a genuinely different available LLM model from the implementing model. A fresh prompt, context, or agent using the same underlying model does not qualify unless the user explicitly accepts that limitation.
+Do not push changes until this gate passes. This includes feature, maintenance, documentation, policy, agent-instruction, skill, CI, and configuration changes. The reviewer must use a genuinely different available LLM model from the implementing model. A fresh prompt, context, or agent using the same underlying model does not qualify unless the user explicitly accepts that limitation.
 
 The review is read-only. It does not authorize a push, remote mutation, history rewrite, or unrelated change. If an alternate model is unavailable, stop before push and ask the user how to proceed; never self-certify the gate.
 
@@ -13,7 +13,7 @@ The review is read-only. It does not authorize a push, remote mutation, history 
 
 Give the reviewer only the evidence needed to assess the work:
 
-- approved files under `docs/features/<feature-slug>/`;
+- approved files under `docs/features/<feature-slug>/`, or the governing request and repository policy for non-feature work;
 - the complete intended commit range and diff against its base;
 - relevant source, tests, configuration, migrations, and generated artifacts;
 - exact validation commands and their latest results;
@@ -33,7 +33,7 @@ Require findings to include severity, evidence, affected specification/task IDs,
 
 ## Resolve and record
 
-Save the review and disposition to `docs/features/<feature-slug>/reviews/pre-push-review.md`. Record the alternate model identifier, reviewed commit range, review date, validation evidence, each finding, its resolution or user-approved waiver, and the final gate result.
+Save a feature review to `docs/features/<feature-slug>/reviews/pre-push-review.md`. For a push without a feature slug, save it to `docs/reviews/<date>-<change-slug>.md`. Record the alternate model identifier, remote and destination ref, reviewed commit range, review date, validation evidence, each finding, its resolution or user-approved waiver, and the final gate result.
 
 Resolve all critical and high findings. Resolve medium findings unless the user explicitly accepts and documents the risk. Record low findings as fixed, planned with a task ID, or accepted with rationale. Update specifications and the numbered plan if a finding exposes a scope or design gap.
 

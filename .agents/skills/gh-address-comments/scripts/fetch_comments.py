@@ -16,9 +16,11 @@ Usage:
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import urlparse
 
 QUERY = """\
 query(
@@ -93,7 +95,12 @@ query(
 
 
 def _run(cmd: list[str], stdin: str | None = None) -> str:
-    p = subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"Command not found: {cmd[0]}. Install it and ensure it is available on PATH."
+        ) from None
     if p.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{p.stderr}")
     return p.stdout
@@ -108,6 +115,10 @@ def _run_json(cmd: list[str], stdin: str | None = None) -> dict[str, Any]:
 
 
 def _ensure_gh_authenticated() -> None:
+    if shutil.which("gh") is None:
+        raise RuntimeError(
+            "GitHub CLI `gh` was not found. Install it and ensure it is available on PATH."
+        )
     try:
         _run(["gh", "auth", "status"])
     except RuntimeError:
@@ -116,18 +127,20 @@ def _ensure_gh_authenticated() -> None:
 
 
 def gh_pr_view_json(fields: str) -> dict[str, Any]:
-    # fields is a comma-separated list like: "number,headRepositoryOwner,headRepository"
+    # fields is a comma-separated list like: "number,url"
     return _run_json(["gh", "pr", "view", "--json", fields])
 
 
 def get_current_pr_ref() -> tuple[str, str, int]:
     """
     Resolve the PR for the current branch (whatever gh considers associated).
-    Works for cross-repo PRs too, by reading head repository owner/name.
+    The PR URL always names the base repository, including for fork-based PRs.
     """
-    pr = gh_pr_view_json("number,headRepositoryOwner,headRepository")
-    owner = pr["headRepositoryOwner"]["login"]
-    repo = pr["headRepository"]["name"]
+    pr = gh_pr_view_json("number,url")
+    path_parts = [part for part in urlparse(pr["url"]).path.split("/") if part]
+    if len(path_parts) < 4 or path_parts[2] != "pull":
+        raise RuntimeError(f"Unexpected pull request URL returned by gh: {pr['url']}")
+    owner, repo = path_parts[0], path_parts[1]
     number = int(pr["number"])
     return owner, repo, number
 
