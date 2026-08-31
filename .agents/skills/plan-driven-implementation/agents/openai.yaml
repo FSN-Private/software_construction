@@ -1,0 +1,3 @@
+interface:
+  display_name: "Plan-driven Implementation"
+  short_description: "Deliver plans with tests, docs, and milestone commits"

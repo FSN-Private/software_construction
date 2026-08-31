@@ -1,0 +1,3 @@
+interface:
+  display_name: "Adversarial Pre-push Review"
+  short_description: "Independently challenge completed changes before any push"
