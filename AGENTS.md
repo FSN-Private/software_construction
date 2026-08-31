@@ -6,6 +6,11 @@ These instructions apply to the entire repository.
 
 - For every new feature or material behavior change, read and follow `.agents/skills/feature-specification/SKILL.md` before implementation. If complete approved specifications already exist, verify them rather than repeating discovery.
 - For feature implementation, read and follow `.agents/skills/plan-driven-implementation/SKILL.md`. The numbered `implementation-plan.md` is the sole task source of truth.
+- For consequential cross-cutting technical decisions, use `.agents/skills/architecture-decisions/SKILL.md`.
+- For GitHub Actions workflow design or changes, use `.agents/skills/github-actions-ci/SKILL.md`. For an already failing GitHub Actions PR check, use the official `.agents/skills/gh-fix-ci/SKILL.md` instead.
+- For issue, commit, PR, review, and release linkage, use `.agents/skills/github-work-traceability/SKILL.md`. For actionable PR review threads, use the official `.agents/skills/gh-address-comments/SKILL.md`.
+- For dependencies, lockfiles, third-party actions, build plugins, and artifact provenance, use `.agents/skills/dependency-supply-chain-security/SKILL.md`.
+- For releases, deployments, migrations, rollbacks, or production incident follow-up, use `.agents/skills/release-operations/SKILL.md`.
 - Before any feature branch or feature commits are pushed, read and follow `.agents/skills/adversarial-pre-push-review/SKILL.md`.
 - Use these skills automatically when the request matches; the user does not need to name them.
 

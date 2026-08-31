@@ -1,0 +1,3 @@
+interface:
+  display_name: "Architecture Decisions"
+  short_description: "Record consequential architecture decisions as ADRs"

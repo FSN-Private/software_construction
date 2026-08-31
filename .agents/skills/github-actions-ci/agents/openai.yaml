@@ -1,0 +1,3 @@
+interface:
+  display_name: "GitHub Actions CI"
+  short_description: "Design secure, reliable GitHub Actions CI workflows"

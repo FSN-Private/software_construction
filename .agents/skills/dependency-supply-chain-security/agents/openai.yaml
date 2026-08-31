@@ -1,0 +1,3 @@
+interface:
+  display_name: "Dependency Supply-chain Security"
+  short_description: "Review dependencies and software supply-chain risks"

@@ -1,0 +1,3 @@
+interface:
+  display_name: "GitHub Work Traceability"
+  short_description: "Link specs, tasks, commits, issues, and pull requests"
