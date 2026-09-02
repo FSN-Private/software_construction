@@ -14,10 +14,12 @@
 
 ## Phase 2 - Governance and delivery skills
 
-- [ ] T005 Require feature branches in `AGENTS.md`, the constitution, feature specification, planning, and GitHub traceability guidance (`FR-1` through `FR-4`, `AC-1` through `AC-3`).
-- [ ] T006 Implement validity assessment, disposition recording, recursive reviewer agreement, and no-convergence stop conditions in the adversarial-review skill (`FR-5` through `FR-9`, `AC-4`, `AC-5`).
-- [ ] T007 Validate policy consistency and record unit-test applicability (`AC-1` through `AC-5`, `NFR-1` through `NFR-6`).
-- [ ] T008 Commit the completed policy feature from this feature branch (`AC-6`).
+- [x] T005 Require feature branches in `AGENTS.md`, the constitution, feature specification, planning, and GitHub traceability guidance (`FR-1` through `FR-4`, `AC-1` through `AC-3`).
+- [x] T006 Implement validity assessment, disposition recording, recursive reviewer agreement, and no-convergence stop conditions in the adversarial-review skill (`FR-5` through `FR-9`, `AC-4`, `AC-5`).
+- [x] T007 Validate policy consistency and record unit-test applicability (`AC-1` through `AC-5`, `NFR-1` through `NFR-6`).
+  - Validation: reviewed all affected policy documents, confirmed `feature/002-branch-and-review-policy` is active, and ran `git diff --check`.
+  - Unit tests: not applicable; this feature changes repository documentation and workflow instructions only, with no project-owned executable logic.
+- [x] T008 Commit the completed policy feature from this feature branch (`AC-6`).
   - Validation: all checks in `plan.md`; no project-owned executable logic, so unit tests are not applicable.
   - Milestone: Feature-branch and review-convergence policy complete.
 

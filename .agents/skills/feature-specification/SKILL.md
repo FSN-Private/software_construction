@@ -5,7 +5,7 @@ description: Define or complete requirements, design, and non-functional specifi
 
 # Feature Specification
 
-Produce an implementation-ready Spec Kit artifact set under `docs/features/<NNN>-<feature-slug>/`. Before any `$speckit-*` feature command, set `SPECIFY_FEATURE_DIRECTORY` to that directory. Do not begin feature implementation while material product or design decisions remain unresolved, unless the user explicitly authorizes named assumptions.
+Produce an implementation-ready Spec Kit artifact set under `docs/features/<NNN>-<feature-slug>/`. Before creating or updating feature artifacts, confirm a clean worktree and create or switch to the matching `feature/<NNN>-<feature-slug>` branch. Feature work is forbidden on the default branch. Verify and report divergence from the default branch, but do not merge, rebase, or rewrite history without explicit authorization. Before any `$speckit-*` feature command, set `SPECIFY_FEATURE_DIRECTORY` to that directory. Do not begin feature implementation while material product or design decisions remain unresolved, unless the user explicitly authorizes named assumptions.
 
 ## Discover before asking
 
@@ -43,6 +43,7 @@ Before handing off for implementation, verify:
 - non-functional requirements are measurable or explicitly inapplicable;
 - risks, migration, rollout, and rollback are addressed when relevant;
 - every specification item maps to the numbered plan;
+- the current branch is `feature/<NNN>-<feature-slug>` and matches the feature-artifact directory;
 - the user has approved the specifications or clearly authorized proceeding with documented assumptions.
 
 Keep the documents concise and proportional to the feature, but never omit a material decision merely because the feature appears small.

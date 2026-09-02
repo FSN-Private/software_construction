@@ -14,13 +14,13 @@ Each completed task MUST include the code, applicable unit tests, documentation,
 
 Specifications MUST address security, privacy, accessibility, compatibility, performance, reliability, observability, maintainability, testability, deployment, and operations with measurable targets or an explicit inapplicability rationale. New dependencies, build tools, third-party actions, and release tooling MUST use authoritative sources, pinned versions where practical, and documented validation.
 
-### IV. Coherent milestones and documentation
+### IV. Feature branches, coherent milestones, and documentation
 
-Each named milestone MUST end in one or more coherent Git commits after its relevant validation passes. Do not mix unrelated work, rewrite history, or include user changes without authorization. Documentation, architecture decisions, migration or release records, and task status MUST change with the implementation they describe.
+Before creating feature artifacts or changing feature implementation, agents MUST confirm a clean worktree and create or switch to `feature/<NNN>-<slug>`, matching `docs/features/<NNN>-<slug>/`. Feature work MUST NOT occur on the default branch. Agents MUST verify and report divergence from the default branch, but MUST NOT silently merge, rebase, or rewrite history to reconcile it. Each named milestone MUST end in one or more coherent Git commits after its relevant validation passes. Do not mix unrelated work, rewrite history, or include user changes without authorization. Documentation, architecture decisions, migration or release records, and task status MUST change with the implementation they describe.
 
 ### V. Independent pre-push review
 
-No local commits may be pushed without explicit user authorization and a passing read-only adversarial review by a genuinely different available LLM model. Critical and high findings MUST be resolved; medium findings require resolution unless the user explicitly accepts and documents the risk. The review record MUST be committed under the applicable feature or `docs/reviews/` path before push.
+No local commits may be pushed without explicit user authorization and a passing read-only adversarial review by a genuinely different available LLM model. The implementing agent MUST independently validate every finding against the specifications, code, tests, diff, policy, and reproducible evidence, then record whether it is `valid and fixed`, `valid and user-waived`, `invalid with evidence`, or `needs user decision`. The reviewer MUST receive the revised diff and dispositions after each round and explicitly agree that no valid unresolved finding remains. Repeat this loop until that agreement is reached; if it cannot converge or needs user authority, stop without pushing. Critical and high findings MUST be resolved; medium findings require resolution unless the user explicitly accepts and documents the risk. The review record MUST be committed under the applicable feature or `docs/reviews/` path before push.
 
 ## Tooling and artifact constraints
 
@@ -28,10 +28,10 @@ This repository uses GitHub Spec Kit `v1.0.3` with the Codex integration and Pow
 
 ## Development workflow
 
-For a production feature, use `$speckit-specify`, `$speckit-clarify`, `$speckit-plan`, `$speckit-checklist`, `$speckit-tasks`, `$speckit-analyze`, `$speckit-implement`, and `$speckit-converge` as applicable. Before implementation, resolve material ambiguity and obtain specification approval. During implementation, update `tasks.md` without renumbering existing task IDs. Before any push, invoke the repository's adversarial pre-push review workflow.
+For a production feature, first establish the matching `feature/<NNN>-<slug>` branch, then use `$speckit-specify`, `$speckit-clarify`, `$speckit-plan`, `$speckit-checklist`, `$speckit-tasks`, `$speckit-analyze`, `$speckit-implement`, and `$speckit-converge` as applicable. Before implementation, resolve material ambiguity and obtain specification approval. During implementation, update `tasks.md` without renumbering existing task IDs. Before any push, invoke the repository's recursive adversarial pre-push review workflow.
 
 ## Governance
 
 This constitution governs generated Spec Kit workflows and supplements `AGENTS.md`; where both address the same repository process, apply the stricter requirement. Amendments require a documented rationale, maintainer approval, and updates to affected skills, templates, specifications, and tasks. Reviewers MUST verify constitution compliance as part of planning, implementation, and pre-push review.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-02
+**Version**: 1.1.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-02
