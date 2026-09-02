@@ -25,4 +25,4 @@ Include:
 
 Use statuses `Proposed`, `Accepted`, `Deprecated`, or `Superseded by ADR-NNNN`. Preserve history: supersede an accepted decision with a new ADR rather than rewriting it to imply the new choice was always intended.
 
-An ADR may remain `Proposed` while approval is pending. Do not mark it `Accepted` without the user or repository's designated decision authority. Link the accepted ADR from the feature's `plan.md` and map resulting work into the numbered implementation plan.
+An ADR may remain `Proposed` while approval is pending. Do not mark it `Accepted` without the user or repository's designated decision authority. Link the accepted ADR from the feature's `design.md` and map resulting work into the numbered implementation plan.

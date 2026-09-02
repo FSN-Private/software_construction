@@ -14,7 +14,7 @@ Extend the adversarial review skill with a formal loop. The implementing agent t
 ## Validation strategy
 
 - Verify the policy appears consistently in `AGENTS.md`, the constitution, and all affected skills.
-- Verify branch name and current working-tree state for this policy feature.
+- Verify and record branch name, clean working-tree state, base branch, and divergence for this policy feature.
 - Validate every changed `SKILL.md` frontmatter block and `git diff --check`.
 - Confirm review requirements include both agent validity assessment and reviewer agreement.
 - Unit tests are not applicable unless project-owned executable logic is added; this change is policy and documentation only.

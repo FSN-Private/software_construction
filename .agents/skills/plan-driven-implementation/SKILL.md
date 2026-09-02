@@ -9,7 +9,7 @@ Use `docs/features/<NNN>-<feature-slug>/tasks.md` as the sole execution source o
 
 ## Execute the plan
 
-1. Confirm the working tree and identify pre-existing changes. Require the matching `feature/<NNN>-<feature-slug>` branch before selecting a task; feature implementation on the default branch is forbidden. Verify and report divergence from the default branch, but never silently merge, rebase, or rewrite history to reconcile it. Never include unrelated user work in a task or commit.
+1. Confirm the working tree is clean before selecting a task. If unrelated or unapproved changes are present, stop before feature edits and resolve scope with the user. Require the matching `feature/<NNN>-<feature-slug>` branch before selecting a task; feature implementation on the default branch is forbidden. Verify and report divergence from the default branch, but never silently merge, rebase, or rewrite history to reconcile it. Never include unrelated user work in a task or commit.
 2. Select the next unblocked `T###` task. Mark it in progress before or with the first implementation change.
 3. Implement the smallest coherent slice that satisfies the mapped specification IDs.
 4. Add or update unit tests in the same slice whenever logic can be tested in isolation. If unit tests are not applicable, record the concrete reason in the plan and add the most appropriate higher-level verification.
