@@ -1,7 +1,7 @@
 # Research: Darktable Version-Controlled Image Library
 
-**Feature**: [spec.md](spec.md)  
-**Date**: 2026-09-02  
+**Feature**: [spec.md](spec.md)
+**Date**: 2026-09-02
 **Status**: Complete for planning; implementation must re-verify pinned versions and regional availability.
 
 ## Decision 1: Use a modular monolith with isolated asynchronous workers

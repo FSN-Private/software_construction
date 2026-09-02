@@ -1,6 +1,6 @@
 # Program Decomposition Plan: Darktable Version-Controlled Image Library
 
-**Branch**: `feature/003-darktable-version-control` | **Date**: 2026-09-02 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feature/003-darktable-version-control` | **Date**: 2026-09-02 | **Spec**: [spec.md](spec.md)
 **Status**: Approved for decomposition; not an implementation plan
 
 ## Summary
