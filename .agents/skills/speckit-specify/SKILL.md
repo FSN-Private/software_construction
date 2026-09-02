@@ -18,6 +18,14 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Pre-Execution Checks
 
+**Repository feature-branch gate (before hooks or artifact creation):**
+- Read `AGENTS.md` and `.specify/memory/constitution.md`.
+- Derive a 2-4 word `<slug>` from the feature description and choose the next unused `NNN` under `docs/features/`. The canonical feature directory is `docs/features/<NNN>-<slug>` and the required branch is `feature/<NNN>-<slug>`.
+- Confirm `git status --short` is empty before creating feature artifacts. Determine the default branch from `refs/remotes/origin/HEAD`, falling back to `master` and then `main` only when necessary.
+- If the required feature branch exists, switch to it. Otherwise create and switch to it. Do not create or change a feature artifact while checked out on the default branch or on a mismatched branch.
+- Run `git rev-list --left-right --count <default-branch>...HEAD` and report the result. Do not silently merge, rebase, or rewrite history to reconcile divergence.
+- Set `SPECIFY_FEATURE_DIRECTORY=docs/features/<NNN>-<slug>`. Reject a supplied value that differs from this canonical directory; do not create a top-level `specs/` directory.
+
 **Check for extension hooks (before specification)**:
 - Check if `.specify/extensions.yml` exists in the project root.
 - If it exists, read it and look for entries under the `hooks.before_specify` key
@@ -70,25 +78,19 @@ Given that feature description, do this:
      - "Create a dashboard for analytics" → "analytics-dashboard"
      - "Fix payment processing timeout bug" → "fix-payment-timeout"
 
-2. **Branch creation** (optional, via hook):
+2. **Branch identity**:
 
-   If a `before_specify` hook ran successfully in the Pre-Execution Checks above, it will have created/switched to a git branch and output JSON containing `BRANCH_NAME` and `FEATURE_NUM`. Note these values for reference, but the branch name does **not** dictate the spec directory name.
+   The repository feature-branch gate has already established `feature/<NNN>-<slug>`. Extension hooks may report branch data, but they must not replace the required branch or change the feature identifier.
 
-   If the user explicitly provided `GIT_BRANCH_NAME`, pass it through to the hook so the branch script uses the exact value as the branch name (bypassing all prefix/suffix generation).
+   A supplied `GIT_BRANCH_NAME` must equal the required branch; otherwise stop before artifact creation.
 
 3. **Create the spec feature directory**:
 
-   Specs live under the default `specs/` directory unless the user explicitly provides `SPECIFY_FEATURE_DIRECTORY`.
+   Specs live only under `docs/features/<NNN>-<slug>/`. The repository feature-branch gate supplies the required `SPECIFY_FEATURE_DIRECTORY`; do not use the fallback default described below.
 
-   **Resolution order for `SPECIFY_FEATURE_DIRECTORY`**:
-   1. If the user explicitly provided `SPECIFY_FEATURE_DIRECTORY` (e.g., via environment variable, argument, or configuration), use it as-is
-   2. Otherwise, auto-generate it under `specs/`:
-      - Check `.specify/init-options.json` for `feature_numbering` (preferred) or `branch_numbering` (deprecated, migration only — will be removed in a future release)
-      - If `"timestamp"`: prefix is `YYYYMMDD-HHMMSS` (current timestamp)
-      - If `"sequential"` or absent: prefix is `NNN` (next available 3-digit number after scanning existing directories in `specs/`)
-      - Construct the directory name: `<prefix>-<short-name>` (e.g., `003-user-auth` or `20260319-143022-user-auth`)
-      - Set `SPECIFY_FEATURE_DIRECTORY` to `specs/<directory-name>`
-      - If `branch_numbering` was used (and `feature_numbering` was absent), emit a one-line warning: "⚠️ `branch_numbering` in init-options.json is deprecated. Rename to `feature_numbering`."
+   **Required `SPECIFY_FEATURE_DIRECTORY`:**
+   1. Set it to the canonical directory established by the feature-branch gate: `docs/features/<NNN>-<slug>`.
+   2. If the user, environment, argument, or configuration supplied a different value, stop and report the mismatch.
 
    **Create the directory and spec file**:
    - `mkdir -p SPECIFY_FEATURE_DIRECTORY`
@@ -101,12 +103,13 @@ Given that feature description, do this:
        "feature_directory": "<resolved feature dir>"
      }
      ```
-     Write the actual resolved directory path value (for example, `specs/003-user-auth`), not the literal string `SPECIFY_FEATURE_DIRECTORY`.
+      Write the actual resolved directory path value (for example, `docs/features/003-user-auth`), not the literal string `SPECIFY_FEATURE_DIRECTORY`.
      This allows downstream commands (`$speckit-plan`, `$speckit-tasks`, etc.) to locate the feature directory without relying on git branch name conventions.
 
    **IMPORTANT**:
    - You must only create one feature per `$speckit-specify` invocation
-   - The spec directory name and the git branch name are independent — they may be the same but that is the user's choice
+   - The repository feature-branch gate overrides any generic guidance below: the spec directory and branch suffix MUST match the same `<NNN>-<slug>` value
+   - The spec directory name and Git branch suffix MUST match the same `<NNN>-<slug>` value
    - The spec directory and file are always created by this command, never by the hook
 
 4. Load the resolved active `spec-template` file to understand required sections.
@@ -275,7 +278,7 @@ Report completion to the user with:
 - Checklist results summary
 - Readiness for the next phase (`$speckit-clarify` or `$speckit-plan`)
 
-**NOTE:** Branch creation is handled by the `before_specify` hook (git extension). Spec directory and file creation are always handled by this core command.
+**NOTE:** The repository feature-branch gate, not the optional Git extension, establishes the required branch. This command creates the specification directory and file only after that gate passes.
 
 ## Quick Guidelines
 

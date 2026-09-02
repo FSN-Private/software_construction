@@ -23,9 +23,14 @@
   - Validation: all checks in `plan.md`; no project-owned executable logic, so unit tests are not applicable.
   - Milestone: Feature-branch and review-convergence policy complete.
 
+## Phase 2.1 - Review remediation
+
+- [x] T010 Resolve round-one reviewer finding R1 by enforcing the feature-branch gate in directly invokable `$speckit-specify` and `$speckit-plan` skills (`FR-1` through `FR-4`, `AC-1`).
+- [x] T011 Revalidate the amended policy and commit the review remediation milestone (`AC-1` through `AC-6`).
+
 ## Phase 3 - Pre-push gate
 
-- [ ] T009 Run the recursive alternate-model review and record its final agreement if a push is requested.
+- [x] T009 Run the recursive alternate-model review and record its final agreement.
 
 ## Traceability
 

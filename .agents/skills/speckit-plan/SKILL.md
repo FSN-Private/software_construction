@@ -18,6 +18,13 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Pre-Execution Checks
 
+**Repository feature-branch gate (before hooks or planning artifacts):**
+- Read `AGENTS.md` and `.specify/memory/constitution.md`, then read `.specify/feature.json` to identify the active feature directory.
+- Require that directory to be exactly `docs/features/<NNN>-<slug>/`. Require the current branch to be exactly `feature/<NNN>-<slug>`; feature planning on the default branch or a mismatched branch is forbidden.
+- Confirm `git status --short` is empty before changing planning artifacts. Determine the default branch from `refs/remotes/origin/HEAD`, falling back to `master` and then `main` only when necessary.
+- Run `git rev-list --left-right --count <default-branch>...HEAD` and report the result. Do not silently merge, rebase, or rewrite history to reconcile divergence.
+- If any check fails, stop and use the repository feature-specification workflow to establish or repair the required feature context.
+
 **Check for extension hooks (before planning)**:
 - Check if `.specify/extensions.yml` exists in the project root.
 - If it exists, read it and look for entries under the `hooks.before_plan` key

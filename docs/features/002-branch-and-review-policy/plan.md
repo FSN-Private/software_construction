@@ -7,7 +7,7 @@
 
 ## Technical approach
 
-Keep Spec Kit's optional Git extension disabled. Enforce the branch convention in repository-owned `AGENTS.md`, the Spec Kit constitution, the feature-specification skill, the plan-driven implementation skill, and the GitHub traceability skill. This makes the policy visible to both generated `$speckit-*` workflows and existing project skills without adding branch-mutating automation.
+Keep Spec Kit's optional Git extension disabled. Enforce the branch convention in repository-owned `AGENTS.md`, the Spec Kit constitution, the feature-specification skill, the plan-driven implementation skill, the directly invokable `$speckit-specify` and `$speckit-plan` skills, and the GitHub traceability skill. This makes the policy visible to both generated `$speckit-*` workflows and existing project skills without adding branch-mutating automation.
 
 Extend the adversarial review skill with a formal loop. The implementing agent triages every reviewer finding with independent evidence, records the disposition, makes only justified changes, reruns validation, and sends the revised diff plus the dispositions back to the alternate reviewer. The loop continues until the reviewer explicitly agrees each prior finding is resolved, invalid with evidence, or validly user-waived. If reviewer and agent cannot converge, or a finding needs product authority, stop without pushing and ask the user.
 
