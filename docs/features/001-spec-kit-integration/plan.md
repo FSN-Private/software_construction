@@ -24,6 +24,12 @@ Spec Kit's optional Git extension is deliberately excluded. Existing milestone c
 - Confirm no `specs/` directory was created.
 - Run `git diff --check` and inspect every staged file before each milestone commit.
 
+## Execution record
+
+- 2026-09-02: Installed `uv 0.12.9` with Astral's official installer. The installer was downloaded to a temporary file and inspected before execution.
+- 2026-09-02: Installed `specify-cli 1.0.3` from `git+https://github.com/github/spec-kit.git@v1.0.3`. The resolved source commit was `6906bc582230bb752776e23287ee97990c1af743`.
+- 2026-09-02: Verified `uv --version`, `specify version`, and `specify check`; the latter detected Codex CLI as available.
+
 ## Risks and mitigations
 
 | Risk | Mitigation |

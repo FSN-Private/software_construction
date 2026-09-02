@@ -14,8 +14,8 @@
 
 ## Phase 2 — Official tooling and initialization
 
-- [ ] T005 Install official Astral `uv` and verify `uv --version` (`FR-1`, `NFR-1`, `NFR-2`).
-- [ ] T006 Install `specify-cli` from `github/spec-kit@v1.0.3`; verify `specify version` and `specify check` (`FR-1`, `AC-1`, `NFR-1`–`NFR-4`).
+- [x] T005 Install official Astral `uv` and verify `uv --version` (`FR-1`, `NFR-1`, `NFR-2`).
+- [x] T006 Install `specify-cli` from `github/spec-kit@v1.0.3`; verify `specify version` and `specify check` (`FR-1`, `AC-1`, `NFR-1`–`NFR-4`).
 - [ ] T007 Initialize the current repository with `--here --force --integration codex --script ps` after recording a clean-state baseline (`FR-2`, `FR-3`, `AC-2`, `AC-3`).
 - [ ] T008 Inspect generated files, reconcile `AGENTS.md`, and preserve existing skills (`FR-3`, `FR-6`, `AC-3`, `AC-4`, `NFR-5`).
   - Validation: compare skill directory names before and after initialization; `git diff --check`.
