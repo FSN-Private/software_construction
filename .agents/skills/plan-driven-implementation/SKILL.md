@@ -5,12 +5,12 @@ description: Implement approved feature specifications through their numbered pl
 
 # Plan-driven Implementation
 
-Use `docs/features/<feature-slug>/implementation-plan.md` as the sole execution source of truth. Read the linked requirements, design, and non-functional documents before editing code. If they are absent, incomplete, contradictory, or unapproved, stop implementation and use the `feature-specification` skill.
+Use `docs/features/<NNN>-<feature-slug>/tasks.md` as the sole execution source of truth. Read the linked `spec.md` and `plan.md` before editing code. If they are absent, incomplete, contradictory, or unapproved, stop implementation and use the `feature-specification` skill.
 
 ## Execute the plan
 
-1. Confirm the working tree and identify pre-existing changes. Never include unrelated user work in a task or commit.
-2. Select the next unblocked numbered task. Mark it in progress before or with the first implementation change.
+1. Confirm the working tree is clean before selecting a task. If unrelated or unapproved changes are present, stop before feature edits and resolve scope with the user. Require the matching `feature/<NNN>-<feature-slug>` branch before selecting a task; feature implementation on the default branch is forbidden. Verify and report divergence from the default branch, but never silently merge, rebase, or rewrite history to reconcile it. Never include unrelated user work in a task or commit.
+2. Select the next unblocked `T###` task. Mark it in progress before or with the first implementation change.
 3. Implement the smallest coherent slice that satisfies the mapped specification IDs.
 4. Add or update unit tests in the same slice whenever logic can be tested in isolation. If unit tests are not applicable, record the concrete reason in the plan and add the most appropriate higher-level verification.
 5. Update all affected documentation in the same slice. Consider user guidance, interfaces, architecture, operations, migration, examples, and changelog material; update only what the feature affects.

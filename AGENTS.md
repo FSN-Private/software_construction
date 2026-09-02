@@ -5,7 +5,10 @@ These instructions apply to the entire repository.
 ## Skill routing
 
 - For every new feature or material behavior change, read and follow `.agents/skills/feature-specification/SKILL.md` before implementation. If complete approved specifications already exist, verify them rather than repeating discovery.
-- For feature implementation, read and follow `.agents/skills/plan-driven-implementation/SKILL.md`. The numbered `implementation-plan.md` is the sole task source of truth.
+- Before creating feature artifacts or editing feature code, require a clean working tree and create or switch to `feature/<NNN>-<slug>`, matching `docs/features/<NNN>-<slug>/`. Feature work on the default branch is forbidden. Verify and report divergence from the default branch; do not silently merge, rebase, or rewrite history to reconcile it.
+- For a new Spec Kit feature, choose the next `NNN` identifier under `docs/features/`, set `SPECIFY_FEATURE_DIRECTORY=docs/features/<NNN>-<slug>`, then use `$speckit-specify`. Never allow Spec Kit to create a parallel top-level `specs/` directory.
+- Use `$speckit-clarify`, `$speckit-plan`, `$speckit-tasks`, `$speckit-analyze`, `$speckit-implement`, and `$speckit-converge` when their phase applies. The generated `spec.md`, `plan.md`, and `tasks.md` must comply with this repository's constitution and the skills below.
+- For feature implementation, read and follow `.agents/skills/plan-driven-implementation/SKILL.md`. The numbered `tasks.md` is the sole task source of truth.
 - For consequential cross-cutting technical decisions, use `.agents/skills/architecture-decisions/SKILL.md`.
 - For GitHub Actions workflow design or changes, use `.agents/skills/github-actions-ci/SKILL.md`. For an already failing GitHub Actions PR check, use the official `.agents/skills/gh-fix-ci/SKILL.md` instead.
 - For issue, commit, PR, review, and release linkage, use `.agents/skills/github-work-traceability/SKILL.md`. For actionable PR review threads, use the official `.agents/skills/gh-address-comments/SKILL.md`.
@@ -16,7 +19,8 @@ These instructions apply to the entire repository.
 
 ## Repository-wide invariants
 
-- Store feature artifacts under `docs/features/<feature-slug>/`; do not keep specifications only in chat, issues, or agent memory.
+- Store feature artifacts under `docs/features/<NNN>-<feature-slug>/`; do not keep specifications only in chat, issues, or agent memory.
+- Develop and commit every feature and material behavior change on its matching `feature/<NNN>-<feature-slug>` branch; never on the default branch.
 - Do not implement a feature until its requirements, design, non-functional considerations, acceptance criteria, and numbered implementation plan are complete and approved, or the user explicitly approves documented assumptions.
 - Keep implementation, applicable unit tests, affected documentation, and plan status in the same work slice.
 - Make a coherent Git commit at every planned milestone. Preserve unrelated changes and existing history.

@@ -5,7 +5,7 @@ description: Define or complete requirements, design, and non-functional specifi
 
 # Feature Specification
 
-Produce an implementation-ready specification set under `docs/features/<feature-slug>/`. Do not begin feature implementation while material product or design decisions remain unresolved, unless the user explicitly authorizes named assumptions.
+Produce an implementation-ready Spec Kit artifact set under `docs/features/<NNN>-<feature-slug>/`. Before creating or updating feature artifacts, confirm a clean worktree and create or switch to the matching `feature/<NNN>-<feature-slug>` branch. Feature work is forbidden on the default branch. Verify and report divergence from the default branch, but do not merge, rebase, or rewrite history without explicit authorization. Before any `$speckit-*` feature command, set `SPECIFY_FEATURE_DIRECTORY` to that directory. Do not begin feature implementation while material product or design decisions remain unresolved, unless the user explicitly authorizes named assumptions.
 
 ## Discover before asking
 
@@ -23,16 +23,15 @@ For every non-functional category, record a measurable target or `Not applicable
 
 ## Required documents
 
-Read [references/feature-documents.md](references/feature-documents.md) and create or update all four documents there:
+Read [references/feature-documents.md](references/feature-documents.md) and create or update the canonical documents there:
 
-1. `requirements.md`
-2. `design.md`
-3. `non-functional.md`
-4. `implementation-plan.md`
+1. `spec.md`
+2. `plan.md`
+3. `tasks.md`
 
-The numbered task list in `implementation-plan.md` is the sole execution plan. Trace every requirement and acceptance criterion to one or more implementation or verification tasks. Include code, tests, documentation, migration, CI, rollout, and review work when applicable.
+`spec.md` contains requirements, acceptance criteria, and non-functional requirements. `plan.md` contains the technical design. The numbered checklist in `tasks.md` is the sole execution plan. Trace every requirement and acceptance criterion to one or more implementation or verification tasks. Include code, tests, documentation, migration, CI, rollout, and review work when applicable.
 
-Use stable IDs such as `FR-1`, `AC-1`, `NFR-1`, and task `1`, `1.1`, `2`. Do not renumber tasks after implementation begins. Mark unresolved decisions as blockers, with an owner where known; do not hide them as assumptions.
+Use stable IDs such as `FR-1`, `AC-1`, `NFR-1`, and task `T001`, `T002`. Do not renumber tasks after implementation begins. Mark unresolved decisions as blockers, with an owner where known; do not hide them as assumptions.
 
 ## Readiness gate
 
@@ -44,6 +43,7 @@ Before handing off for implementation, verify:
 - non-functional requirements are measurable or explicitly inapplicable;
 - risks, migration, rollout, and rollback are addressed when relevant;
 - every specification item maps to the numbered plan;
+- the current branch is `feature/<NNN>-<feature-slug>` and matches the feature-artifact directory;
 - the user has approved the specifications or clearly authorized proceeding with documented assumptions.
 
 Keep the documents concise and proportional to the feature, but never omit a material decision merely because the feature appears small.

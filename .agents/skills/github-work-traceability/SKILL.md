@@ -5,7 +5,7 @@ description: Keep feature specifications, numbered tasks, commits, GitHub issues
 
 # GitHub Work Traceability
 
-Make GitHub work items a navigable view of repository documentation, not a second conflicting source of truth. The approved files under `docs/features/<feature-slug>/` and the numbered implementation plan remain authoritative.
+Make GitHub work items a navigable view of repository documentation, not a second conflicting source of truth. The approved files under `docs/features/<NNN>-<feature-slug>/` and the numbered implementation plan remain authoritative. Feature delivery occurs on the matching `feature/<NNN>-<feature-slug>` branch, never the default branch.
 
 ## Establish links
 
@@ -13,6 +13,7 @@ For a feature, maintain this chain where the repository uses the corresponding a
 
 `feature docs → numbered tasks → branch/commits → issue → pull request → review → release`
 
+- Record the exact `feature/<NNN>-<feature-slug>` branch in the plan and PR when one exists.
 - Put the feature-doc path and relevant requirement/task IDs in the issue or PR.
 - Reference the issue in the implementation plan.
 - Use commit messages or bodies to identify the outcome and related issue/task when that adds useful traceability.
