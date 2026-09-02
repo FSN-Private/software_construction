@@ -1,8 +1,8 @@
 # Spec Kit integration specification
 
-**Status:** Approved  
-**Feature:** 001-spec-kit-integration  
-**Owner:** Project maintainer  
+**Status:** Approved
+**Feature:** 001-spec-kit-integration
+**Owner:** Project maintainer
 **Decision date:** 2026-09-02
 
 ## Problem and goals

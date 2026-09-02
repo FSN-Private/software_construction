@@ -1,7 +1,7 @@
 # Implementation plan — Spec Kit integration
 
-**Status:** Approved for execution  
-**Specification:** [spec.md](spec.md)  
+**Status:** Approved for execution
+**Specification:** [spec.md](spec.md)
 **ADR:** [../../architecture/decisions/0001-adopt-spec-kit.md](../../architecture/decisions/0001-adopt-spec-kit.md)
 
 ## Technical approach

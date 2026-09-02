@@ -1,6 +1,6 @@
 # Tasks — Spec Kit integration
 
-**Status:** In progress  
+**Status:** In progress
 **Source:** [spec.md](spec.md) and [plan.md](plan.md)
 
 ## Phase 1 — Documentation and decision
@@ -8,7 +8,7 @@
 - [x] T001 Create the approved Spec Kit specification at `docs/features/001-spec-kit-integration/spec.md` (`FR-1`–`FR-8`, `NFR-1`–`NFR-8`).
 - [x] T002 Create the technical implementation plan at `docs/features/001-spec-kit-integration/plan.md` (`FR-1`–`FR-8`).
 - [x] T003 Create ADR `docs/architecture/decisions/0001-adopt-spec-kit.md` (`FR-5`, `FR-7`, `NFR-3`–`NFR-5`).
-- [ ] T004 Commit the approved design artifacts.
+- [x] T004 Commit the approved design artifacts.
   - Validation: `git diff --check` and review staged paths.
   - Milestone: Integration design documented.
 
