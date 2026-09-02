@@ -1,4 +1,4 @@
-# Feature Specification: Darktable Version-Controlled Image Library
+# Program Specification: Darktable Version-Controlled Image Library
 
 **Feature Branch**: `feature/003-darktable-version-control`
 
@@ -11,6 +11,8 @@
 **Owner**: Project maintainer
 
 **Input**: A web portal hosted on AWS that stores photographs and darktable XMP sidecars, provides Git-like XMP version control and image lineage, renders current and historical previews with darktable, supports darktable-compatible metadata browsing, backs the library up to cold storage, exposes a Windows-accessible working folder for darktable, and uses GitHub Actions for complete continuous integration and delivery.
+
+**Delivery model**: This is the approved umbrella product specification. It defines shared outcomes and constraints but MUST NOT be implemented as one feature-sized change. Delivery is split into child features 004–011, each with its own matching branch, specification, plan, tasks, tests, documentation, and approval gates. Child specifications may refine their allocated scope but may not weaken this program's requirements without an approved amendment here.
 
 ## Problem Statement
 
@@ -44,6 +46,22 @@ Photographers who edit with darktable need durable off-device storage, searchabl
 - General-purpose source-code hosting or compatibility with every Git client and protocol.
 - Mobile-native applications in the initial release.
 - Deploying unreviewed pull-request code or rebuilding an artifact differently for each environment.
+- Implementing the entire program through one branch, plan, task list, pull request, or release milestone.
+
+## Delivery Decomposition
+
+| Child feature | Primary responsibility | Program requirements allocated |
+|---|---|---|
+| `004-platform-foundation-ci-cd` | Repository/toolchain foundation, identity boundary, AWS environment skeleton, observability baseline, and secure GitHub Actions delivery | FR-023–024, FR-030–039; cross-cutting NFR-005, NFR-009–020 |
+| `005-image-ingest-storage` | Original/XMP import, integrity, identity, paths, durable object storage, working-object intake, and lifecycle foundation | FR-001–003, FR-011, FR-018–019; AC-001, AC-005 |
+| `006-xmp-version-control-core` | Content-addressed XMP revisions, working state, commits, branches, tags, protected refs, rewriting, reflog, and atomicity | FR-002, FR-007–013, FR-027–028; AC-004–005, AC-011–013 |
+| `007-windows-cloud-files-sync` | Windows virtual folder, placeholders, hydration, pinning, per-device checkout, offline journal, upload, and conflict preservation | FR-012–018, FR-026; AC-001, AC-006, AC-010 |
+| `008-darktable-rendering` | Isolated darktable CLI workers, thumbnails, historical previews, cache, provenance, and compatibility corpus | FR-005–006; AC-003; NFR-001, NFR-008 |
+| `009-gallery-metadata-search` | Gallery browse/filter/sort, normalized metadata/provenance, asset details, and web-originated XMP metadata changes | FR-003–004, FR-019, FR-025; AC-002, AC-009 |
+| `010-lineage-merge-interface` | Image-focused graph, semantic diff, merge/conflict UX, hidden versions, restoration, and history operations | FR-007–010, FR-014, FR-027; AC-003–004, AC-011–012 |
+| `011-backup-disaster-recovery` | Cross-account/cross-region cold copies, backup health, deletion lifecycle, isolated restore, regional recovery, and operational drills | FR-020–022, FR-028–029; AC-007, AC-013–014; NFR-004, NFR-006 |
+
+Requirements intentionally overlap when one feature establishes a contract and another consumes or presents it. Each child plan must trace its local requirements and the referenced program requirements; program-level acceptance is achieved only after the integration and recovery validations across all children pass.
 
 ## Users and Roles
 
