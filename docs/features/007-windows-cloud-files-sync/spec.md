@@ -115,6 +115,8 @@ As the owner, I can independently select a branch per device and receive explici
 - **FR-016**: Device revocation MUST prevent new remote access while preserving local bytes for an explicit owner-directed cleanup/export decision.
 - **FR-017**: The provider MUST expose actionable diagnostics and audit-safe operation identifiers without logging XMP/image content, tokens, or sensitive paths.
 - **FR-018**: Installation/configuration guidance MUST state supported darktable XMP settings and explicitly exclude synchronization of darktable database/configuration files.
+- **FR-019**: The provider MUST distinguish local deletion, dehydration, restore, move, and rename; offline delete or restore intent MUST be journaled and replayed as a non-destructive, auditable server outcome after reconnection.
+- **FR-020**: The provider MUST apply eligible remote and web-originated XMP working changes to the selected device/branch context while preserving local dirty-state and conflict protections and unrelated XMP content.
 
 ### Acceptance Criteria
 
@@ -126,6 +128,8 @@ As the owner, I can independently select a branch per device and receive explici
 - **AC-006**: Dirty-state checkout and concurrent-edit tests lose or silently overwrite zero local or remote XMP versions.
 - **AC-007**: Case, reserved-name, Unicode, long-path, rename, delete, lock, antivirus, disk-full, and expired-cursor tests produce deterministic non-destructive outcomes.
 - **AC-008**: A revoked device cannot hydrate/upload/query remote state; retained local content follows the explicit cleanup/export decision.
+- **AC-009**: Offline delete and restore fixtures are replayed as distinct, non-destructive lifecycle outcomes, and dehydration never creates a deletion intent.
+- **AC-010**: A web-originated permitted metadata edit appears on the selected Windows branch after synchronization and does not overwrite a dirty local change without a visible conflict outcome.
 
 ### Key Entities
 
