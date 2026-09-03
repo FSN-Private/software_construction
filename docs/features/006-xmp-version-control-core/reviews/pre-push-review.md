@@ -24,4 +24,10 @@
 
 The alternate reviewer confirmed dirty checkout protection, lifecycle holds, and atomic resolved-merge publication. No valid unresolved finding remains.
 
-**Final gate result: PASS**
+**Final gate result: superseded by the current pending push range.**
+
+## Current pre-push review
+
+**Reviewer**: gpt-5.4 | **Destination**: `origin/feature/006-xmp-version-control-core` | **Range**: `origin/feature/006-xmp-version-control-core..HEAD`
+
+The independent review found stale exact-range evidence and reversed divergence wording. Both are **valid and fixed** by this section and [plan.md](../plan.md). `git diff --check origin/feature/006-xmp-version-control-core..HEAD` passed. Follow-up agreement pending.

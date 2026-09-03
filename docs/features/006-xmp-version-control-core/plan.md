@@ -24,7 +24,7 @@ The format/invariants are in proposed [ADR-0006](../../architecture/decisions/00
 ## Constitution Check
 
 - **PASS**: core contracts only; sync, semantic merge, rendering, and UI remain later features.
-- **PASS**: current branch is correct and 46 commits ahead/0 behind `master`; no reconciliation occurs.
+- **PASS**: current branch is correct, diverges from `master`, and no reconciliation occurs.
 - **PASS**: immutable manifests, CAS, idempotency, audit/redaction, and lifecycle holds protect history.
 - **GATE**: implementation requires feature-004/005 contracts. No migration/deployment is authorized.
 
