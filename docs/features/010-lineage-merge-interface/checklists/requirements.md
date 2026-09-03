@@ -1,7 +1,7 @@
 # Specification Quality Checklist: Lineage and Merge Interface
 
-**Purpose**: Validate specification completeness and quality before proceeding to planning  
-**Created**: 2026-09-03  
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-09-03
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality

@@ -1,9 +1,9 @@
 # Adversarial Specification Review
 
-**Status**: Round 1 findings fixed; awaiting independent Round 2  
-**Reviewer model**: gpt-5.5  
-**Review date**: 2026-09-03  
-**Base**: `feature/003-darktable-version-control`  
+**Status**: Round 1 findings fixed; awaiting independent Round 2
+**Reviewer model**: gpt-5.5
+**Review date**: 2026-09-03
+**Base**: `feature/003-darktable-version-control`
 **Scope**: Feature 010 specification; no push is proposed.
 
 ## Round 1 findings and dispositions

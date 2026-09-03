@@ -1,8 +1,8 @@
 # Feature Specification: Lineage and Merge Interface
 
-**Feature Branch**: `feature/010-lineage-merge-interface`  
-**Created**: 2026-09-03  
-**Status**: Draft — awaiting product-owner approval  
+**Feature Branch**: `feature/010-lineage-merge-interface`
+**Created**: 2026-09-03
+**Status**: Draft — awaiting product-owner approval
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 
 ## Problem and Scope
