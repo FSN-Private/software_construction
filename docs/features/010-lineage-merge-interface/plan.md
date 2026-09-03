@@ -1,6 +1,6 @@
 # Implementation Plan: Lineage and Merge Interface
 
-**Branch**: `feature/010-lineage-merge-interface` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feature/010-lineage-merge-interface` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 **Status**: Proposed — pending approval
 
 ## Summary
