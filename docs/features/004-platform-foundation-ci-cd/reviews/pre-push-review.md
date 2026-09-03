@@ -19,4 +19,8 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+## Final agreement
+
+The alternate reviewer confirmed FR-017/AC-010 protection-drift coverage and FR-016/AC-011 child convention-contract coverage. No valid unresolved finding remains.
+
+**Final gate result: PASS**
