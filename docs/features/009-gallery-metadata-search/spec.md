@@ -71,7 +71,7 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 
 - **Gallery asset**: An image record displayed with current metadata and rendition state.
 - **Metadata facet**: A searchable or sortable metadata field and its normalized value.
-- **Working change**: An uncommitted XMP change in a specific branch/device context.
+- **Working change**: An uncommitted XMP change in a specific branch context, synchronized to eligible devices checked out on that branch.
 - **Browse context**: Active filters, sort, page position, and geolocation-visibility preference.
 
 ## Acceptance Criteria
