@@ -55,7 +55,7 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 - **FR-005**: The system MUST allow multiple filters to be combined and show the active filters and result count.
 - **FR-006**: The system MUST show an asset's identity, source metadata, current XMP working-state indicator, and preview provenance on its detail view.
 - **FR-007**: The system MUST distinguish missing metadata from an intentionally cleared value.
-- **FR-008**: The system MUST allow the owner to edit only rating, rejection, color label, tags, title, description, geolocation, and creator metadata.
+- **FR-008**: The system MUST allow the owner to edit only rating, rejection, color label, tags, title, description, and geolocation metadata.
 - **FR-009**: The system MUST record every permitted web edit as an uncommitted XMP working change and MUST not change the original image.
 - **FR-010**: The system MUST show that a web edit is uncommitted and identify the working branch/device context supplied by version control.
 - **FR-011**: The system MUST prevent or safely resolve edits when the target working state changes before saving.
@@ -65,7 +65,7 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 - **FR-015**: The system MUST make metadata-source precedence and the timestamp used for sorting visible when a value is ambiguous.
 - **FR-016**: The system MUST record authorized metadata edits and gallery-access failures in an audit trail.
 - **FR-017**: The system MUST offer authorized portal entry points to import, download, non-destructively delete, and restore an asset using the source-storage lifecycle contract.
-- **FR-018**: The system MUST preserve unrelated XMP content when applying a permitted web metadata edit and make the resulting working change available to the selected Windows/device branch context through the synchronization contract.
+- **FR-018**: The system MUST preserve unrelated XMP content when applying a permitted web metadata edit; the edit is branch-scoped, not device-scoped, and becomes available through synchronization to each Windows device currently checked out on that branch.
 
 ### Key Entities
 
@@ -110,6 +110,7 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 
 - The first release is a private single-owner library; sharing and public galleries are excluded.
 - 005 supplies image identities and metadata extraction, 006 supplies working changes, and 008 supplies previews and provenance.
+- Feature 007 supplies the branch-aware Windows synchronization contract for web-originated working changes.
 - The owner retains final commit, branch, merge, and history-rewrite actions in feature 010.
 
 ## Success Criteria

@@ -20,4 +20,4 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+Round 2 found the phrase still present in FR-008 and a missing explicit 007 dependency. Both are corrected in the current amendment: FR-008 excludes creator edits, FR-018 defines branch-scoped web edits, and the dependency list names feature 007. Awaiting final independent assessment.
