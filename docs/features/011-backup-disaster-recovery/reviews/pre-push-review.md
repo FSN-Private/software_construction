@@ -10,9 +10,9 @@
 
 | Finding | Severity | Affected IDs | Disposition and evidence |
 |---|---|---|---|
-| Purge did not cover recovery copies or make recovery unavailable afterward. | High | Parent FR-021; 011 FR-017, AC-009 | **Valid and fixed.** FR-017 and AC-009 define eligibility, primary/recovery purge, recovery denial, and audit evidence. |
+| Purge did not cover recovery copies or make recovery unavailable afterward. | High | Parent FR-028, AC-013; 011 FR-017, AC-009 | **Valid and fixed.** FR-017 and AC-009 define eligibility, primary/recovery purge, recovery denial, and audit evidence. |
 | Restore validation omitted owner identity, permission policy, and authorization boundaries. | Medium | Parent AC-007; 011 AC-010 | **Valid and fixed.** AC-010 requires these checks before promotion. |
-| Failure alert target was one hour, not 15 minutes. | Medium | Parent NFR-006; 011 FR-018, AC-011, NFR-007 | **Valid and fixed.** The binding 15-minute alert requirement is explicit. |
+| Failure alert target was one hour, not 15 minutes. | Medium | Parent NFR-009; 011 FR-018, AC-011, NFR-007 | **Valid and fixed.** The binding 15-minute alert requirement is explicit. |
 
 ## Validation
 
@@ -20,4 +20,4 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+Round 2 corrected the parent traceability citations above. Awaiting final independent assessment.
