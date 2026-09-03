@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No clarification markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic
@@ -31,4 +31,6 @@
 
 ## Notes
 
-All 16 checks pass. Ready for product-owner approval, then clarification or planning.
+- Validation iteration 1 found the initial draft too thin for repository readiness: missing explicit goals/non-goals, owner/role detail, constraints, full per-story acceptance scenarios, complete purge/recovery interaction, and full non-functional coverage.
+- Validation iteration 2 passed after expanding exact version pinning, hidden/recoverable/purged version behavior, working-state snapshot rules, manifest requirements, and measurable non-functional targets.
+- All 16 checks pass. Ready for product-owner review and then `$speckit-plan`.
