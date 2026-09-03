@@ -68,6 +68,7 @@ As a photographer, I can merge a source branch into a target branch, resolve con
 - **FR-018**: The system MUST audit tag creation and removal with the acting owner, affected commit, tag name, and outcome.
 - **FR-019**: The system MUST let the owner restore or revert an eligible reachable historical state by creating an explicit new version-control operation without deleting later history.
 - **FR-020**: Before any merge commit is created, the system MUST show the complete proposed result, affected images, selected XMP revisions, preview/provenance availability, and require final confirmation.
+- **FR-021**: The system MUST let the owner switch the active web branch context and MUST apply the same dirty-working-state block, preserve/stash, or explicitly confirmed-discard protection as checkout.
 
 ### Key Entities
 
@@ -91,6 +92,7 @@ As a photographer, I can merge a source branch into a target branch, resolve con
 - **AC-010**: A tagged commit fixture displays its tag, and tag creation/removal creates the required audit evidence.
 - **AC-011**: Restoring or reverting a reachable prior version creates a new explicit operation while retaining later commits.
 - **AC-012**: A clean automatic merge and a resolved conflict merge both show the full proposed result and require confirmation before a merge commit exists.
+- **AC-013**: Switching branch context with dirty working changes blocks or preserves them according to the explicit selected path and never silently loses them.
 
 ## Non-Functional Requirements
 

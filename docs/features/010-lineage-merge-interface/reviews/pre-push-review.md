@@ -20,4 +20,4 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+Round 2 added the parent branch-switch requirement. FR-021 and AC-013 now provide active branch-context switching with dirty-state protections. Awaiting final independent assessment.
