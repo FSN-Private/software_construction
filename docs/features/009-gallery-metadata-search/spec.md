@@ -7,9 +7,9 @@
 
 ## Problem and Scope
 
-Photographers need one private web gallery in which they can browse an entire library and find images using the metadata they already use in darktable. They must also be able to make the limited metadata edits previously agreed for the web, as uncommitted XMP working changes.
+Photographers need one private web gallery in which they can browse an entire library and find images using the metadata they already use in darktable. They must also be able to import, download, non-destructively delete or restore assets, and make the limited metadata edits previously agreed for the web as uncommitted XMP working changes.
 
-This feature delivers gallery browsing, metadata filters and sorts, asset details, and limited working-change edits. It consumes source identity (005), version working state (006), and preview renditions (008). It excludes original-image editing, commit/branch/merge controls, lineage visualization, rendering execution, and Windows synchronization.
+This feature delivers gallery browsing, metadata filters and sorts, asset details, portal lifecycle entry points, and limited working-change edits. It consumes source identity (005), version working state (006), preview renditions (008), and Windows synchronization (007). It excludes original-image editing, commit/branch/merge controls, lineage visualization, and rendering execution.
 
 ## User Scenarios & Testing
 
@@ -32,7 +32,7 @@ As a photographer, I can open an asset and see its image metadata, current worki
 
 ### User Story 3 - Make a metadata working change (Priority: P2)
 
-As a photographer, I can change rating, rejection, color label, tags, title, description, geolocation, or creator details from the gallery, knowing the change is uncommitted until I create a commit elsewhere.
+As a photographer, I can change rating, rejection, color label, tags, title, description, or geolocation from the gallery, knowing the change is uncommitted until I create a commit elsewhere.
 
 **Independent Test**: Edit each permitted field, reopen the asset, inspect working state, and verify an eventual version-control commit includes the XMP change.
 
@@ -64,6 +64,8 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 - **FR-014**: The system MUST preserve active browse context when opening and returning from an asset detail view.
 - **FR-015**: The system MUST make metadata-source precedence and the timestamp used for sorting visible when a value is ambiguous.
 - **FR-016**: The system MUST record authorized metadata edits and gallery-access failures in an audit trail.
+- **FR-017**: The system MUST offer authorized portal entry points to import, download, non-destructively delete, and restore an asset using the source-storage lifecycle contract.
+- **FR-018**: The system MUST preserve unrelated XMP content when applying a permitted web metadata edit and make the resulting working change available to the selected Windows/device branch context through the synchronization contract.
 
 ### Key Entities
 
@@ -82,6 +84,8 @@ As a photographer, I can change rating, rejection, color label, tags, title, des
 - **AC-006**: A concurrent working-state change produces a clear refresh, retry, or conflict outcome rather than silently overwriting it.
 - **AC-007**: Hidden geolocation is absent from normal gallery cards and search results while retained data remains recoverable to the owner.
 - **AC-008**: Pending and failed previews are accurately labelled and accessible.
+- **AC-009**: A portal import, download, delete, and restore fixture produces the corresponding authorized, non-destructive lifecycle outcome and audit record.
+- **AC-010**: A web edit becomes visible to the selected Windows branch after synchronization and survives a supported darktable round trip without loss of unrelated XMP content.
 
 ## Non-Functional Requirements
 
