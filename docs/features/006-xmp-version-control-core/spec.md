@@ -120,6 +120,9 @@ As the library owner, I can rewrite a non-default branch after reviewing impact,
 - **FR-018**: Graph/materialized projections MUST be rebuildable and verifiable from immutable commits/manifests/objects and MUST report missing, altered, cyclic, or cross-library references.
 - **FR-019**: Branch/tag/commit operations and protected-history violations MUST produce attributable audit events without including XMP payloads.
 - **FR-020**: The engine MUST expose stable versioned contracts for working state, staging, commits, refs, compare, divergence, reflog/recovery, visibility, graph traversal, and integrity verification to features 007 and 010.
+- **FR-021**: The checkout/switch contract MUST detect dirty working state and either block, preserve/stash, or explicitly discard it only after owner confirmation, with an auditable outcome.
+- **FR-022**: Commits, refs, reflogs, hidden states, and recovery references MUST publish and release lifecycle holds through the feature 005 storage contract so required image and XMP bytes cannot be purged while history requires them.
+- **FR-023**: The engine MUST atomically publish a validated resolved merge result with its base, source, target, parent references, resolved XMP identities, audit evidence, and expected target-head advancement.
 
 ### Acceptance Criteria
 
@@ -132,6 +135,9 @@ As the library owner, I can rewrite a non-default branch after reviewing impact,
 - **AC-007**: Hide/unhide changes normal projection only and produces identical XMP/commit hashes and descendant resolution before and after.
 - **AC-008**: Seeded manifest/object/parent corruption is detected by integrity verification and blocks affected ref advancement.
 - **AC-009**: Compare/divergence returns exact base/ours/theirs identities needed for a later semantic merge without choosing a winner.
+- **AC-010**: A checkout fixture with dirty working changes blocks or preserves them according to the chosen explicit path and never silently moves or loses them.
+- **AC-011**: A purge fixture cannot remove an image or XMP object required by a reachable, hidden, reflog, or recovery-held commit; it becomes eligible only after all holds release.
+- **AC-012**: A resolved merge fixture records base/source/target evidence and resolved entries, creates the correct parents, and either atomically advances the expected target head or leaves no merge commit/ref change.
 
 ### Key Entities
 
