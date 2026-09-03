@@ -101,7 +101,7 @@ As the library owner, I can soft-delete an image or sidecar, see the recovery de
 - **FR-002**: Each received byte stream MUST be verified against declared size and SHA-256 before it becomes authoritative.
 - **FR-003**: Original image bytes MUST be immutable after publication; different replacement bytes create a distinct content identity and require an explicit logical-asset decision.
 - **FR-004**: Every logical image asset MUST have a stable identifier independent of path, filename, upload session, device, and later branch state.
-- **FR-005**: The system MUST preserve each accepted XMP byte stream exactly and associate it with one source asset/edit identity or an explicit unassociated state.
+- **FR-005**: The system MUST preserve each accepted XMP byte stream exactly and associate it with exactly one source asset/edit identity; an unassociated XMP state is quarantined, non-authoritative, and unavailable to versioning, rendering, gallery, or synchronization until deterministic association succeeds.
 - **FR-006**: Association MUST recognize the supported darktable base and numbered-duplicate sidecar naming conventions without conflating multiple edits of one source image.
 - **FR-007**: The system MUST detect identical content, path collisions, ambiguous associations, corrupt bytes, malformed XMP, unsupported formats, quota excess, and incomplete upload before active publication.
 - **FR-008**: Unsafe or unresolved input MUST remain outside active library state while retaining enough safe evidence/content for correction or retry.
@@ -112,7 +112,7 @@ As the library owner, I can soft-delete an image or sidecar, see the recovery de
 - **FR-013**: Content referenced by retained/protected history, a legal/operational hold, or another active asset MUST NOT be physically removed by an ordinary delete.
 - **FR-014**: All ingest, association, move, deletion, restoration, and integrity decisions MUST produce attributable audit events without logging media/XMP payloads.
 - **FR-015**: The system MUST expose active, uploading, verifying, quarantined, failed, recoverable-deleted, restored, and integrity-error states with stable error codes and safe retry behavior.
-- **FR-016**: A reconstruction manifest MUST enumerate authoritative object identity, checksum, size, asset association, lifecycle state, and required metadata so feature 011 can verify recovery independently.
+- **FR-016**: A reconstruction manifest MUST enumerate authoritative object identity, checksum, size, asset association and provenance, path history, lifecycle holds/state, audit-event identifiers, version-control handoff identifiers, and required metadata so feature 011 can verify recovery independently.
 
 ### Acceptance Criteria
 
@@ -124,6 +124,8 @@ As the library owner, I can soft-delete an image or sidecar, see the recovery de
 - **AC-006**: A day-90 restoration returns the original identity, bytes, associations, and audit history; a conflicting destination requires an explicit alternate path.
 - **AC-007**: A fault between object upload and database publication is repaired or rolled back idempotently and never leaves acknowledged but unreachable content.
 - **AC-008**: Reconstruction from exported manifests detects every intentionally missing, altered, extra, or mis-associated sampled object.
+- **AC-009**: An unassociated XMP fixture remains quarantined and cannot be rendered, committed, searched as active edit metadata, or synchronized until it has exactly one deterministic source association.
+- **AC-010**: Reconstruction detects a missing or altered path history, lifecycle hold, audit linkage, association provenance, or version-control handoff identifier in sampled recovery data.
 
 ### Key Entities
 
