@@ -60,6 +60,8 @@ As the owner, I can restore the private library in the recovery region and conti
 - **FR-014**: The system MUST maintain a tested, owner-readable regional-disaster runbook with decision owner, prerequisites, abort thresholds, validation, and rollback limits.
 - **FR-015**: The system MUST rehearse a full second-region recovery at least quarterly and record achieved RPO/RTO and corrective actions.
 - **FR-016**: The system MUST use least-privilege, independently controlled recovery access and MUST not require primary-region credentials for a regional recovery.
+- **FR-017**: The system MUST permanently purge an owner-authorized object only after its retention and recovery obligations expire, remove eligible primary and recovery copies, deny later recovery through normal workflows, and retain auditable purge-completion evidence.
+- **FR-018**: The system MUST alert the owner and operators within 15 minutes when a required backup is overdue, incomplete, or integrity-failed.
 
 ### Key Entities
 
@@ -79,6 +81,9 @@ As the owner, I can restore the private library in the recovery region and conti
 - **AC-006**: A corrupted or mismatched restored object fails validation and cannot be promoted.
 - **AC-007**: A retention test cannot remove the final verified copy of a protected class.
 - **AC-008**: A quarterly drill creates an audit record containing achieved objectives and any corrective actions.
+- **AC-009**: An authorized purge fixture becomes unrecoverable through the primary and recovery workflows after its eligibility period, while its purge-completion audit evidence remains.
+- **AC-010**: A restore validation verifies owner identity, access policy, and authorization boundaries in addition to data integrity before promotion.
+- **AC-011**: An overdue, incomplete, or integrity-failed required backup produces an owner/operator alert within 15 minutes.
 
 ## Non-Functional Requirements
 
@@ -88,7 +93,7 @@ As the owner, I can restore the private library in the recovery region and conti
 - **NFR-004 Security**: Recovery accounts, data, and credentials MUST use least privilege and separation from primary-service administration.
 - **NFR-005 Privacy**: Recovery copies MUST preserve the library's private access boundary and encrypt protected photo and metadata content.
 - **NFR-006 Compliance**: Retention, deletion, and recovery evidence MUST honor the 90-day parent-program recovery policy.
-- **NFR-007 Observability**: Operators MUST measure backup age, coverage, integrity, drill RPO/RTO, restore duration, and retention exceptions.
+- **NFR-007 Observability**: Operators MUST measure backup age, coverage, integrity, alert delivery, drill RPO/RTO, restore duration, and retention exceptions.
 - **NFR-008 Maintainability**: The data-classification and runbook MUST be reviewed after every drill and material architecture change.
 - **NFR-009 Testability**: Automated checks and scheduled drills MUST prove backup coverage, integrity validation, restore isolation, and retention holds.
 - **NFR-010 Operations**: Each production recovery action MUST have an identified decision owner, observable abort thresholds, and recorded evidence.
