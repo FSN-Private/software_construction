@@ -20,4 +20,8 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+## Final agreement
+
+The alternate reviewer confirmed untrusted-media containment, current plus three historical renders, and thumbnail freshness targets. No valid unresolved finding remains.
+
+**Final gate result: PASS**
