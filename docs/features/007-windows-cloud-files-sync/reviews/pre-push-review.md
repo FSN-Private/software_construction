@@ -19,4 +19,8 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+## Final agreement
+
+The alternate reviewer confirmed offline delete/restore semantics and branch-safe web-originated XMP synchronization. No valid unresolved finding remains.
+
+**Final gate result: PASS**
