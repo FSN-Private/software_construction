@@ -20,4 +20,10 @@
 
 ## Round 2
 
-Round 2 added the parent branch-switch requirement. FR-021 and AC-013 now provide active branch-context switching with dirty-state protections. Awaiting final independent assessment.
+Round 2 added the parent branch-switch requirement. FR-021 and AC-013 now provide active branch-context switching with dirty-state protections.
+
+## Final agreement
+
+The alternate reviewer confirmed tags, restore/revert, complete merge preview, and branch switching with dirty-state protection. No valid unresolved finding remains.
+
+**Final gate result: PASS**
