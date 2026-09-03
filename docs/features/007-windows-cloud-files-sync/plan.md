@@ -24,7 +24,7 @@ The Cloud Files adapter/journal boundary is recorded in proposed [ADR-0007](../.
 ## Constitution Check
 
 - **PASS**: feature consumes platform/storage/version contracts and does not recreate their authority.
-- **PASS**: branch is correct, 46 ahead/0 behind `master`; no history reconciliation occurs.
+- **PASS**: branch is correct, diverges from `master`, and no history reconciliation occurs.
 - **PASS**: native calls are adapter-isolated; durable journal/replay, scoped credentials, exact hydration, conflict preservation, and signed distribution are explicit.
 - **GATE**: trusted signing, device registration, Windows 11 host, and external deployment remain unauthorized.
 
