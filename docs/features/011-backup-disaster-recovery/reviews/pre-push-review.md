@@ -20,4 +20,10 @@
 
 ## Round 2
 
-Round 2 corrected the parent traceability citations above. Awaiting final independent assessment.
+Round 2 corrected the parent traceability citations above.
+
+## Final agreement
+
+The alternate reviewer confirmed purge lifecycle, permission validation, 15-minute alerting, and corrected traceability. No valid unresolved finding remains.
+
+**Final gate result: PASS**
