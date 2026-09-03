@@ -1,8 +1,8 @@
 # ADR-0005: Immutable Content and Repairable Publication
 
-**Date**: 2026-09-03  
-**Status**: Proposed  
-**Owners**: Project maintainer  
+**Date**: 2026-09-03
+**Status**: Proposed
+**Owners**: Project maintainer
 **Feature**: [005 Image Ingest and Durable Storage](../../features/005-image-ingest-storage/spec.md)
 
 ## Context
