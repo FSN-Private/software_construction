@@ -1,6 +1,6 @@
 # Implementation Plan: XMP Version-Control Core
 
-**Branch**: `feature/006-xmp-version-control-core` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feature/006-xmp-version-control-core` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 **Status**: Proposed — pending approval
 
 ## Summary

@@ -1,6 +1,6 @@
 # Tasks: XMP Version-Control Core
 
-**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/)  
+**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/)
 **Status**: Proposed — execute after approval and feature-004/005 contract availability.
 
 ## Phase 1: Foundations

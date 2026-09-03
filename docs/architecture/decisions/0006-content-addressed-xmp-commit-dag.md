@@ -1,8 +1,8 @@
 # ADR-0006: Content-Addressed XMP Commit DAG
 
-**Date**: 2026-09-03  
-**Status**: Proposed  
-**Owners**: Project maintainer  
+**Date**: 2026-09-03
+**Status**: Proposed
+**Owners**: Project maintainer
 **Feature**: [006 XMP Version-Control Core](../../features/006-xmp-version-control-core/spec.md)
 
 ## Decision
