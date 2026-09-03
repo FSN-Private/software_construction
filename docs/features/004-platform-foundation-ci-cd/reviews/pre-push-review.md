@@ -24,3 +24,9 @@
 The alternate reviewer confirmed FR-017/AC-010 protection-drift coverage and FR-016/AC-011 child convention-contract coverage. No valid unresolved finding remains.
 
 **Final gate result: PASS**
+
+## Pre-push review — 2026-09-03
+
+**Reviewer model**: gpt-5.4 | **Remote/destination**: `origin/feature/004-platform-foundation-ci-cd` | **Reviewed range**: `origin/feature/004-platform-foundation-ci-cd..HEAD`
+
+The independent review found the prior scope stale and the recorded master-divergence direction incorrect. Both are **valid and fixed**: this record names the exact pending range and [plan.md](../plan.md) now reports divergence without unstable directional counts. `git diff --check origin/feature/004-platform-foundation-ci-cd..HEAD` passed. Follow-up alternate-model agreement is required before push.

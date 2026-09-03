@@ -24,7 +24,7 @@ The durable platform choice is recorded in proposed [ADR-0003](../../architectur
 ## Constitution Check
 
 - **PASS — authority and traceability**: this plan implements only [spec.md](spec.md); `tasks.md` will map every requirement.
-- **PASS — feature isolation**: planning is on `feature/004-platform-foundation-ci-cd`, 46 commits ahead and 0 behind `master`; no reconciliation occurs.
+- **PASS — feature isolation**: planning is on `feature/004-platform-foundation-ci-cd`; it diverges from `master` and no reconciliation occurs.
 - **PASS — security and supply chain**: least-privilege Actions, OIDC, full-SHA action pins, locked packages, SBOMs, provenance, and release gates are designed first.
 - **PASS — reversible operations**: deploy by immutable digest; use expand/migrate/contract and forward recovery when rollback is unsafe.
 - **GATE**: this plan authorizes no AWS/GitHub mutation, deployment, paid service, or production release.
