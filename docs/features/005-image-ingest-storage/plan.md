@@ -24,7 +24,7 @@ The durable ownership and publication model is recorded in proposed [ADR-0005](.
 ## Constitution Check
 
 - **PASS — scope**: image and XMP ingest/lifecycle only; all downstream version, sync, rendering, gallery, and permanent-purge behavior remains separate.
-- **PASS — branch**: `feature/005-image-ingest-storage` is 46 commits ahead and 0 behind `master`; no history is reconciled.
+- **PASS — branch**: `feature/005-image-ingest-storage` diverges from `master`; no history is reconciled.
 - **PASS — integrity/security**: immutable checksummed bytes, short-lived owner-scoped upload/download authority, private quarantine, redaction, audit, and retry-safe operations are first-class.
 - **PASS — recovery**: reconstruction manifests and non-destructive reconciliation support feature 011; ordinary deletion does not erase authority.
 - **GATE**: S3/RDS/KMS creation, data migration, deployment, and any external mutation remain unauthorized.
