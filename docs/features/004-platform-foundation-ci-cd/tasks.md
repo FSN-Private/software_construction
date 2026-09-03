@@ -1,6 +1,6 @@
 # Tasks: Platform Foundation and CI/CD
 
-**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)  
+**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
 **Status**: Proposed — execute only after the specification and plan are approved.
 
 ## Phase 1: Setup

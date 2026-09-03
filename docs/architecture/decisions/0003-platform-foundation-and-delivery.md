@@ -1,8 +1,8 @@
 # ADR-0003: Platform Foundation and Immutable Delivery
 
-**Date**: 2026-09-03  
-**Status**: Proposed  
-**Owners**: Project maintainer  
+**Date**: 2026-09-03
+**Status**: Proposed
+**Owners**: Project maintainer
 **Feature**: [004 Platform Foundation and CI/CD](../../features/004-platform-foundation-ci-cd/spec.md)
 
 ## Context
