@@ -1,0 +1,26 @@
+{
+  "requiredChecks": [
+    "ci / backend",
+    "ci / web",
+    "ci / windows",
+    "ci / infrastructure",
+    "ci / security",
+    "ci / required"
+  ],
+  "branchProtection": {
+    "requireBranchesToBeUpToDate": true,
+    "requireLinearHistory": true,
+    "allowForcePushes": false,
+    "allowDeletions": false
+  },
+  "environments": {
+    "nonprod": {
+      "requiredReviewers": false,
+      "deploymentBranchPolicy": "master"
+    },
+    "production": {
+      "requiredReviewers": true,
+      "deploymentBranchPolicy": "master"
+    }
+  }
+}

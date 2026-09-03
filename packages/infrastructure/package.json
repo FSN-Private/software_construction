@@ -1,0 +1,22 @@
+{
+  "name": "@software-construction/infrastructure",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "24.20.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "synth": "npm run build && cdk synth"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.267.0",
+    "constructs": "10.8.1"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1139.0",
+    "typescript": "6.0.3"
+  }
+}

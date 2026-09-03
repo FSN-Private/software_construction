@@ -1,23 +1,23 @@
 # Tasks: Platform Foundation and CI/CD
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: Proposed — execute only after the specification and plan are approved.
+**Status**: Approved — implementation authorized 2026-09-03.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the .NET, Node, CDK, release-tool, test, and runbook layout in `apps/`, `packages/`, `tests/`, and `docs/runbooks/` (FR-001, NFR-008/009).
-- [ ] T002 [P] Pin .NET 10 and Node 24 toolchain configuration in `global.json`, `.nvmrc`, and repository documentation (FR-001, NFR-006/009).
-- [ ] T003 [P] Define deterministic local validation commands in `README.md` and root package/build scripts (FR-001, AC-001, NFR-009).
-- [ ] T004 [P] Add lockfile and dependency inventory policy in `docs/dependency-policy.md` (FR-015, AC-008, NFR-003/016).
+- [x] T001 Create the .NET, Node, CDK, release-tool, test, and runbook layout in `apps/`, `packages/`, `tests/`, and `docs/runbooks/` (FR-001, NFR-008/009). Layout-only; no executable logic requires unit tests. Verified required directories exist.
+- [x] T002 [P] Pin .NET 10 and Node 24 toolchain configuration in `global.json`, `.nvmrc`, and repository documentation (FR-001, NFR-006/009). Configuration and documentation syntax verified with the pinned local SDK/runtime.
+- [x] T003 [P] Define deterministic local validation commands in `README.md` and root package/build scripts (FR-001, AC-001, NFR-009). Root command names and integrity lockfile created; `npm run validate:toolchain` verifies the pinned SDK/runtime, while later tasks register each validation category.
+- [x] T004 [P] Add lockfile and dependency inventory policy in `docs/dependency-policy.md` (FR-015, AC-008, NFR-003/016). Policy content verified for locks, immutable action identities, SBOM/provenance, and release gates.
 
 ## Phase 2: Foundational delivery controls
 
-- [ ] T005 Create versioned shared error, operation-ID, idempotency, audit, telemetry-redaction, health, migration, and promotion fixtures in `packages/contracts/` (FR-016, AC-011, NFR-004/008).
-- [ ] T006 [P] Implement API correlation, structured redacted logging, metrics, and tracing foundations in `apps/api/` (FR-013, AC-006, NFR-004/007).
-- [ ] T007 [P] Create CDK account boundary, private network, KMS, budget, telemetry, and bootstrap-evidence constructs in `packages/infrastructure/` (FR-010/011/017, AC-009/010, NFR-003/007/013).
-- [ ] T008 [P] Implement release-manifest, checksum, SBOM, provenance, and compatibility verification tooling in `packages/release-tools/` (FR-005/008/009/015, AC-003/008, NFR-016).
-- [ ] T009 Establish CI workflow skeleton, stable job names, timeout/concurrency, read-only defaults, and aggregate result in `.github/workflows/ci.yml` (FR-002/003/004, AC-001/002, NFR-001/015).
-- [ ] T010 Add GitHub OIDC trust-policy templates, protected environment evidence, and drift verification in `packages/infrastructure/` and `.github/workflows/verify-protection.yml` (FR-010/017, AC-002/010, NFR-003).
+- [x] T005 Create versioned shared error, operation-ID, idempotency, audit, telemetry-redaction, health, migration, and promotion fixtures in `packages/contracts/` (FR-016, AC-011, NFR-004/008). `npm run test:contract` validates all v1 fixture shapes and access/redaction rules.
+- [x] T006 [P] Implement API correlation, structured redacted logging, metrics, and tracing foundations in `apps/api/` (FR-013, AC-006, NFR-004/007). `dotnet build apps/api/Platform.Api.csproj` and `npm run test` pass.
+- [x] T007 [P] Create CDK account boundary, private network, KMS, budget, telemetry, and bootstrap-evidence constructs in `packages/infrastructure/` (FR-010/011/017, AC-009/010, NFR-003/007/013). Typecheck and offline CDK synthesis pass; template assertions verify the VPC, KMS, private evidence store, telemetry, and budget.
+- [x] T008 [P] Implement release-manifest, checksum, SBOM, provenance, and compatibility verification tooling in `packages/release-tools/` (FR-005/008/009/015, AC-003/008, NFR-016). `npm run test` verifies release manifests, checksums, SBOM/provenance evidence, tamper detection, and incompatible rollback refusal.
+- [x] T009 Establish CI workflow skeleton, stable job names, timeout/concurrency, read-only defaults, and aggregate result in `.github/workflows/ci.yml` (FR-002/003/004, AC-001/002, NFR-001/015). Static review confirms immutable action pins, least permissions, timeouts, cancellation, and fail-closed aggregation; remote validation awaits the remaining category tasks.
+- [x] T010 Add GitHub OIDC trust-policy templates, protected environment evidence, and drift verification in `packages/infrastructure/` and `.github/workflows/verify-protection.yml` (FR-010/017, AC-002/010, NFR-003). Offline evidence and negative-drift tests pass; production settings remain separately authorized external bootstrap inputs.
 
 **Checkpoint**: The foundation is ready for independently testable stories.
 
@@ -60,7 +60,7 @@
 - [ ] T030 Execute the quickstart and clean-machine validation in `docs/features/004-platform-foundation-ci-cd/validation.md` (FR-001, NFR-009).
 - [ ] T031 Run cancellation, duplicate delivery, runner loss, superseding revision, and rollback-compatibility fault injection in `tests/infrastructure/reliability/` (FR-003/009, AC-004, NFR-015).
 - [ ] T032 Revalidate region availability, quotas, action SHAs, package patches, pricing, and code-signing custody in `docs/features/004-platform-foundation-ci-cd/pre-deploy-check.md` (NFR-003/011/013/016).
-- [ ] T033 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0003-platform-foundation-and-delivery.md`.
+- [x] T033 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0003-platform-foundation-and-delivery.md`. Approval recorded 2026-09-03 before implementation.
 
 ## Dependencies and milestones
 

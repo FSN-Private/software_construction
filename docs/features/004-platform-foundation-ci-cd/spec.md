@@ -4,9 +4,11 @@
 
 **Created**: 2026-09-02
 
-**Status**: Draft — awaiting product-owner approval
+**Status**: Approved — implementation authorized 2026-09-03
 
 **Owner**: Project maintainer
+
+**Approval record**: The project maintainer authorized autonomous implementation of this approved scope on 2026-09-03. External AWS, GitHub, paid-service, and deployment mutations remain separately authorized actions.
 
 **Parent Program**: [003 Darktable Version-Controlled Image Library](../003-darktable-version-control/spec.md)
 

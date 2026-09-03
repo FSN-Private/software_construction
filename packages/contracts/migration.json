@@ -1,0 +1,6 @@
+{
+  "contractVersion": "v1",
+  "strategy": "expand-migrate-contract",
+  "rollbackRule": "refuse-incompatible-and-use-forward-recovery",
+  "evidence": "schema-compatibility-decision"
+}
