@@ -20,4 +20,8 @@
 
 ## Round 2
 
-Pending independent reviewer assessment of the revised complete specification and these dispositions.
+## Final agreement
+
+The alternate reviewer confirmed dirty checkout protection, lifecycle holds, and atomic resolved-merge publication. No valid unresolved finding remains.
+
+**Final gate result: PASS**
