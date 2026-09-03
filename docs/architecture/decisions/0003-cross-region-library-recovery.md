@@ -1,8 +1,8 @@
 # ADR-0003: Cross-region library recovery in an independent AWS account
 
-**Status**: Proposed  
-**Date**: 2026-09-03  
-**Decision owner**: Product owner  
+**Status**: Proposed
+**Date**: 2026-09-03
+**Decision owner**: Product owner
 **Related feature**: [011 Backup and Disaster Recovery](../../features/011-backup-disaster-recovery/spec.md)
 
 ## Context

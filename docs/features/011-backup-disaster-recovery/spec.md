@@ -1,9 +1,9 @@
 # Feature Specification: Backup and Disaster Recovery
 
-**Feature Branch**: `feature/011-backup-disaster-recovery`  
-**Created**: 2026-09-03  
-**Status**: Draft — awaiting product-owner approval  
-**Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)  
+**Feature Branch**: `feature/011-backup-disaster-recovery`
+**Created**: 2026-09-03
+**Status**: Draft — awaiting product-owner approval
+**Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 **Related decision**: [ADR-0003](../../architecture/decisions/0003-cross-region-library-recovery.md)
 
 ## Problem and Scope
