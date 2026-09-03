@@ -133,7 +133,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 
 - **SC-001**: A photographer can see a requested supported-image thumbnail in at least 95% of already-rendered cases within 500 ms.
 - **SC-002**: A photographer can select either of two committed XMP versions and distinguish their provenance without downloading either original.
-- **SC-005**: A current XMP state and at least three historical revisions of the same RAW fixture render with distinguishable, traceable provenance.
-- **SC-006**: 99% of supported images in the reference workload have usable thumbnails within five minutes of completed upload, excluding visible retryable failures.
 - **SC-003**: All malformed or unsupported test fixtures show a clear failure state and never show a derivative from another input.
 - **SC-004**: Every approved darktable-release update passes the complete rendering regression corpus before it serves new derivatives.
+- **SC-005**: A current XMP state and at least three historical revisions of the same RAW fixture render with distinguishable, traceable provenance.
+- **SC-006**: 99% of supported images in the reference workload have usable thumbnails within five minutes of completed upload, excluding visible retryable failures.
