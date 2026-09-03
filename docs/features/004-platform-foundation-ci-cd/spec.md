@@ -111,6 +111,7 @@ As the library owner or operator, I can sign in to a private placeholder portal,
 - **FR-014**: Operators MUST receive actionable alerts for service-level failure, deployment failure, backup-age placeholders, authentication anomalies, CI health, and cost thresholds, with an identified owner and runbook link.
 - **FR-015**: Third-party actions, packages, build tools, and base images MUST be pinned or locked through immutable identities/integrity data, reviewed for source, maintenance, license, advisories, permissions, install behavior, and transitive impact, and updated through reviewable changes.
 - **FR-016**: The foundation MUST publish versioned shared conventions for configuration, errors, idempotency, audit events, telemetry redaction, health, release manifests, migrations, and environment promotion for child features to consume.
+- **FR-017**: The foundation MUST represent required repository branch protections, deployment-environment protections, and external delivery settings as versioned configuration or as versioned verifiable bootstrap evidence, and MUST detect or report drift.
 
 ### Acceptance Criteria
 
@@ -123,6 +124,8 @@ As the library owner or operator, I can sign in to a private placeholder portal,
 - **AC-007**: Alert tests notify the named owner within 15 minutes and link to the relevant dashboard and runbook.
 - **AC-008**: Every third-party GitHub Action is pinned to a reviewed full commit identity; every package ecosystem has a committed integrity/lock mechanism; release evidence lists accepted licenses and unresolved risk.
 - **AC-009**: The foundation can be destroyed and recreated in non-production from repository configuration and documented prerequisites without manual console-only drift.
+- **AC-010**: A verification run detects or reports drift in required repository and deployment-environment protection settings and identifies the approved corrective evidence.
+- **AC-011**: At least one child-feature placeholder consumes the published conventions through contract fixtures, and CI validates the conventions' version, error, idempotency, audit, health, and telemetry shapes.
 
 ### Key Entities
 
