@@ -64,6 +64,10 @@ As a photographer, I can merge a source branch into a target branch, resolve con
 - **FR-014**: The system MUST let the owner view and restore eligible displaced or hidden versions during the 90-day recovery period.
 - **FR-015**: The system MUST make merge, branch, commit, rewrite, hide, reveal, and restore actions auditable.
 - **FR-016**: The system MUST identify unavailable operations and reasons without exposing internal infrastructure details.
+- **FR-017**: The system MUST display commit tags in lineage and let the owner create and remove tags for eligible commits under the version-control naming and protection rules.
+- **FR-018**: The system MUST audit tag creation and removal with the acting owner, affected commit, tag name, and outcome.
+- **FR-019**: The system MUST let the owner restore or revert an eligible reachable historical state by creating an explicit new version-control operation without deleting later history.
+- **FR-020**: Before any merge commit is created, the system MUST show the complete proposed result, affected images, selected XMP revisions, preview/provenance availability, and require final confirmation.
 
 ### Key Entities
 
@@ -84,6 +88,9 @@ As a photographer, I can merge a source branch into a target branch, resolve con
 - **AC-007**: Each merge resolution is reviewable before its merge commit is created.
 - **AC-008**: Eligible displaced versions can be found and restored during the 90-day window.
 - **AC-009**: Keyboard-only and assistive-technology users can complete lineage, comparison, and merge review tasks.
+- **AC-010**: A tagged commit fixture displays its tag, and tag creation/removal creates the required audit evidence.
+- **AC-011**: Restoring or reverting a reachable prior version creates a new explicit operation while retaining later commits.
+- **AC-012**: A clean automatic merge and a resolved conflict merge both show the full proposed result and require confirmation before a merge commit exists.
 
 ## Non-Functional Requirements
 
