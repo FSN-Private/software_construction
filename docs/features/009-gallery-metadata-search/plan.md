@@ -1,6 +1,6 @@
 # Implementation Plan: Gallery Metadata Search
 
-**Branch**: `feature/009-gallery-metadata-search` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feature/009-gallery-metadata-search` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 **Status**: Proposed — pending approval
 
 ## Summary
