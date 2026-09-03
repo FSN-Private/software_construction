@@ -1,6 +1,6 @@
 # Implementation Plan: Windows Cloud Files Synchronization
 
-**Branch**: `feature/007-windows-cloud-files-sync` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)  
+**Branch**: `feature/007-windows-cloud-files-sync` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
 **Status**: Proposed — pending approval
 
 ## Summary
