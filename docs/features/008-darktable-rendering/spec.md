@@ -80,6 +80,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **FR-014**: The system MUST record operational events for request, completion, failure, retry, cache use, and compatibility rejection.
 - **FR-015**: The system MUST maintain a representative image-and-XMP regression corpus and compare supported-release output against approved references before a release is accepted.
 - **FR-016**: The system MUST require an explicit compatibility approval before changing the reference darktable release or render profile used for new derivatives.
+- **FR-017**: The system MUST contain untrusted image and XMP rendering so a compromised or malformed input cannot access production metadata, credentials, other libraries, originals, XMP history, or write-capable source storage.
 
 ### Key Entities
 
@@ -99,6 +100,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **AC-006**: A retry after a correctable failure creates a distinct attempt and can complete successfully.
 - **AC-007**: Render execution cannot alter source objects, working changes, commits, or branch references.
 - **AC-008**: Every supported-release change passes the approved regression corpus before use for new requests.
+- **AC-009**: One RAW fixture with its current XMP state and at least three distinct historical XMP revisions renders with traceable provenance for every rendition.
 
 ## Non-Functional Requirements
 
@@ -118,6 +120,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **NFR-014 Recovery**: After restart, in-progress work MUST resolve to a visible retryable or terminal state within 10 minutes.
 - **NFR-015 Localization**: User-visible statuses and failure messages MUST be localizable; stored provenance identifiers remain language-neutral.
 - **NFR-016 Compliance**: Preview retention and deletion MUST honor the parent program's library deletion and recovery policy.
+- **NFR-017 Freshness**: Under the reference 100,000-image workload, 99% of supported images MUST have a usable gallery thumbnail within 5 minutes of completed upload, excluding visible retryable failures.
 
 ## Assumptions and Dependencies
 
@@ -130,5 +133,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 
 - **SC-001**: A photographer can see a requested supported-image thumbnail in at least 95% of already-rendered cases within 500 ms.
 - **SC-002**: A photographer can select either of two committed XMP versions and distinguish their provenance without downloading either original.
+- **SC-005**: A current XMP state and at least three historical revisions of the same RAW fixture render with distinguishable, traceable provenance.
+- **SC-006**: 99% of supported images in the reference workload have usable thumbnails within five minutes of completed upload, excluding visible retryable failures.
 - **SC-003**: All malformed or unsupported test fixtures show a clear failure state and never show a derivative from another input.
 - **SC-004**: Every approved darktable-release update passes the complete rendering regression corpus before it serves new derivatives.
