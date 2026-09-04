@@ -35,7 +35,7 @@
 
 **Independent test**: Build one release, deploy non-production, promote identical digests after approval, inject failed health, and restore the last compatible release without rebuilding.
 
-- [ ] T016 [P] [US2] Create locked container, web, CDK, and Windows package build definitions in `apps/` and `packages/` (FR-005/015, AC-008, NFR-016).
+- [x] T016 [P] [US2] Create locked container, web, CDK, and Windows package build definitions in `apps/` and `packages/` (FR-005/015, AC-008, NFR-016). API/web/CDK Dockerfiles pin resolved base-image digests and use locked installs; Windows packaging restores the committed `win-x64` NuGet target and produces a ZIP. Structural contract, web/CDK/API builds, and Windows packaging pass locally; Docker image builds require Docker Desktop or a compatible engine and remain for CI validation.
 - [ ] T017 [US2] Implement attested build-and-manifest generation in `.github/workflows/build-release.yml` (FR-005, AC-003/008, NFR-016).
 - [ ] T018 [US2] Implement exact-digest non-production deployment, smoke, and health evidence in `.github/workflows/deploy-nonprod.yml` (FR-006/008, AC-003, NFR-011).
 - [ ] T019 [US2] Implement tag, approval, evidence, and database-compatibility gates for production promotion in `.github/workflows/release.yml` (FR-007/008, AC-003/004, NFR-003/011).

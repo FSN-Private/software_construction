@@ -60,6 +60,8 @@ The API is the canonical source for status and identity context. The web shell c
 
 Workflows use top-level `contents: read`, explicit job permissions, timeouts, and cancellation for obsolete non-deployment work. The required PR dependency gate is Aqua Security Trivy v0.36.0 pinned to `ed142fd0673e97e23eac54620cfb913e5ce36c25`; it blocks committed high/critical findings without registry-dependent npm audit calls and works for private repositories without GitHub Advanced Security. Its pull-request cache is disabled to avoid persisting untrusted scan state. The separate full npm lockfile audit retains bounded retries and supplies scheduled/manual diagnostics; it is not a merge gate because repeated npm registry outages must not block unrelated reviews. Release evidence still requires a successful vulnerability review. No workflow uses `pull_request_target` to check out untrusted code. Third-party actions use reviewed full commit SHAs and readable version comments. Protection settings are bootstrap evidence and drift-checked.
 
+T016 defines the API, web, and CDK container builds with registry-resolved immutable base-image digests. The API runtime drops root privileges, web serves only its compiled static bundle, and the CDK image synthesizes without deployment credentials. Windows packaging restores the committed `win-x64` NuGet lock target and archives a framework-dependent API publish. Docker execution is an environment-specific validation until a Docker-compatible engine is available; structural tests validate image pinning and locked build commands locally.
+
 ### Lifecycle, security, and operations
 
 1. CI binds every check to the revision and aggregate result.

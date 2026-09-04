@@ -19,6 +19,11 @@
     "package:api": "dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output artifacts/api",
     "test:contract": "node tests/contract/validate-fixtures.mjs",
     "test:ci-contract": "node tests/infrastructure/ci-contract/validate-ci.mjs",
+    "test:package-definitions": "node tests/infrastructure/release/package-definitions.mjs",
+    "package:api-container": "docker build --file apps/api/Dockerfile --tag software-construction-api:local .",
+    "package:web-container": "docker build --file apps/web/Dockerfile --tag software-construction-web:local .",
+    "package:infrastructure-container": "docker build --file packages/infrastructure/Dockerfile --tag software-construction-infrastructure:local .",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/api/packaging/windows/package.ps1",
     "validate:infrastructure": "npm --prefix packages/infrastructure run validate",
     "validate:security": "node scripts/audit-dependencies.mjs && npm --prefix packages/infrastructure run scan:secrets && npm --prefix packages/infrastructure run validate:dependencies && npm --prefix packages/infrastructure run validate:licenses"
   }
