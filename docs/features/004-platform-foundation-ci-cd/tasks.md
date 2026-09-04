@@ -25,11 +25,11 @@
 
 **Independent test**: Seed one failure per required category and prove its stable check blocks merging while a corrected revision passes.
 
-- [ ] T011 [P] [US1] Add backend formatting, static analysis, unit/integration, package, and contract test commands in `apps/api/` and `tests/` (FR-001/002, AC-001, NFR-001/009).
-- [ ] T012 [P] [US1] Add web formatting, typecheck, accessibility, test, and build commands in `apps/web/` (FR-001/002, AC-001, NFR-005/006/009).
-- [ ] T013 [P] [US1] Add infrastructure synthesis, assertion, IaC, secret, dependency, license, and vulnerability validation commands in `packages/infrastructure/` and `packages/release-tools/` (FR-001/015, AC-001/008, NFR-003/016).
-- [ ] T014 [US1] Implement protected/fork-safe CI jobs and the `ci / required` stale/cancelled/skipped guard in `.github/workflows/ci.yml` (FR-002/003/004, AC-001/002, NFR-001/015).
-- [ ] T015 [US1] Add validation-failure fixtures and check-name contract tests in `tests/infrastructure/ci-contract/` (FR-001/003, AC-001, NFR-009).
+- [x] T011 [P] [US1] Add backend formatting, static analysis, unit/integration, package, and contract test commands in `apps/api/` and `tests/` (FR-001/002, AC-001, NFR-001/009). Format, analyzer build, unit, middleware integration, package, and contract validations pass locally.
+- [x] T012 [P] [US1] Add web formatting, typecheck, accessibility, test, and build commands in `apps/web/` (FR-001/002, AC-001, NFR-005/006/009). Web format, typecheck, source/accessibility-structure test, and production build pass; full authenticated accessibility coverage remains in T024/T026.
+- [x] T013 [P] [US1] Add infrastructure synthesis, assertion, IaC, secret, dependency, license, and vulnerability validation commands in `packages/infrastructure/` and `packages/release-tools/` (FR-001/015, AC-001/008, NFR-003/016). Synth/assertion, secret scan, dependency tree, reviewed license gate, and high-severity audit pass; release-tool tests run through `npm run test`.
+- [x] T014 [US1] Implement protected/fork-safe CI jobs and the `ci / required` stale/cancelled/skipped guard in `.github/workflows/ci.yml` (FR-002/003/004, AC-001/002, NFR-001/015). CI jobs use scoped dependency installs, read-only permissions, immutable action pins, no OIDC/secrets/environment access, cancellation, and a fail-closed aggregate guard.
+- [x] T015 [US1] Add validation-failure fixtures and check-name contract tests in `tests/infrastructure/ci-contract/` (FR-001/003, AC-001, NFR-009). Stable names, immutable pins, read-only fork boundary, and failing/cancelled/skipped aggregate behavior are covered by `npm run test:ci-contract`.
 
 ## Phase 4: User Story 2 — Promote and roll back one release artifact (P2)
 

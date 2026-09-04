@@ -23,7 +23,16 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-      - run: dotnet build apps/api/Platform.Api.csproj --nologo
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run format
+      - run: npm run lint
+      - run: npm run test:backend
+      - run: npm run test:contract
+      - run: npm run package:api
 
   web:
     name: ci / web
@@ -35,8 +44,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run typecheck
+      - run: npm --prefix apps/web ci --ignore-scripts
+      - run: npm --prefix apps/web run format
+      - run: npm --prefix apps/web run typecheck
+      - run: npm --prefix apps/web run test
+      - run: npm --prefix apps/web run test:accessibility
+      - run: npm --prefix apps/web run build
 
   windows:
     name: ci / windows
@@ -48,6 +61,7 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet build apps/api/Platform.Api.csproj --nologo
+      - run: dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output artifacts/api
 
   infrastructure:
     name: ci / infrastructure
@@ -59,7 +73,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm --prefix packages/infrastructure ci --ignore-scripts
       - run: npm run validate:infrastructure
 
   security:
@@ -73,7 +87,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --audit-level=high
+      - run: npm --prefix apps/web audit --audit-level=high
+      - run: npm --prefix packages/infrastructure audit --audit-level=high
 
   required:
     name: ci / required
@@ -90,8 +106,6 @@ jobs:
           INFRASTRUCTURE: ${{ needs.infrastructure.result }}
           SECURITY: ${{ needs.security.result }}
         run: |
-          test "$BACKEND" = success
-          test "$WEB" = success
-          test "$WINDOWS" = success
-          test "$INFRASTRUCTURE" = success
-          test "$SECURITY" = success
+          for RESULT in "$BACKEND" "$WEB" "$WINDOWS" "$INFRASTRUCTURE" "$SECURITY"; do
+            test "$RESULT" = success
+          done

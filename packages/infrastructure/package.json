@@ -9,7 +9,13 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc",
-    "synth": "npm run build && cdk synth"
+    "synth": "npm run build && cdk synth --no-lookups --context environment=nonprod --context region=ap-southeast-1 --quiet",
+    "assert": "node scripts/assert-template.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "validate:dependencies": "npm ls --all",
+    "validate:licenses": "node scripts/validate-licenses.mjs",
+    "validate:vulnerabilities": "npm audit --omit=dev --audit-level=high",
+    "validate": "npm run check && npm run synth && npm run assert && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
   },
   "dependencies": {
     "aws-cdk-lib": "2.267.0",

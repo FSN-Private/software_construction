@@ -10,6 +10,13 @@ Install the versions pinned in [docs/toolchain.md](docs/toolchain.md), then run:
 npm run validate:toolchain
 ```
 
+Install each implemented Node package before running its command:
+
+```powershell
+npm --prefix apps/web ci
+npm --prefix packages/infrastructure ci
+```
+
 The root command names are stable and will gain their implementations with their owning tasks:
 
 - `npm run format`, `npm run lint`, `npm run typecheck`

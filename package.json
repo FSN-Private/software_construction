@@ -9,14 +9,17 @@
   "scripts": {
     "validate": "node scripts/validate.mjs all",
     "validate:toolchain": "node scripts/validate.mjs toolchain",
-    "format": "node scripts/validate.mjs format",
-    "lint": "node scripts/validate.mjs lint",
-    "typecheck": "node scripts/validate.mjs typecheck",
-    "test": "dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj && node tests/unit/release-manifest.mjs",
-    "test:integration": "node scripts/validate.mjs integration",
-    "build": "node scripts/validate.mjs build",
+    "format": "dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore && npm --prefix apps/web run format",
+    "lint": "dotnet build apps/api/Platform.Api.csproj --nologo",
+    "typecheck": "npm --prefix apps/web run typecheck",
+    "test:backend": "dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj && node tests/unit/release-manifest.mjs && node tests/integration/api-correlation.mjs",
+    "test": "dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj && node tests/unit/release-manifest.mjs && node tests/integration/api-correlation.mjs && npm --prefix apps/web run test && npm --prefix apps/web run test:accessibility",
+    "test:integration": "node tests/integration/api-correlation.mjs",
+    "build": "npm --prefix apps/web run build",
+    "package:api": "dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output artifacts/api",
     "test:contract": "node tests/contract/validate-fixtures.mjs",
-    "validate:infrastructure": "node scripts/validate.mjs infrastructure",
+    "test:ci-contract": "node tests/infrastructure/ci-contract/validate-ci.mjs",
+    "validate:infrastructure": "npm --prefix packages/infrastructure run validate",
     "validate:security": "node scripts/validate.mjs security"
   }
 }

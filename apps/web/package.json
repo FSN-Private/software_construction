@@ -1,0 +1,29 @@
+{
+  "name": "@software-construction/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "24.20.0"
+  },
+  "scripts": {
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-source.mjs",
+    "test:accessibility": "node scripts/test-accessibility.mjs",
+    "build": "npm run typecheck && vite build"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.0",
+    "prettier": "3.8.2",
+    "typescript": "6.0.3",
+    "vite": "8.2.2"
+  }
+}
