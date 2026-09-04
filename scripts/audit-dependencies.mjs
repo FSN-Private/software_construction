@@ -45,11 +45,11 @@ function executeNpm(args) {
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (error) => {
       clearTimeout(timeout);
-      resolve({ code: 1, output: error.message, timedOut: false });
+      resolve({ code: 1, stdout: '', stderr: error.message, timedOut: false });
     });
     child.on('close', (code) => {
       clearTimeout(timeout);
-      resolve({ code, output: `${stdout}${stderr}`, timedOut });
+      resolve({ code, stdout, stderr, timedOut });
     });
   });
 }
@@ -62,14 +62,15 @@ export async function runAudit(directory, options = [], execute = executeNpm, wa
       return;
     }
 
-    if (hasHighSeverityVulnerability(result.output)) {
-      throw new Error(`Dependency audit found a high or critical vulnerability in ${directory}.\n${result.output}`);
+    const diagnostics = `${result.stdout}${result.stderr}`;
+    if (hasHighSeverityVulnerability(result.stdout)) {
+      throw new Error(`Dependency audit found a high or critical vulnerability in ${directory}.\n${diagnostics}`);
     }
 
-    const transient = result.timedOut || isTransientAuditFailure(result.output);
+    const transient = result.timedOut || isTransientAuditFailure(diagnostics);
     if (!transient || attempt === attempts) {
       const reason = transient ? 'after bounded retries' : 'with a non-transient error';
-      throw new Error(`Dependency audit failed for ${directory} ${reason}.\n${result.output}`);
+      throw new Error(`Dependency audit failed for ${directory} ${reason}.\n${diagnostics}`);
     }
 
     console.warn(`Transient dependency-audit failure for ${directory}; retrying (${attempt}/${attempts}).`);

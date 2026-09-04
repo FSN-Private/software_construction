@@ -27,6 +27,43 @@ The alternate reviewer confirmed FR-017/AC-010 protection-drift coverage and FR-
 
 ---
 
+# Adversarial pre-push review — CI audit reliability
+
+**Status**: PASS
+**Review date**: 2026-09-04
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`ecdbcc9`)
+**Reviewed scope**: `origin/feature/004-platform-foundation-ci-cd..HEAD`, initially `545f5ee`, plus the uncommitted correction and this review record. No push occurs until final PASS.
+
+## Round 1
+
+| ID | Severity | Evidence and affected IDs | Impact and remediation | Implementer disposition |
+|---|---|---|---|---|
+| R1-1 | Medium | The retry wrapper combined npm audit stdout and stderr, then parsed the combined text as JSON. A high/critical audit report on stdout plus transient-looking stderr could be retried. Affected: T034, FR-015, AC-008, NFR-003, NFR-015. | A real high/critical advisory could fail to get the required immediate classification; a later success could mask the original vulnerability observation. Keep stdout/stderr separate and parse stdout before retry classification. | **Valid and fixed.** `executeNpm` now returns separate streams; `runAudit` parses high/critical metadata from stdout first and uses combined streams only for diagnostics/transient classification. The regression test supplies high-vulnerability JSON plus `503` stderr and proves exactly one attempt with a high-vulnerability failure. |
+
+### Round 1 areas with no finding
+
+No issue was found in commit scope, workflow trust boundaries, pure transient bounded retries, direct high/critical JSON handling, increased job time budgets, local parity, documentation/task traceability, or pinned actions/permissions.
+
+## Validation after the fix
+
+- `node tests/unit/audit-dependencies.mjs` — passed, including transient retry, immediate high-vulnerability failure, and high-vulnerability stdout with transient stderr.
+- `npm run test:ci-contract` — passed.
+- `git diff --check` — passed.
+
+## Round 2
+
+The alternate reviewer confirmed R1-1 is **valid and fixed**: high/critical JSON on stdout now takes precedence over transient-looking stderr and cannot be retried into a later success. It found no new valid issue in the revised working-tree diff or review record.
+
+## Final agreement
+
+The alternate reviewer explicitly confirmed that no valid unresolved finding remains for the complete pending CI audit reliability scope.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial pre-push review — CI MVP and foundation controls
 
 **Status**: PASS
