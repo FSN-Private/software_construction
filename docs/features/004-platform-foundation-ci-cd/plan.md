@@ -57,7 +57,7 @@ The API is the canonical source for status and identity context. The web shell c
 | `rollback.yml` | authorized dispatch | named compatible manifest restored without rebuild | protected environment |
 | `recovery-drill.yml` | scheduled/manual | isolated recovery evidence | recovery account only |
 
-Workflows use top-level `contents: read`, explicit job permissions, timeouts, and cancellation for obsolete non-deployment work. No workflow uses `pull_request_target` to check out untrusted code. Third-party actions use reviewed full commit SHAs and readable version comments. Protection settings are bootstrap evidence and drift-checked.
+Workflows use top-level `contents: read`, explicit job permissions, timeouts, and cancellation for obsolete non-deployment work. Registry-backed security audits use bounded retries for transient service failures, but exhaust those retries as a required failure and never suppress a vulnerability finding. No workflow uses `pull_request_target` to check out untrusted code. Third-party actions use reviewed full commit SHAs and readable version comments. Protection settings are bootstrap evidence and drift-checked.
 
 ### Lifecycle, security, and operations
 

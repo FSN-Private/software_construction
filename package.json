@@ -20,6 +20,6 @@
     "test:contract": "node tests/contract/validate-fixtures.mjs",
     "test:ci-contract": "node tests/infrastructure/ci-contract/validate-ci.mjs",
     "validate:infrastructure": "npm --prefix packages/infrastructure run validate",
-    "validate:security": "npm audit --audit-level=high && npm --prefix apps/web audit --audit-level=high && npm --prefix packages/infrastructure audit --audit-level=high && npm --prefix packages/infrastructure run scan:secrets && npm --prefix packages/infrastructure run validate:dependencies && npm --prefix packages/infrastructure run validate:licenses"
+    "validate:security": "node scripts/audit-dependencies.mjs && npm --prefix packages/infrastructure run scan:secrets && npm --prefix packages/infrastructure run validate:dependencies && npm --prefix packages/infrastructure run validate:licenses"
   }
 }

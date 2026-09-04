@@ -61,6 +61,7 @@
 - [ ] T031 Run cancellation, duplicate delivery, runner loss, superseding revision, and rollback-compatibility fault injection in `tests/infrastructure/reliability/` (FR-003/009, AC-004, NFR-015).
 - [ ] T032 Revalidate region availability, quotas, action SHAs, package patches, pricing, and code-signing custody in `docs/features/004-platform-foundation-ci-cd/pre-deploy-check.md` (NFR-003/011/013/016).
 - [x] T033 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0003-platform-foundation-and-delivery.md`. Approval recorded 2026-09-03 before implementation.
+- [x] T034 [US1] Harden CI registry-audit reliability after GitHub Actions run `33861954140` showed repeated npm advisory-service 503 failures and infrastructure timeout: retry only transient audit service failures with bounded backoff, preserve vulnerability failures, and allocate sufficient security/infrastructure job time (FR-001/002/003/015, AC-001/008, NFR-001/003/009/015). Unit tests prove transient retry and immediate high-vulnerability failure; all local audits report zero vulnerabilities. Remote CI revalidation is required after the next authorized push.
 
 ## Dependencies and milestones
 

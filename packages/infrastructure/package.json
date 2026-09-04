@@ -14,7 +14,7 @@
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "validate:dependencies": "npm ls --all",
     "validate:licenses": "node scripts/validate-licenses.mjs",
-    "validate:vulnerabilities": "npm audit --omit=dev --audit-level=high",
+    "validate:vulnerabilities": "node ../../scripts/audit-dependencies.mjs . --omit=dev",
     "validate": "npm run check && npm run synth && npm run assert && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
   },
   "dependencies": {
