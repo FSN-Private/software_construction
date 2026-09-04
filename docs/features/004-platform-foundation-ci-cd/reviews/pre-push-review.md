@@ -34,8 +34,8 @@ The alternate reviewer confirmed FR-017/AC-010 protection-drift coverage and FR-
 **Alternate reviewer model**: gpt-5.5
 **Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
 **Base**: `origin/feature/004-platform-foundation-ci-cd` (`5b0842e`)
-**Reviewed committed range**: `origin/feature/004-platform-foundation-ci-cd..HEAD` (`5966bd2`, `1cc8076`)
-**Pending scope**: the reviewed committed range plus the uncommitted review fixes and this review record; no push or external mutation is authorized.
+**Reviewed committed range**: every commit reachable from `HEAD` and absent from `origin/feature/004-platform-foundation-ci-cd` at push time. The initial implementation commits were `5966bd2` and `1cc8076`; the dedicated review milestone is `ccaaa37`.
+**Pending scope**: the complete dynamic range `origin/feature/004-platform-foundation-ci-cd..HEAD`, including the reviewed implementation, review fixes, and final review-record milestone; no push or external mutation is authorized by this record.
 
 ## Reviewer prompt scope
 
