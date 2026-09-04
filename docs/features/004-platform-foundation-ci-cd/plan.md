@@ -50,14 +50,15 @@ The API is the canonical source for status and identity context. The web shell c
 
 | Workflow | Event | Stable checks/output | Trust boundary |
 |---|---|---|---|
-| `ci.yml` | PR and protected-branch push | `ci / backend`, `ci / web`, `ci / windows`, `ci / infrastructure`, `ci / security`, `ci / required` | PRs are read-only: no secrets, OIDC, protected environment, trusted publication, or privileged runner |
+| `ci.yml` | PR and protected-branch push | `ci / backend`, `ci / web`, `ci / windows`, `ci / infrastructure`, `ci / security`, `ci / required` | PRs are read-only: no secrets, OIDC, protected environment, trusted publication, or privileged runner; security blocks committed high/critical dependency findings through pinned Trivy filesystem scanning |
+| `dependency-audit.yml` | daily schedule/manual dispatch | `security / dependency audit (diagnostic)` | Read-only full npm lockfile audit; a registry outage or finding is visible for follow-up but is not a PR merge gate |
 | `build-release.yml` | successful protected-default revision | API/worker images, web bundle, CDK assembly, checksums, SPDX SBOM, provenance | narrowly scoped artifact/attestation permissions |
 | `deploy-nonprod.yml` | verified manifest | exact digests and smoke evidence | OIDC role scoped to non-production account |
 | `release.yml` | matching `v*` tag | same digests after protected `production` approval | OIDC production role after approval only |
 | `rollback.yml` | authorized dispatch | named compatible manifest restored without rebuild | protected environment |
 | `recovery-drill.yml` | scheduled/manual | isolated recovery evidence | recovery account only |
 
-Workflows use top-level `contents: read`, explicit job permissions, timeouts, and cancellation for obsolete non-deployment work. Registry-backed security audits use bounded retries for transient service failures, but exhaust those retries as a required failure and never suppress a vulnerability finding. No workflow uses `pull_request_target` to check out untrusted code. Third-party actions use reviewed full commit SHAs and readable version comments. Protection settings are bootstrap evidence and drift-checked.
+Workflows use top-level `contents: read`, explicit job permissions, timeouts, and cancellation for obsolete non-deployment work. The required PR dependency gate is Aqua Security Trivy v0.36.0 pinned to `ed142fd0673e97e23eac54620cfb913e5ce36c25`; it blocks committed high/critical findings without registry-dependent npm audit calls and works for private repositories without GitHub Advanced Security. Its pull-request cache is disabled to avoid persisting untrusted scan state. The separate full npm lockfile audit retains bounded retries and supplies scheduled/manual diagnostics; it is not a merge gate because repeated npm registry outages must not block unrelated reviews. Release evidence still requires a successful vulnerability review. No workflow uses `pull_request_target` to check out untrusted code. Third-party actions use reviewed full commit SHAs and readable version comments. Protection settings are bootstrap evidence and drift-checked.
 
 ### Lifecycle, security, and operations
 

@@ -15,6 +15,8 @@ Packages, base images, build tools, GitHub Actions, and CDK constructs are execu
 
 Before merging a dependency change, verify package identity and authoritative source, maintenance/ownership, license compatibility, advisories, install scripts, permissions, and unexpected transitive growth. Run the applicable lockfile, build, test, vulnerability, secret, license, and provenance checks. Critical or high exploitable findings block release; a lower-severity exception requires documented owner, compensating controls, review date, and approval.
 
+Pull requests use Aqua Security Trivy, pinned to action commit `ed142fd0673e97e23eac54620cfb913e5ce36c25` (v0.36.0), as the required dependency-vulnerability gate. It scans committed lockfiles through Trivy's vulnerability database and blocks high or critical findings with read-only repository access, including for private repositories without GitHub Advanced Security. Its cache is disabled in pull-request CI so untrusted scan state is not persisted. The full npm lockfile audit remains a daily and manually runnable diagnostic workflow, so an npm advisory-registry outage is visible without making an unrelated pull request unmergeable. Release evidence still requires a successful vulnerability review.
+
 The current CDK transitive closure permits `BlueOak-1.0.0` for `minimatch`, provided release notices include the license text or link, and `(MIT OR GPL-3.0-or-later)` for `case`, selecting its MIT alternative. These are reviewed permissive-license exceptions; the full release inventory remains required by T029.
 
 Release manifests must identify the source revision, artifact checksums, SBOM, provenance, dependency/security evidence, and unresolved accepted risks. Mutable or unverifiable inputs block promotion.

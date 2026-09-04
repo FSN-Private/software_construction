@@ -1,3 +1,38 @@
+# Adversarial pre-push review - Trivy required security gate
+
+**Status**: PASS
+**Review date**: 2026-09-04
+**Alternate reviewer model**: GPT-5 Codex model-switch review, independent of the implementation model used before handoff
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`4d4366a`)
+**Reviewed pending scope**: working-tree changes replacing the required PR npm audit with pinned Trivy vulnerability scanning in `.github/workflows/ci.yml`, adding `.github/workflows/dependency-audit.yml` as a scheduled/manual npm audit diagnostic, and updating dependency policy, Feature 004 plan/tasks, and CI contract coverage. No push occurs until final PASS.
+
+## Reviewer prompt scope
+
+The review covered repository instructions, Feature 004 plan/tasks, dependency policy, the full pending diff including the untracked diagnostic workflow, CI contract tests, and validation evidence. It specifically checked the change against FR-001/002/003/015, AC-001/008, NFR-001/003/009/015, and T035 after repeated npm advisory endpoint failures in GitHub Actions run `33869612368`.
+
+## Round 1
+
+No valid unresolved finding was identified. The required security check remains read-only, uses no secrets, does not use `pull_request_target`, and is pinned to `aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25` with version comment `v0.36.0`. The workflow configures filesystem vulnerability scanning, high/critical severity failure, exit code `1`, Trivy `v0.70.0`, and disabled pull-request cache. The full npm audit is retained as a scheduled/manual diagnostic using the existing bounded retry wrapper with `--package-lock-only`, so npm advisory endpoint instability remains visible without blocking unrelated PR merges.
+
+### Residual risk
+
+A live Trivy scan was not run locally because the action and vulnerability database are GitHub Actions/runtime concerns. This is acceptable for this push gate because `npm run test:ci-contract` verifies the workflow contract locally, and remote PR CI revalidation is explicitly required after the authorized push.
+
+## Validation
+
+- `npm run test:ci-contract` - passed.
+- `node tests/unit/audit-dependencies.mjs` - passed.
+- `git diff --check` - passed with only CRLF conversion warnings.
+
+## Final agreement
+
+The independent review confirms that no valid unresolved finding remains for the pending Trivy security-gate scope, with remote CI revalidation required after push.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial Specification Review
 
 **Status**: Round 1 findings fixed; awaiting independent Round 2  
