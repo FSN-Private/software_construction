@@ -19,5 +19,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci --ignore-scripts
-      - run: node packages/infrastructure/identity/verify-protection.mjs packages/infrastructure/identity/protection-baseline.json tests/infrastructure/protection-evidence.json
+      - name: Verify live protection settings
+        env:
+          GITHUB_TOKEN: ${{ secrets.PROTECTION_AUDIT_TOKEN }}
+        run: node packages/infrastructure/identity/verify-protection.mjs packages/infrastructure/identity/protection-baseline.json

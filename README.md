@@ -25,3 +25,5 @@ The root command names are stable and will gain their implementations with their
 - `npm run validate` runs the complete suite once every category is registered.
 
 Until those implementation tasks are complete, unregistered category commands intentionally fail rather than give a false passing result. CI uses the same command names.
+
+The scheduled protection audit requires a repository secret named `PROTECTION_AUDIT_TOKEN`: a fine-grained GitHub token restricted to this repository with read-only administration and environment access. The workflow fails closed if the secret is absent or cannot read live settings; this token is an external GitHub setup step and is never available to pull-request CI.

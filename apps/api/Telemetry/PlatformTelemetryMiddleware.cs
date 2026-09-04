@@ -20,12 +20,33 @@ public sealed class PlatformTelemetryMiddleware(
         var started = Stopwatch.GetTimestamp();
         using (logger.BeginScope(new Dictionary<string, object?> { ["operationId"] = operationId }))
         {
-            await next(context);
-            var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            PlatformTelemetry.Requests.Add(1, new KeyValuePair<string, object?>("status", context.Response.StatusCode));
-            PlatformTelemetry.RequestDuration.Record(duration, new KeyValuePair<string, object?>("status", context.Response.StatusCode));
-            activity?.SetTag("http.response.status_code", context.Response.StatusCode);
-            logger.LogInformation("Request completed with status {StatusCode} in {DurationMs} ms", context.Response.StatusCode, duration);
+            Exception? exception = null;
+            try
+            {
+                await next(context);
+            }
+            catch (Exception caught)
+            {
+                exception = caught;
+                activity?.SetStatus(ActivityStatusCode.Error, caught.GetType().Name);
+                throw;
+            }
+            finally
+            {
+                var statusCode = exception is null ? context.Response.StatusCode : StatusCodes.Status500InternalServerError;
+                var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                PlatformTelemetry.Requests.Add(1, new KeyValuePair<string, object?>("status", statusCode));
+                PlatformTelemetry.RequestDuration.Record(duration, new KeyValuePair<string, object?>("status", statusCode));
+                activity?.SetTag("http.response.status_code", statusCode);
+                if (exception is null)
+                {
+                    logger.LogInformation("Request completed with status {StatusCode} in {DurationMs} ms", statusCode, duration);
+                }
+                else
+                {
+                    logger.LogError(exception, "Request failed with status {StatusCode} in {DurationMs} ms", statusCode, duration);
+                }
+            }
         }
     }
 }

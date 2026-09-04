@@ -17,6 +17,13 @@ const pins = workflow.match(/uses: [^@\s]+@[0-9a-f]{40} # v[0-9]/g) ?? [];
 assert.ok(pins.length >= 2, 'CI actions must be pinned to immutable full commit identities.');
 assert.ok(workflow.includes('if: ${{ always() }}'), 'The aggregate check must run after non-success outcomes.');
 assert.ok(workflow.includes('test "$RESULT" = success'), 'The aggregate check must reject every non-success outcome.');
+assert.ok(!workflow.includes('- run: npm run format'), 'Backend CI must not invoke web formatting without installing web dependencies.');
+assert.ok(workflow.includes('cache-dependency-path: apps/web/package-lock.json'), 'Web CI must cache from its own lockfile.');
+assert.ok(workflow.includes('cache-dependency-path: packages/infrastructure/package-lock.json'), 'Infrastructure CI must cache from its own lockfile.');
+
+const protectionWorkflow = readFileSync('.github/workflows/verify-protection.yml', 'utf8');
+assert.ok(protectionWorkflow.includes('PROTECTION_AUDIT_TOKEN'), 'Protection verification must use the dedicated read-only audit token.');
+assert.ok(!protectionWorkflow.includes('tests/infrastructure/protection-evidence.json'), 'Protection verification must not compare two committed snapshots.');
 
 for (const outcome of fixture.nonPassingOutcomes) {
   assert.notEqual(outcome, 'success', `${outcome} must be rejected by the aggregate contract.`);

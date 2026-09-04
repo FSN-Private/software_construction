@@ -19,11 +19,11 @@
   "environments": {
     "nonprod": {
       "requiredReviewers": false,
-      "deploymentBranchPolicy": "master"
+      "deploymentBranchPolicy": "protected-branches"
     },
     "production": {
       "requiredReviewers": true,
-      "deploymentBranchPolicy": "master"
+      "deploymentBranchPolicy": "protected-branches"
     }
   }
 }
