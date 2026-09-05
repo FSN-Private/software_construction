@@ -8,7 +8,9 @@ export function createOwnerIdentity(scope: Construct, props: OwnerIdentityProps)
   const userPool = new UserPool(scope, 'OwnerUserPool', { selfSignUpEnabled: false, signInAliases: { email: true }, passwordPolicy: { minLength: 14, requireDigits: true, requireLowercase: true, requireUppercase: true, requireSymbols: true, tempPasswordValidity: Duration.days(7) }, removalPolicy: RemovalPolicy.RETAIN });
   const client = new UserPoolClient(scope, 'OwnerWebClient', { userPool, authFlows: { userSrp: true }, preventUserExistenceErrors: true });
   const owner = new CfnUserPoolUser(scope, 'ProvisionedOwner', { userPoolId: userPool.userPoolId, username: props.ownerEmail, userAttributes: [{ name: 'email', value: props.ownerEmail }, { name: 'email_verified', value: 'true' }] });
-  new CfnUserPoolGroup(scope, 'OwnerGroup', { groupName: 'owner', userPoolId: userPool.userPoolId });
-  new CfnUserPoolUserToGroupAttachment(scope, 'ProvisionedOwnerGroupAttachment', { groupName: 'owner', username: props.ownerEmail, userPoolId: userPool.userPoolId }).addDependency(owner);
+  const ownerGroup = new CfnUserPoolGroup(scope, 'OwnerGroup', { groupName: 'owner', userPoolId: userPool.userPoolId });
+  const attachment = new CfnUserPoolUserToGroupAttachment(scope, 'ProvisionedOwnerGroupAttachment', { groupName: 'owner', username: props.ownerEmail, userPoolId: userPool.userPoolId });
+  attachment.addDependency(owner);
+  attachment.addDependency(ownerGroup);
   return { userPool, client };
 }

@@ -33,6 +33,36 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review — Phase 5 authenticated platform slice
+
+**Status**: Round 1 findings fixed; awaiting alternate-model follow-up
+**Review date**: 2026-09-05
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`1b827a9`)
+**Reviewed scope**: `origin/feature/004-platform-foundation-ci-cd..HEAD` through `d615eda` plus the corrections below.
+
+## Round 1 findings and dispositions
+
+| ID | Severity | Affected IDs | Disposition and evidence |
+|---|---|---|---|
+| R1-1 | High | FR-012/013, AC-005, T022/T026 | **Valid and fixed.** Added the official locked `Microsoft.AspNetCore.Authentication.JwtBearer` package, Cognito authority/audience configuration, authentication/authorization middleware, and owner-group claim enforcement. Restore/build passes. |
+| R1-2 | Medium | FR-014, AC-007, T025/T027 | **Valid and fixed.** The KMS CMK now grants only CloudWatch and SNS service principals `Decrypt`/`GenerateDataKey*`, constrained to this account, so encrypted alarm notifications can publish. CDK assertion passes. |
+| R1-3 | Medium | FR-012, AC-005, T023 | **Valid and fixed.** The owner-to-group attachment now depends explicitly on both the owner and owner group. CDK synthesis succeeds. |
+
+## Validation after fixes
+
+- `dotnet restore apps/api/Platform.Api.csproj --runtime win-x64` and `dotnet build apps/api/Platform.Api.csproj --nologo` — passed.
+- `npm --prefix packages/infrastructure run build`, `synth`, and `assert` — passed (CDK emitted only existing deprecation warnings).
+- `node tests/integration/api-correlation.mjs` and `npm run test:phase5-contract` — passed.
+- `git diff --check` — passed.
+
+## Round 2
+
+Pending alternate-model assessment of all R1 dispositions and the revised complete range.
+
+---
+
 # Adversarial pre-push review — locked packages and immutable release path
 
 **Status**: PASS

@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
@@ -59,6 +59,12 @@ export class PlatformFoundationStack extends Stack {
     });
     const identity = createOwnerIdentity(this, { ownerEmail: props.ownerEmail });
     const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
+    encryptionKey.addToResourcePolicy(new aws_iam.PolicyStatement({
+      principals: [new aws_iam.ServicePrincipal('cloudwatch.amazonaws.com'), new aws_iam.ServicePrincipal('sns.amazonaws.com')],
+      actions: ['kms:Decrypt', 'kms:GenerateDataKey*'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'aws:SourceAccount': this.account } },
+    }));
     alerts.addSubscription(new EmailSubscription(props.alertEmail));
     const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
     const availabilityAlarm = new Alarm(this, 'ServiceAvailabilityAlarm', { metric: availability, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING });

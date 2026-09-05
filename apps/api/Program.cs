@@ -1,4 +1,5 @@
 using Platform.Api.Telemetry;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,6 +7,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
 builder.Services.AddSingleton<OperationIdFactory>();
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+{
+    options.Authority = builder.Configuration["Authentication:CognitoAuthority"];
+    options.Audience = builder.Configuration["Authentication:CognitoClientId"];
+    options.RequireHttpsMetadata = true;
+});
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
@@ -18,6 +26,8 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     await result.ExecuteAsync(context);
 }));
 app.UsePlatformTelemetry();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", (HttpContext context) => RequireOwner(context, () => Results.Ok(new
@@ -43,7 +53,7 @@ app.MapGet("/v1/version", (HttpContext context) => RequireOwner(context, () => R
 app.Run();
 
 static IResult RequireOwner(HttpContext context, Func<IResult> success) =>
-    context.User.Identity?.IsAuthenticated is true && context.User.HasClaim("cognito:groups", "owner")
+    context.User.Identity?.IsAuthenticated is true && context.User.Claims.Any(claim => claim.Type == "cognito:groups" && claim.Value == "owner")
         ? success()
         : Results.Problem(
             type: "https://example.invalid/problems/unauthenticated",
