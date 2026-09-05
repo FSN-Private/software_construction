@@ -8,7 +8,7 @@ export function sha256File(path) {
   return `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
 }
 
-export function createReleaseManifest({ releaseId, sourceRevision, artifacts, sbom, provenance, compatibility }) {
+export function createReleaseManifest({ releaseId, sourceRevision, artifacts, sbom, provenance, additionalEvidence = [], compatibility }) {
   if (!/^v[0-9A-Za-z._-]+$/.test(releaseId)) {
     throw new Error('releaseId must be a versioned v-prefixed identifier.');
   }
@@ -22,9 +22,13 @@ export function createReleaseManifest({ releaseId, sourceRevision, artifacts, sb
     throw new Error('SBOM, provenance, and compatibility evidence are required.');
   }
 
+  if (!Array.isArray(additionalEvidence)) {
+    throw new Error('Additional evidence must be an array of evidence paths.');
+  }
   const evidence = [
     ['sbom', sbom],
     ['provenance', provenance],
+    ...additionalEvidence.map((path) => ['validation', path]),
   ].map(([kind, path]) => ({ kind, name: basename(path), digest: sha256File(path) }));
 
   return {

@@ -20,6 +20,7 @@
     "test:contract": "node tests/contract/validate-fixtures.mjs",
     "test:ci-contract": "node tests/infrastructure/ci-contract/validate-ci.mjs",
     "test:package-definitions": "node tests/infrastructure/release/package-definitions.mjs",
+    "test:release-evidence": "node tests/infrastructure/release/generate-release-evidence.mjs && node tests/infrastructure/release/release-workflows.mjs",
     "package:api-container": "docker build --file apps/api/Dockerfile --tag software-construction-api:local .",
     "package:web-container": "docker build --file apps/web/Dockerfile --tag software-construction-web:local .",
     "package:infrastructure-container": "docker build --file packages/infrastructure/Dockerfile --tag software-construction-infrastructure:local .",

@@ -1,0 +1,106 @@
+name: Promote production release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful Build release evidence workflow run ID for this versioned master revision.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.AWS_PRODUCTION_ECR_REGISTRY }}
+      API_REPOSITORY: ${{ vars.AWS_PRODUCTION_API_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
+      ECS_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_ECS_TASK_DEFINITION }}
+      ECS_API_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_API_CONTAINER }}
+      HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          
+      - id: release-run
+        name: Resolve the successful evidence run for this exact tag revision
+        env:
+          REQUESTED_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if test -n "$REQUESTED_RELEASE_RUN_ID"; then
+            RELEASE_RUN_ID="$REQUESTED_RELEASE_RUN_ID"
+          else
+            RELEASE_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-release.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          fi
+          test -n "$RELEASE_RUN_ID" && test "$RELEASE_RUN_ID" != null
+          echo "id=$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.release-run.outputs.id }}
+          name: release-evidence
+          path: artifacts/release
+      - name: Verify tag, protected-default ancestry, and immutable evidence
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = tag
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA"
+          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+      - name: Require explicit production deployment configuration
+        run: |
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL"; do
+            test -n "$VALUE"
+          done
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: production-release-${{ github.run_id }}
+      - name: Promote the same verified API image by immutable digest
+        run: |
+          set -euo pipefail
+          API_TAR_DIGEST="$(jq -r '.artifacts[] | select(.name == "api.tar") | .digest' artifacts/release/release-manifest.json)"
+          test "$API_TAR_DIGEST" != null
+          docker load --input artifacts/release/api.tar
+          docker tag "platform-api:$GITHUB_SHA" "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker push "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA"
+          API_IMAGE="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA")"
+          TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
+          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" '.containerDefinitions |= map(if .name == $name then .image = $image else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
+          TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --query service.taskDefinition --output text
+          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ steps.release-run.outputs.id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" > artifacts/release/production-promotion.json
+      - name: Require healthy production service
+        run: |
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-promotion-evidence
+          path: artifacts/release
+          retention-days: 90

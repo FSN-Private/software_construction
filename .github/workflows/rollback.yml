@@ -1,0 +1,82 @@
+name: Roll back compatible production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Build release evidence workflow run ID for the known compatible healthy release.
+        required: true
+        type: string
+      compatible_task_definition:
+        description: Exact prior healthy ECS task-definition ARN; never a tag or rebuild instruction.
+        required: true
+        type: string
+      reason:
+        description: Incident or validation failure reference.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+      ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
+      HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+      COMPATIBLE_TASK_DEFINITION: ${{ inputs.compatible_task_definition }}
+      ROLLBACK_REASON: ${{ inputs.reason }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - name: Refuse an incompatible or unverifiable rollback
+        run: |
+          set -euo pipefail
+          SOURCE_REVISION="$(jq -r .sourceRevision artifacts/release/release-manifest.json)"
+          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION"
+          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+          test -n "$COMPATIBLE_TASK_DEFINITION"
+          test -n "$ROLLBACK_REASON"
+      - name: Require explicit production recovery configuration
+        run: |
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECS_CLUSTER" "$ECS_SERVICE" "$HEALTH_URL"; do
+            test -n "$VALUE"
+          done
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: production-rollback-${{ github.run_id }}
+      - name: Restore only the named compatible task definition
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$COMPATIBLE_TASK_DEFINITION" --query service.taskDefinition --output text
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
+          printf '{"reason":"%s","restoredTaskDefinition":"%s"}\n' "$ROLLBACK_REASON" "$COMPATIBLE_TASK_DEFINITION" > rollback-record.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rollback-evidence
+          path: rollback-record.json
+          retention-days: 90
