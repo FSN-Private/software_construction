@@ -3,8 +3,8 @@ name: Roll back compatible production release
 on:
   workflow_dispatch:
     inputs:
-      release_run_id:
-        description: Build release evidence workflow run ID for the known compatible healthy release.
+      production_promotion_run_id:
+        description: Successful production-promotion evidence workflow run ID for the known compatible healthy release.
         required: true
         type: string
       compatible_task_definition:
@@ -41,22 +41,27 @@ jobs:
       HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
       COMPATIBLE_TASK_DEFINITION: ${{ inputs.compatible_task_definition }}
       ROLLBACK_REASON: ${{ inputs.reason }}
+      PROMOTION_RUN_ID: ${{ inputs.production_promotion_run_id }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.release_run_id }}
-          name: release-evidence
-          path: artifacts/release
+          run-id: ${{ inputs.production_promotion_run_id }}
+          name: production-promotion-evidence
+          path: artifacts/production
       - name: Refuse an incompatible or unverifiable rollback
         run: |
           set -euo pipefail
-          SOURCE_REVISION="$(jq -r .sourceRevision artifacts/release/release-manifest.json)"
-          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION"
-          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+          SOURCE_REVISION="$(jq -r .sourceRevision artifacts/production/release-manifest.json)"
+          node scripts/verify-release-evidence.mjs artifacts/production/release-manifest.json "$SOURCE_REVISION"
+          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/production/release-manifest.json)" = true
           test -n "$COMPATIBLE_TASK_DEFINITION"
           test -n "$ROLLBACK_REASON"
+          test -n "$PROMOTION_RUN_ID"
+          test "$(jq -r .taskDefinition artifacts/production/production-promotion.json)" = "$COMPATIBLE_TASK_DEFINITION"
+          test "$(jq -r .sourceRevision artifacts/production/production-promotion.json)" = "$SOURCE_REVISION"
+          test "$(jq -r .releaseArtifactDigest artifacts/production/production-promotion.json)" = "$(jq -r '.artifacts[] | select(.name == "api.tar") | .digest' artifacts/production/release-manifest.json)"
       - name: Require explicit production recovery configuration
         run: |
           for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECS_CLUSTER" "$ECS_SERVICE" "$HEALTH_URL"; do

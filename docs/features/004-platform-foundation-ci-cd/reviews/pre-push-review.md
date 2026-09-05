@@ -33,6 +33,47 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review — locked packages and immutable release path
+
+**Status**: Round 1 findings fixed; awaiting independent Round 2
+**Review date**: 2026-09-05
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`937050c`)
+**Reviewed pending scope**: `origin/feature/004-platform-foundation-ci-cd..HEAD` (`dd624d1..329dfd1`) and the follow-up corrections below. No push is authorized by this review.
+
+## Reviewer prompt scope
+
+The reviewer received the approved Feature 004 specification, plan, numbered tasks, repository instructions, complete pending diff, release tooling/workflows, package definitions, runbook, tests, and the latest local validation results. It was instructed to attempt to disprove correctness, release safety, supply-chain controls, rollback behavior, test adequacy, and documentation accuracy without editing or performing external mutations.
+
+## Round 1 — independent findings and implementer dispositions
+
+| ID | Severity | Evidence, affected IDs, impact | Disposition and corrective evidence |
+|---|---|---|---|
+| R1-1 | High | `build-release.yml` allowed manual dispatch and `generate-release-evidence.mjs` could label build-workflow context as successful CI. FR-005/006/015, AC-008, T017/T021. Unvalidated source could gain self-certified release evidence. | **Valid and fixed.** Removed manual dispatch entirely; only a successful `Continuous integration` `workflow_run` on `master` can build evidence, and every checkout/tag/evidence source uses that event's `head_sha` and run ID. Contract test now rejects `workflow_dispatch` and requires the CI trigger/source binding. |
+| R1-2 | High | `release.yml` did not require matching successful non-production evidence before production approval. FR-006/007/008, AC-003, T018/T019/T021. A tagged artifact could bypass non-production deployment, smoke, and digest comparison. | **Valid and fixed.** A non-privileged `preflight` resolves successful build and non-production runs for the exact tag SHA, downloads both retained evidence sets, and uses `verify-promotion-evidence.mjs` to verify source SHA, build-run ID, manifest checksum, artifact/SBOM/provenance checksums, and immutable non-production API digest before the protected production job may begin. |
+| R1-3 | High | Production updated ECS before health probes, but a failed probe only failed the workflow. FR-009, AC-004, NFR-011, T019/T021. The failed task definition could remain live. | **Valid and fixed.** Promotion captures `PREVIOUS_TASK`; any ECS stability, liveness, or readiness failure restores that exact task definition, waits for it to stabilize, rechecks health, and exits nonzero. Workflow-contract coverage asserts restoration logic. |
+| R1-4 | High | Rollback checked a manifest but did not bind the caller-supplied task definition to a retained healthy record. FR-009, AC-004, NFR-015, T020/T021. An arbitrary task-definition ARN could be restored. | **Valid and fixed.** Rollback consumes a named `production-promotion-evidence` artifact, verifies its release manifest, then requires its recorded task definition, source revision, and API artifact digest to match the supplied target and manifest before OIDC configuration or ECS update. |
+
+### Round 1 areas with no finding
+
+The reviewer found no issue in pending range shape or cleanliness, full-SHA action pins, PR trust boundaries, static AWS-key exposure, locked Docker/package definitions, manifest tamper checks, or the explicitly pending US3/cross-cutting tasks.
+
+## Validation after fixes
+
+- `node --check scripts/verify-promotion-evidence.mjs` — passed.
+- `npm run test:release-evidence` — passed, including generated manifest verification and matching non-production promotion-evidence verification.
+- `npm run test:package-definitions` — passed.
+- `npm run test:ci-contract` — passed.
+- `node tests/unit/release-manifest.mjs` — passed.
+- `git diff --check` — passed (CRLF notices only).
+
+## Round 2
+
+Pending independent alternate-model assessment of the revised complete diff, all R1 dispositions, and this review record.
+
+---
+
 # Adversarial Specification Review
 
 **Status**: Round 1 findings fixed; awaiting independent Round 2  

@@ -4,11 +4,6 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      release_run_id:
-        description: Successful Build release evidence workflow run ID for this versioned master revision.
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -19,7 +14,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    outputs:
+      release_run_id: ${{ steps.evidence-runs.outputs.release_run_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: evidence-runs
+        name: Resolve successful build and non-production evidence for this exact tag revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          RELEASE_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-release.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          NONPROD_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-nonprod.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          test -n "$RELEASE_RUN_ID" && test "$RELEASE_RUN_ID" != null
+          test -n "$NONPROD_RUN_ID" && test "$NONPROD_RUN_ID" != null
+          echo "release_run_id=$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "nonprod_run_id=$NONPROD_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.nonprod_run_id }}
+          name: nonprod-deployment-evidence
+          path: artifacts/nonprod
+      - run: node scripts/verify-promotion-evidence.mjs artifacts/release/release-manifest.json artifacts/nonprod/nonprod-deployment.json "$GITHUB_SHA" "${{ steps.evidence-runs.outputs.release_run_id }}"
+
   promote:
+    needs: preflight
     environment: production
     permissions:
       actions: read
@@ -28,7 +60,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
       ECR_REGISTRY: ${{ vars.AWS_PRODUCTION_ECR_REGISTRY }}
@@ -41,24 +72,10 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - id: release-run
-        name: Resolve the successful evidence run for this exact tag revision
-        env:
-          REQUESTED_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if test -n "$REQUESTED_RELEASE_RUN_ID"; then
-            RELEASE_RUN_ID="$REQUESTED_RELEASE_RUN_ID"
-          else
-            RELEASE_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-release.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
-          fi
-          test -n "$RELEASE_RUN_ID" && test "$RELEASE_RUN_ID" != null
-          echo "id=$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ steps.release-run.outputs.id }}
+          run-id: ${{ needs.preflight.outputs.release_run_id }}
           name: release-evidence
           path: artifacts/release
       - name: Verify tag, protected-default ancestry, and immutable evidence
@@ -92,13 +109,16 @@ jobs:
           TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
           UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" '.containerDefinitions |= map(if .name == $name then .image = $image else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
           TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
+          PREVIOUS_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --query service.taskDefinition --output text
-          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ steps.release-run.outputs.id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" > artifacts/release/production-promotion.json
-      - name: Require healthy production service
-        run: |
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
+          if ! aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"; then
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK" --query service.taskDefinition --output text
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
+            exit 1
+          fi
+          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s","previousTaskDefinition":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ needs.preflight.outputs.release_run_id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" "$PREVIOUS_TASK" > artifacts/release/production-promotion.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: production-promotion-evidence

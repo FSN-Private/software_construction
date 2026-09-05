@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,5 +19,8 @@ assert.equal(manifest.sourceRevision, revision);
 assert.equal(manifest.artifacts.length, 4);
 assert.equal(manifest.evidence.length, 3);
 assert.equal(sbom.files.length, 4);
+const manifestDigest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'release-manifest.json'))).digest('hex')}`;
+writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({ sourceRevision: revision, releaseRunId: '12345', manifestDigest, apiImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }));
+execFileSync(process.execPath, ['scripts/verify-promotion-evidence.mjs', join(directory, 'release-manifest.json'), join(directory, 'nonprod-deployment.json'), revision, '12345'], { stdio: 'inherit' });
 assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), 'fedcba9876543210fedcba9876543210fedcba98'], { stdio: 'pipe' }));
 console.log('Release evidence generation tests passed.');
