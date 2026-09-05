@@ -35,7 +35,7 @@ The independent review confirms that no valid unresolved finding remains for the
 
 # Adversarial pre-push review — locked packages and immutable release path
 
-**Status**: Round 2 finding fixed; awaiting independent Round 3
+**Status**: PASS
 **Review date**: 2026-09-05
 **Alternate reviewer model**: gpt-5.5
 **Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
@@ -76,9 +76,17 @@ The reviewer agreed that R1-1 through R1-4 are **valid and fixed**. It found no 
 |---|---|---|---|
 | R2-1 | Medium | `release.yml` accepted `workflow_dispatch`; it checked only `GITHUB_REF_TYPE=tag`, not the tag name. FR-007, AC-003, T019/T021. A manual run against an unversioned tag could reach production approval. | **Valid and fixed.** Both preflight and production jobs now use an executable `case` guard that rejects every tag except `v*`; workflow-contract coverage requires the guard text. |
 
-## Round 3
+## Round 3 — final alternate-model agreement
 
-Pending independent alternate-model assessment of the R2-1 fix, the revised complete diff, and this review record.
+The reviewer inspected the complete pending range through `d538a6c`, the revised workflows, and this review record. It reran `node --check scripts/verify-promotion-evidence.mjs`, `npm run test:release-evidence`, `npm run test:package-definitions`, `npm run test:ci-contract`, `node tests/unit/release-manifest.mjs`, and `git diff --check origin/feature/004-platform-foundation-ci-cd..HEAD`; all passed.
+
+It confirmed R2-1 is **valid and fixed**: both the non-privileged preflight and protected production job reject non-tag and non-`v*` tag refs before evidence lookup or production approval, and contract coverage protects the manual-dispatch case. It reconfirmed R1-1 through R1-4 as fixed and found no new valid issue in workflow trust boundaries, action pinning, release-evidence verification, rollback binding, package definitions, or review-record substance.
+
+## Final agreement
+
+The alternate reviewer explicitly confirmed that every finding is resolved and no valid unresolved finding remains for `origin/feature/004-platform-foundation-ci-cd..HEAD` through `d538a6c`.
+
+**Final gate result: PASS**
 
 ---
 
