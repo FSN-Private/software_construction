@@ -30,19 +30,19 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
-app.MapGet("/ready", (HttpContext context) => RequireOwner(context, () => Results.Ok(new
+app.MapGet("/ready", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
 {
     status = "ready",
     operationId = OperationId(context),
     releaseId = ReleaseId(),
 })));
-app.MapGet("/v1/session", (HttpContext context) => RequireOwner(context, () => Results.Ok(new
+app.MapGet("/v1/session", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
 {
     subject = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub"),
     role = "owner",
     operationId = OperationId(context),
 })));
-app.MapGet("/v1/version", (HttpContext context) => RequireOwner(context, () => Results.Ok(new
+app.MapGet("/v1/version", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
 {
     releaseId = ReleaseId(),
     sourceRevision = Environment.GetEnvironmentVariable("PLATFORM_SOURCE_REVISION") ?? new string('0', 40),
@@ -52,14 +52,16 @@ app.MapGet("/v1/version", (HttpContext context) => RequireOwner(context, () => R
 
 app.Run();
 
-static IResult RequireOwner(HttpContext context, Func<IResult> success) =>
-    context.User.Identity?.IsAuthenticated is true && context.User.Claims.Any(claim => claim.Type == "cognito:groups" && claim.Value == "owner")
-        ? success()
-        : Results.Problem(
+static IResult RequireOwner(HttpContext context, ILogger logger, Func<IResult> success)
+{
+    if (context.User.Identity?.IsAuthenticated is true && context.User.Claims.Any(claim => claim.Type == "cognito:groups" && claim.Value == "owner")) return success();
+    logger.LogWarning("Authorization denied {AuditEventType} {OperationId} {Actor} {Outcome} {ReasonCode}", "authorization.denied", OperationId(context), "anonymous", "denied", "unauthenticated");
+    return Results.Problem(
             type: "https://example.invalid/problems/unauthenticated",
             title: "Authentication required",
             statusCode: StatusCodes.Status401Unauthorized,
             extensions: ProblemExtensions(context, "unauthenticated"));
+}
 
 static Dictionary<string, object?> ProblemExtensions(HttpContext context, string code) => new()
 {

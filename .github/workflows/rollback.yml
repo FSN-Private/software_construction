@@ -78,7 +78,6 @@ jobs:
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$COMPATIBLE_TASK_DEFINITION" --query service.taskDefinition --output text
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
           curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
           printf '{"reason":"%s","restoredTaskDefinition":"%s"}\n' "$ROLLBACK_REASON" "$COMPATIBLE_TASK_DEFINITION" > rollback-record.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

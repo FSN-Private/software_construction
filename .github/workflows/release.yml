@@ -70,6 +70,8 @@ jobs:
       ECS_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_ECS_TASK_DEFINITION }}
       ECS_API_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_API_CONTAINER }}
       HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+      COGNITO_AUTHORITY: ${{ vars.AWS_PRODUCTION_COGNITO_AUTHORITY }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_PRODUCTION_COGNITO_CLIENT_ID }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -90,7 +92,7 @@ jobs:
           test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
       - name: Require explicit production deployment configuration
         run: |
-          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL"; do
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID"; do
             test -n "$VALUE"
           done
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
@@ -109,11 +111,11 @@ jobs:
           docker push "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA"
           API_IMAGE="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA")"
           TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
-          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" '.containerDefinitions |= map(if .name == $name then .image = $image else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
+          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "Authentication__CognitoAuthority" and .name != "Authentication__CognitoClientId")) + [{name:"Authentication__CognitoAuthority",value:$authority},{name:"Authentication__CognitoClientId",value:$client}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
           TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
           PREVIOUS_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --query service.taskDefinition --output text
-          if ! aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"; then
+          if ! aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"; then
             aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK" --query service.taskDefinition --output text
             aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
             curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"

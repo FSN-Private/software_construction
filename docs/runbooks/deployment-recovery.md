@@ -6,6 +6,8 @@ Owner: platform maintainer. This runbook applies only after the GitHub `nonprod`
 
 Set repository variables, never secrets, for the approved region, the environment-specific OIDC role ARN, ECR registry and API repository, ECS cluster/service/task-definition/container name, and HTTPS health URL. The workflow names are `AWS_REGION`, `AWS_<ENV>_ROLE_ARN`, `AWS_<ENV>_ECR_REGISTRY`, `AWS_<ENV>_API_REPOSITORY`, `AWS_<ENV>_ECS_CLUSTER`, `AWS_<ENV>_ECS_SERVICE`, `AWS_<ENV>_ECS_TASK_DEFINITION`, `AWS_<ENV>_ECS_API_CONTAINER`, and `AWS_<ENV>_HEALTH_URL`, where `<ENV>` is `NONPROD` or `PRODUCTION`.
 
+For each environment, inject `Authentication__CognitoAuthority` and `Authentication__CognitoClientId` into the ECS API task definition from that environment's Cognito user-pool issuer and web-client ID. They are public identifiers, not secrets, but must be supplied as versioned deployment configuration and recorded with the deployment evidence. The API fails owner requests closed when they are absent or invalid; never substitute a static token.
+
 The roles must trust only this repository, the intended workflow/environment, and the GitHub Actions audience. Grant only ECR push/pull and the named ECS task-definition/service operations required by the corresponding workflow. Do not add static AWS keys or place runtime configuration in the manifest.
 
 ## Normal delivery
