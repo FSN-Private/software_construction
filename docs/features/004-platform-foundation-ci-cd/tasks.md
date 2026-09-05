@@ -46,9 +46,9 @@
 
 **Independent test**: Provision non-production, sign in as owner, deny anonymous access, trace a synthetic request, and verify a threshold alert and budget context.
 
-- [ ] T022 [P] [US3] Implement v1 health, session, version, error, and operation-ID contract in `apps/api/` and `packages/contracts/` (FR-012/013/016, AC-005/006/011, NFR-004/008).
-- [ ] T023 [P] [US3] Implement private Cognito owner configuration and no-sign-up boundary in `packages/infrastructure/identity/` (FR-012, AC-005, NFR-003/004).
-- [ ] T024 [P] [US3] Implement accessible sign-in and service/deployment-status shell in `apps/web/` (FR-012/013, AC-005, NFR-005/006/010).
+- [x] T022 [P] [US3] Implement v1 health, session, version, error, and operation-ID contract in `apps/api/` and `packages/contracts/` (FR-012/013/016, AC-005/006/011, NFR-004/008). Liveness is safe and public; owner endpoints fail closed with generic correlated problems until Cognito is bootstrapped. Local API integration and contract validation pass.
+- [x] T023 [P] [US3] Implement private Cognito owner configuration and no-sign-up boundary in `packages/infrastructure/identity/` (FR-012, AC-005, NFR-003/004). CDK provisions a no-self-sign-up user pool, a single administrator-provided owner, and the owner group; live provisioning awaits AWS bootstrap.
+- [x] T024 [P] [US3] Implement accessible sign-in and service/deployment-status shell in `apps/web/` (FR-012/013, AC-005, NFR-005/006/010). The labelled status shell makes the private-owner and unavailable-before-bootstrap states clear; source and accessibility checks pass.
 - [ ] T025 [US3] Configure deployment, authentication, availability, CI, cost, and backup-age-placeholder alerts plus dashboards/runbook links in `packages/infrastructure/observability/` (FR-014, AC-007, NFR-002/007/012/013).
 - [ ] T026 [US3] Add API contract, authorization, redaction, trace-correlation, locale, and accessibility tests in `tests/contract/` and `tests/integration/` (FR-012/013/016, AC-005/006/011, NFR-004/005/010).
 - [ ] T027 [US3] Add non-production alert, budget, and account-recreation exercises in `tests/infrastructure/operations/` (FR-011/014/017, AC-007/009/010, NFR-007/013).

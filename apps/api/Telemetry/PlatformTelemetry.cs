@@ -6,6 +6,7 @@ namespace Platform.Api.Telemetry;
 public static class PlatformTelemetry
 {
     public const string OperationIdHeader = "X-Operation-Id";
+    public const string OperationIdItemKey = "platform.operation_id";
     public static readonly ActivitySource ActivitySource = new("Platform.Api", "1.0.0");
     public static readonly Meter Meter = new("Platform.Api", "1.0.0");
     public static readonly Counter<long> Requests = Meter.CreateCounter<long>("platform.api.requests");

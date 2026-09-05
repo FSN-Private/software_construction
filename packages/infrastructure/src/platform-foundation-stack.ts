@@ -2,13 +2,20 @@ import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-l
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { Alarm, ComparisonOperator, Dashboard, GraphWidget, Metric, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
+import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { Topic } from 'aws-cdk-lib/aws-sns';
+import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
+import { createOwnerIdentity } from './identity/owner-identity.js';
 
 export interface PlatformFoundationStackProps extends StackProps {
   readonly environmentName: string;
   readonly monthlyBudgetUsd: number;
+  readonly ownerEmail: string;
+  readonly alertEmail: string;
 }
 
 export class PlatformFoundationStack extends Stack {
@@ -50,6 +57,18 @@ export class PlatformFoundationStack extends Stack {
       retention: RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const identity = createOwnerIdentity(this, { ownerEmail: props.ownerEmail });
+    const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
+    alerts.addSubscription(new EmailSubscription(props.alertEmail));
+    const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
+    const availabilityAlarm = new Alarm(this, 'ServiceAvailabilityAlarm', { metric: availability, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING });
+    availabilityAlarm.addAlarmAction(new SnsAction(alerts));
+    const authenticationAlarm = new Alarm(this, 'AuthenticationAnomalyAlarm', { metric: new Metric({ namespace: 'Platform/Auth', metricName: 'AuthenticationFailures', statistic: 'Sum', period: Duration.minutes(5) }), threshold: 5, evaluationPeriods: 1 });
+    authenticationAlarm.addAlarmAction(new SnsAction(alerts));
+    new Dashboard(this, 'PlatformOperationsDashboard', { dashboardName: `platform-${props.environmentName}-operations`, widgets: [
+      [new GraphWidget({ title: 'Service availability', left: [availability] })],
+      [new GraphWidget({ title: 'Authentication failures', left: [new Metric({ namespace: 'Platform/Auth', metricName: 'AuthenticationFailures' })] })],
+    ] });
 
     new CfnBudget(this, 'MonthlyCostBudget', {
       budget: {
@@ -63,5 +82,7 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'VpcId', { value: vpc.vpcId });
     new CfnOutput(this, 'EvidenceBucketName', { value: evidenceBucket.bucketName });
     new CfnOutput(this, 'TelemetryLogGroupName', { value: telemetry.logGroupName });
+    new CfnOutput(this, 'OwnerUserPoolId', { value: identity.userPool.userPoolId });
+    new CfnOutput(this, 'OwnerUserPoolClientId', { value: identity.client.userPoolClientId });
   }
 }
