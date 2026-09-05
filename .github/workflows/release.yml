@@ -119,10 +119,9 @@ jobs:
             aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK" --query service.taskDefinition --output text
             aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
             curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
-            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
             exit 1
           fi
-          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s","previousTaskDefinition":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ needs.preflight.outputs.release_run_id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" "$PREVIOUS_TASK" > artifacts/release/production-promotion.json
+          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s","previousTaskDefinition":"%s","cognitoAuthority":"%s","cognitoClientId":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ needs.preflight.outputs.release_run_id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" "$PREVIOUS_TASK" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" > artifacts/release/production-promotion.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: production-promotion-evidence

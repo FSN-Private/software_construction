@@ -79,7 +79,7 @@ jobs:
           TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --force-new-deployment --query service.taskDefinition --output text
           MANIFEST_DIGEST="sha256:$(sha256sum artifacts/release/release-manifest.json | awk '{print $1}')"
-          printf '{"sourceRevision":"%s","releaseRunId":"%s","manifestDigest":"%s","apiImage":"%s","taskDefinition":"%s"}\n' "$SOURCE_REVISION" "$RELEASE_RUN_ID" "$MANIFEST_DIGEST" "$API_IMAGE" "$TASK_ARN" > artifacts/release/nonprod-deployment.json
+          printf '{"sourceRevision":"%s","releaseRunId":"%s","manifestDigest":"%s","apiImage":"%s","taskDefinition":"%s","cognitoAuthority":"%s","cognitoClientId":"%s"}\n' "$SOURCE_REVISION" "$RELEASE_RUN_ID" "$MANIFEST_DIGEST" "$API_IMAGE" "$TASK_ARN" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" > artifacts/release/nonprod-deployment.json
       - name: Require healthy non-production service
         run: |
           set -euo pipefail
