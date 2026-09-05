@@ -35,7 +35,7 @@ The independent review confirms that no valid unresolved finding remains for the
 
 # Adversarial pre-push review — locked packages and immutable release path
 
-**Status**: Round 1 findings fixed; awaiting independent Round 2
+**Status**: Round 2 finding fixed; awaiting independent Round 3
 **Review date**: 2026-09-05
 **Alternate reviewer model**: gpt-5.5
 **Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
@@ -68,9 +68,17 @@ The reviewer found no issue in pending range shape or cleanliness, full-SHA acti
 - `node tests/unit/release-manifest.mjs` — passed.
 - `git diff --check` — passed (CRLF notices only).
 
-## Round 2
+## Round 2 — alternate-model assessment
 
-Pending independent alternate-model assessment of the revised complete diff, all R1 dispositions, and this review record.
+The reviewer agreed that R1-1 through R1-4 are **valid and fixed**. It found no issue in range cleanliness, action pins, PR trust boundaries, static credentials, locked package definitions, manifest tamper validation, or intentionally pending later tasks.
+
+| ID | Severity | Evidence, affected IDs, impact | Disposition and corrective evidence |
+|---|---|---|---|
+| R2-1 | Medium | `release.yml` accepted `workflow_dispatch`; it checked only `GITHUB_REF_TYPE=tag`, not the tag name. FR-007, AC-003, T019/T021. A manual run against an unversioned tag could reach production approval. | **Valid and fixed.** Both preflight and production jobs now use an executable `case` guard that rejects every tag except `v*`; workflow-contract coverage requires the guard text. |
+
+## Round 3
+
+Pending independent alternate-model assessment of the R2-1 fix, the revised complete diff, and this review record.
 
 ---
 

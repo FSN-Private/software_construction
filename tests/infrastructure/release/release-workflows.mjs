@@ -22,6 +22,7 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('RepoDigests'), 'Non-producti
 assert.ok(workflows['deploy-nonprod.yml'].includes('curl --fail'), 'Non-production deployment must fail when its health checks fail.');
 assert.ok(workflows['release.yml'].includes('environment: production'), 'Production promotion must require the protected production environment.');
 assert.ok(workflows['release.yml'].includes("tags: ['v*']"), 'Production promotion must be initiated by a versioned tag.');
+assert.ok(workflows['release.yml'].includes('Production promotion requires a v* tag.'), 'Manual production dispatch must reject non-versioned tags.');
 assert.ok(workflows['release.yml'].includes('git merge-base --is-ancestor'), 'Production promotion must require protected-default ancestry.');
 assert.ok(workflows['release.yml'].includes('compatibility.rollbackAllowed'), 'Production promotion must refuse an incompatible persistent-state transition.');
 assert.ok(workflows['release.yml'].includes('nonprod-deployment-evidence'), 'Production promotion must require retained non-production deployment evidence.');
