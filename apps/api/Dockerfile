@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # .NET SDK 10.0 multi-platform manifest, resolved 2026-09-04.
-FROM mcr.microsoft.com/dotnet/sdk@sha256:74e93524c3de17e642cc18651b89fe3232af088708bc5bd5ca2df46ca87cfa62 AS build
+FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e6331e7af6d4c8d37168c5e87a64c AS build
 WORKDIR /src
 
 COPY global.json ./
@@ -12,10 +12,10 @@ COPY apps/api/ apps/api/
 RUN dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output /out /p:UseAppHost=false
 
 # ASP.NET runtime 10.0 multi-platform manifest, resolved 2026-09-04.
-FROM mcr.microsoft.com/dotnet/aspnet@sha256:ce4ee10bb8925d12de4ff1aaafc8acbb2e65f76435f2bfb231c14ac6f0b46493 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet@sha256:a4556ed033fa96f984bb7a8d348851cb2d36b1281dd2420070045f664fbb5f94 AS runtime
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 USER $APP_UID
-COPY --from=build --chown=$APP_UID:$APP_GID /out/ ./
+COPY --from=build /out/ ./
 ENTRYPOINT ["dotnet", "Platform.Api.dll"]
