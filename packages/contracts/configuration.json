@@ -1,0 +1,8 @@
+{
+  "contractVersion": "v1",
+  "configurationVersion": "v1",
+  "environment": "nonprod",
+  "configurationDigest": "sha256:example-configuration-digest",
+  "source": "runtime-injected",
+  "containsSecrets": false
+}

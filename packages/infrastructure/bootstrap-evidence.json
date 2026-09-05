@@ -1,0 +1,11 @@
+{
+  "version": "v1",
+  "requiredAccounts": ["nonprod", "production", "recovery"],
+  "requiredRegions": {
+    "primary": "ap-southeast-1",
+    "recovery": "ap-southeast-2"
+  },
+  "requiredRepositoryProtections": ["required-checks", "linear-history", "no-force-push"],
+  "requiredEnvironmentProtections": ["reviewer-approval", "restricted-branches"],
+  "verification": "Run the versioned drift check before every external deployment."
+}

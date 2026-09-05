@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "ci / backend",
+    "ci / web",
+    "ci / windows",
+    "ci / infrastructure",
+    "ci / security",
+    "ci / required"
+  ],
+  "nonPassingOutcomes": ["failure", "cancelled", "skipped"]
+}

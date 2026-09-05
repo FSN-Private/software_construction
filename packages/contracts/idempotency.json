@@ -1,0 +1,7 @@
+{
+  "contractVersion": "v1",
+  "header": "Idempotency-Key",
+  "scope": "authenticated-state-changing-request",
+  "pattern": "^[A-Za-z0-9_-]{16,128}$",
+  "replayBehavior": "return-original-outcome"
+}
