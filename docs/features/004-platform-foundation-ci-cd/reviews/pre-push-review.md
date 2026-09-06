@@ -33,6 +33,41 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review -- Phase 6 pre-AWS readiness
+
+**Status**: PASS
+**Review date**: 2026-09-06
+**Alternate reviewer model**: gpt-5.6-sol
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `2a44ce9`
+**Reviewed pending scope**: T028 runbooks, T029 inventory, pre-AWS T031 contract coverage, T032 checklist, validation record, task status, and this review milestone. T030, executed T031 fault injection, and account-specific T032 evidence remain open.
+
+## Round 1 findings and dispositions
+
+| ID | Severity | Affected IDs | Disposition and evidence |
+|---|---|---|---|
+| R1-1 | Medium | T029, FR-015, AC-008, NFR-003/014/016 | **Valid and fixed.** The initial inventory grouped inputs and overstated vulnerability coverage. It now records each action's SHA/source/license/permissions, direct package ecosystems and locked closure, accepted license exceptions, validation evidence, and the explicit pending image advisory review in T032. |
+| R1-2 | Medium | T031, FR-003/009, AC-004, NFR-015 | **Valid and fixed.** Static reliability contracts were incorrectly described as executed fault injection. T031 is now unchecked and accurately names the contract coverage; actual GitHub Actions/AWS fault injection remains pending. |
+
+## Round 2 -- final substantive agreement
+
+The alternate reviewer confirmed both dispositions and found no new substantive issue in runbook safety, dependency controls, pending-AWS boundaries, test scope, secrets/privacy, or unrelated changes. It required only this record before final agreement.
+
+## Validation
+
+- `npm run validate:toolchain` -- passed.
+- `npm run test:reliability`, `npm run test:ci-contract`, and `npm run test:release-evidence` -- passed.
+- `npm run validate:security` -- passed on normal network; all three npm audits, secret scan, dependency tree, and license check passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+## Final agreement
+
+The pending scope accurately completes only pre-AWS readiness. No AWS, GitHub environment, or deployment mutation occurred. The reviewer inspected this record unchanged and confirmed no valid unresolved finding remains.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial pre-push review -- web CI formatting repair
 
 **Status**: PASS
