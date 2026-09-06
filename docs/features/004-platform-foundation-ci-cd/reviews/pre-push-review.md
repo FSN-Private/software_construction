@@ -35,7 +35,7 @@ The independent review confirms that no valid unresolved finding remains for the
 
 # Adversarial pre-push review — Phase 5 authenticated platform slice
 
-**Status**: Round 1 findings fixed; awaiting alternate-model follow-up
+**Status**: PASS
 **Review date**: 2026-09-05
 **Alternate reviewer model**: gpt-5.5
 **Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
@@ -59,7 +59,29 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ## Round 2
 
-Pending alternate-model assessment of all R1 dispositions and the revised complete range.
+The alternate reviewer accepted the protected `/ready` smoke checks in non-production deployment, production promotion (including its restore path), and rollback. It found two valid remaining issues: the Hosted UI client allowed no `openid` scope although the web requested it (High, FR-012/013, AC-005, T023/T024/T026), and the authentication metric filter targeted a top-level field while JSON console logs carry `AuditEventType` under `State` (Medium, FR-014, AC-007, T025/T027). Both were **valid and fixed**: the client uses `OAuthScope.OPENID`, asserted in the synthesized template; the filter matches `$.State.AuditEventType`, also asserted against the synthesized template.
+
+## Round 3
+
+The reviewer confirmed both Round 2 fixes, then found one valid Medium trace-correlation issue (FR-013, AC-006, T024/T026): the web sent a raw UUID while the API accepts only `op_`-prefixed operation IDs. It was **valid and fixed** by sending one `op_${crypto.randomUUID()}` header reused for session, readiness, and version calls; the Phase 5 contract test protects the valid shape.
+
+## Round 4 -- final alternate-model agreement
+
+The alternate reviewer (gpt-5.5) inspected the complete revised working tree, synthesized Cognito/metric resources, web flow, workflows, and API operation-ID behavior. It reproduced preservation of a valid operation ID, confirmed the `openid` scope and `$.State.AuditEventType` filter, and confirmed authenticated `/ready` in every delivery path. It explicitly agreed that all Phase 5 findings are resolved and no valid unresolved substantive finding remains.
+
+## Final validation
+
+- `dotnet build apps/api/Platform.Api.csproj --nologo` -- passed.
+- `npm --prefix apps/web run build` -- passed.
+- `npm --prefix packages/infrastructure run synth` and `assert` -- passed (only existing CDK deprecation/feature-flag warnings).
+- `npm run test:phase5-contract`, `npm run test:release-evidence`, and `npm run test:ci-contract` -- passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+## Final agreement
+
+The alternate reviewer agrees every finding is resolved. The pending scope is `origin/feature/004-platform-foundation-ci-cd..HEAD` through `83ff8fc` plus this dedicated remediation/review milestone; no remote mutation occurred during review.
+
+**Final gate result: PASS**
 
 ---
 

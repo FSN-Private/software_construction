@@ -4,10 +4,8 @@ const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 if (!source.includes('Darktable Library')) {
   throw new Error('The placeholder portal must identify the product.');
 }
-if (!source.includes('Authenticated API integration')) {
-  throw new Error(
-    'The placeholder portal must not imply that authentication is already implemented.',
-  );
+if (!source.includes('/oauth2/authorize') || !source.includes('/v1/session') || !source.includes('/ready') || !source.includes('/v1/version')) {
+  throw new Error('The owner portal must start Cognito sign-in and call every authenticated status endpoint.');
 }
 if (!source.includes('public registration is unavailable') || !source.includes('Operation ID')) {
   throw new Error('The private-owner and correlated service-status boundaries must be visible.');

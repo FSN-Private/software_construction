@@ -39,6 +39,9 @@ jobs:
       ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
       HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_PRODUCTION_COGNITO_CLIENT_ID }}
+      COGNITO_OWNER_USERNAME: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_USERNAME }}
+      COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_PASSWORD }}
       COMPATIBLE_TASK_DEFINITION: ${{ inputs.compatible_task_definition }}
       ROLLBACK_REASON: ${{ inputs.reason }}
       PROMOTION_RUN_ID: ${{ inputs.production_promotion_run_id }}
@@ -64,7 +67,7 @@ jobs:
           test "$(jq -r .releaseArtifactDigest artifacts/production/production-promotion.json)" = "$(jq -r '.artifacts[] | select(.name == "api.tar") | .digest' artifacts/production/release-manifest.json)"
       - name: Require explicit production recovery configuration
         run: |
-          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECS_CLUSTER" "$ECS_SERVICE" "$HEALTH_URL"; do
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECS_CLUSTER" "$ECS_SERVICE" "$HEALTH_URL" "$COGNITO_CLIENT_ID" "$COGNITO_OWNER_USERNAME" "$COGNITO_OWNER_PASSWORD"; do
             test -n "$VALUE"
           done
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
@@ -78,6 +81,9 @@ jobs:
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$COMPATIBLE_TASK_DEFINITION" --query service.taskDefinition --output text
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
           curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
+          ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
+          test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
           printf '{"reason":"%s","restoredTaskDefinition":"%s"}\n' "$ROLLBACK_REASON" "$COMPATIBLE_TASK_DEFINITION" > rollback-record.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
