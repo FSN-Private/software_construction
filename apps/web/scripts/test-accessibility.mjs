@@ -10,8 +10,14 @@ if (!app.includes('<main>') || !app.includes('<h1>')) {
     'The placeholder portal must have a main landmark and page heading.',
   );
 }
-if (!app.includes('aria-labelledby') || !app.includes('role="status"') || !app.includes('<button')) {
-  throw new Error('Sign-in and deployment status must expose labelled, announced controls.');
+if (
+  !app.includes('aria-labelledby') ||
+  !app.includes('role="status"') ||
+  !app.includes('<button')
+) {
+  throw new Error(
+    'Sign-in and deployment status must expose labelled, announced controls.',
+  );
 }
 
 console.log('Web accessibility structure tests passed.');

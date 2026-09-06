@@ -33,6 +33,32 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review -- web CI formatting repair
+
+**Status**: PASS
+**Review date**: 2026-09-06
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `a203f03`
+**Reviewed pending scope**: formatting-only changes to `apps/web/scripts/test-accessibility.mjs`, `apps/web/scripts/test-source.mjs`, `apps/web/src/App.tsx`, and `apps/web/src/platform-config.ts`, plus this review milestone.
+
+## Round 1
+
+The independent reviewer found R1-1 (High): after Prettier wrapped JSX copy, `test-source.mjs` still required the exact contiguous `public registration is unavailable` string, so the CI web test would fail after the format gate. This affected the CI repair's completeness. The implementer assessed it **valid and fixed** by normalizing source whitespace before retaining the same required-copy assertion.
+
+## Round 2 -- final agreement
+
+The reviewer verified that normalization preserves the intended private-owner boundary while removing formatting brittleness. It found no new issue in scope, application behavior, dependencies, configuration, security, or tests. It accepted R1-1 as fixed and explicitly confirmed no valid unresolved finding remains.
+
+## Validation
+
+- `npm --prefix apps/web run format`, `typecheck`, `test`, `test:accessibility`, and `build` -- passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial pre-push review — Phase 5 authenticated platform slice
 
 **Status**: PASS
