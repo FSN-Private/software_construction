@@ -22,9 +22,10 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
                 if (!await store.ResetAsync(ownerId, key, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
                 existing = null;
             }
-            if (existing is { StatusCode: { } status, Response: { } replay }) { context.Response.StatusCode = status; await context.Response.WriteAsync(replay, context.RequestAborted); return; }
-            if (existing is not null && !existing.Reissue && !await store.ReleaseStaleAsync(ownerId, key, CancellationToken.None)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
-            if (!await store.ReserveAsync(ownerId, key, fingerprint, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
+            if (existing is { StatusCode: { } status, Response: { } replay }) { context.Response.StatusCode = status; context.Response.ContentType = existing.ContentType; await context.Response.WriteAsync(replay, context.RequestAborted); return; }
+            var reservationId = await store.ReserveAsync(ownerId, key, fingerprint, context.RequestAborted);
+            if (reservationId is null) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
+            context.Items["platform.idempotency.reservation"] = reservationId.Value;
         }
         catch (InvalidOperationException) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_key_reused", "Idempotency key cannot be reused").ExecuteAsync(context); return; }
 
@@ -37,11 +38,11 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
             response.Position = 0;
             var text = await new StreamReader(response, Encoding.UTF8, leaveOpen: true).ReadToEndAsync(context.RequestAborted);
             var reissue = context.Items.ContainsKey("platform.idempotency.reissue");
-            await store.CompleteAsync(ownerId, key, context.Response.StatusCode, reissue ? "{}" : text, reissue, context.RequestAborted);
+            await store.CompleteAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, context.Response.StatusCode, reissue ? "{}" : text, context.Response.ContentType ?? "application/json", reissue, context.RequestAborted);
         }
         catch
         {
-            await store.ReleaseAsync(ownerId, key, context.RequestAborted);
+            await store.ReleaseAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, context.RequestAborted);
             throw;
         }
         finally
