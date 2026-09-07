@@ -15,7 +15,7 @@ public sealed class PublicationRepairWorker(PublicationOutbox outbox, Publicatio
             catch
             {
                 IngestTelemetry.StorageFailures.Add(1);
-                logger.LogError("Publication polling failed; retrying");
+                logger.LogError("Publication polling failed {AuditEventType}", "ingest.storage.failure");
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
         } while (await timer.WaitForNextTickAsync(stoppingToken));
@@ -39,7 +39,7 @@ public sealed class PublicationRepairWorker(PublicationOutbox outbox, Publicatio
             {
                 IngestTelemetry.StorageFailures.Add(1);
                 try { await outbox.MarkFailedAsync(intent.Id, exception is InvalidDataException ? "checksum_mismatch" : "publication_failed", cancellationToken); }
-                catch { logger.LogError("Publication failure could not be persisted; retrying polling"); return; }
+                catch { logger.LogError("Publication failure could not be persisted {AuditEventType}", "ingest.storage.failure"); return; }
                 logger.LogWarning("Publication intent {PublicationIntentId} failed and was retained for repair", intent.Id);
             }
         }

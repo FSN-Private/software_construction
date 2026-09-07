@@ -8,7 +8,7 @@ for (const type of requiredTypes) {
     throw new Error(`Synthesized template is missing required resource ${type}.`);
   }
 }
-if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').length < 5) throw new Error('Operations require service, deployment, authentication, CI, and backup-age alarms.');
+if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').length < 6) throw new Error('Operations require service, ingest, deployment, authentication, CI, and backup-age alarms.');
 if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === 'AuthenticationFailures' && resource.Properties?.FilterPattern?.includes('$.State.AuditEventType'))) throw new Error('Authentication anomaly alarms must derive a metric from the API JSON authorization-denial audit event.');
 if (!resources.some((resource) => resource.Type === 'AWS::Cognito::UserPoolClient' && resource.Properties?.AllowedOAuthScopes?.includes('openid'))) throw new Error('The owner web client must permit the OpenID scope requested by the Hosted UI.');
 const canonicalRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
