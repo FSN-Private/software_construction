@@ -60,21 +60,24 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
                 JOIN publication_intents AS intent ON intent.id = item.intent_id
                 JOIN content_objects AS content ON content.sha256 = item.content_sha256
                 JOIN assets AS asset ON asset.id = item.asset_id
+                JOIN upload_sessions AS session ON session.id = item.upload_session_id
                 WHERE item.intent_id = $1
                     AND intent.payload ->> 'sha256' = item.content_sha256
                     AND (intent.payload ->> 'sessionId')::uuid = item.upload_session_id
                     AND asset.original_sha256 = item.content_sha256
-                GROUP BY item.intent_id HAVING count(*) = 1 AND bool_and(content.integrity_state IN ('pending-publication', 'authoritative'))
+                    AND (intent.payload ->> 'length')::bigint = content.byte_length
+                    AND session.expected_sha256 = item.content_sha256 AND session.expected_length = content.byte_length
+                    AND session.state = 'verifying'
+                GROUP BY item.intent_id HAVING count(*) = 1 AND bool_and(content.integrity_state IN ('pending-publication', 'authoritative') AND asset.state = 'prepared')
+            ), activated AS (
+                UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
+                WHERE state = 'prepared' AND id IN (SELECT asset_id FROM publication_intent_items WHERE intent_id IN (SELECT intent_id FROM ready)) RETURNING id
             ), published AS (
                 UPDATE publication_intents SET state = 'published', updated_at = now()
-                WHERE id = $1 AND state = 'publishing' AND object_state = 'promoted' AND id IN (SELECT intent_id FROM ready) RETURNING id
+                WHERE id = $1 AND state = 'publishing' AND object_state = 'promoted' AND id IN (SELECT intent_id FROM ready) AND EXISTS (SELECT 1 FROM activated) RETURNING id
             ), authoritative AS (
                 UPDATE content_objects SET integrity_state = 'authoritative'
                 WHERE sha256 IN (SELECT content_sha256 FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published))
-            )
-            activated AS (
-                UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
-                WHERE state = 'prepared' AND id IN (SELECT asset_id FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published)) RETURNING id
             )
             INSERT INTO audit_events (id, owner_id, operation_id, event_type, outcome)
             SELECT $2, session.owner_id, 'publication/' || published.id::text, 'publication.completed', 'published'

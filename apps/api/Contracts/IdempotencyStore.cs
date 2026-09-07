@@ -14,10 +14,17 @@ public sealed class IdempotencyStore(NpgsqlDataSource dataSource)
         return reader.IsDBNull(1) ? new(null, null, false) : new(reader.GetInt32(1), reader.GetString(2), reader.GetBoolean(3));
     }
 
-    public async Task ReserveAsync(string ownerId, string key, string fingerprint, CancellationToken cancellationToken)
+    public async Task<bool> ReserveAsync(string ownerId, string key, string fingerprint, CancellationToken cancellationToken)
     {
-        await using var command = dataSource.CreateCommand("INSERT INTO idempotency_results (owner_id, idempotency_key, fingerprint) VALUES ($1, $2, $3) ON CONFLICT (owner_id, idempotency_key) DO NOTHING");
+        await using var command = dataSource.CreateCommand("INSERT INTO idempotency_results (owner_id, idempotency_key, fingerprint) VALUES ($1, $2, $3) ON CONFLICT (owner_id, idempotency_key) DO NOTHING RETURNING 1");
         command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(key); command.Parameters.AddWithValue(fingerprint);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
+    public async Task ReleaseAsync(string ownerId, string key, CancellationToken cancellationToken)
+    {
+        await using var command = dataSource.CreateCommand("DELETE FROM idempotency_results WHERE owner_id = $1 AND idempotency_key = $2 AND status_code IS NULL");
+        command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(key);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

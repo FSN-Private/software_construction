@@ -19,9 +19,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.RequireHttpsMetadata = true;
 });
 builder.Services.AddAuthorization();
-builder.Services.AddSingleton(NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Ingest") ?? throw new InvalidOperationException("ConnectionStrings:Ingest is required.")));
-builder.Services.AddSingleton<TransferGrantIssuer>();
-builder.Services.AddSingleton<IdempotencyStore>();
+var ingestConnection = builder.Configuration.GetConnectionString("Ingest");
+if (!string.IsNullOrWhiteSpace(ingestConnection))
+{
+    builder.Services.AddSingleton(NpgsqlDataSource.Create(ingestConnection));
+    builder.Services.AddSingleton<TransferGrantIssuer>();
+    builder.Services.AddSingleton<IdempotencyStore>();
+}
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
@@ -60,10 +64,11 @@ app.MapGet("/v1/version", (HttpContext context, ILogger<Program> logger) => Requ
     manifestDigest = Environment.GetEnvironmentVariable("PLATFORM_MANIFEST_DIGEST") ?? $"sha256:{new string('0', 64)}",
     operationId = OperationId(context),
 })));
-app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, TransferGrantIssuer issuer, S3ObjectStore storage, ILogger<Program> logger, CancellationToken cancellationToken) =>
+app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, TransferGrantIssuer? issuer, S3ObjectStore storage, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequireOwner(context, logger, () => Results.Empty);
     if (!RequestContracts.TryGetLifecycleVersion(context, out var version)) return RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "lifecycle_version_required", "Lifecycle version required");
+    if (issuer is null) return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured");
     try
     {
         var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);
