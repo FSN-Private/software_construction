@@ -25,6 +25,10 @@ function environmentSettings(environment) {
 }
 
 function branchProtectionSettings(rules, rulesets) {
+  if (rulesets.some((ruleset) => !Array.isArray(ruleset.bypass_actors))) {
+    throw new Error('GitHub protection audit cannot inspect ruleset bypass actors with the configured credential.');
+  }
+
   const statusCheckRules = rules.filter((rule) => rule.type === 'required_status_checks');
 
   return {
