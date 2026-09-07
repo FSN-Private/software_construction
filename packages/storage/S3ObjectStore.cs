@@ -7,15 +7,22 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
 {
     public async Task PutAuthoritativeAsync(ContentAddress address, Stream content, CancellationToken cancellationToken = default)
     {
-        var request = new PutObjectRequest { BucketName = bucket, Key = address.AuthoritativeKey, InputStream = content, ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256 };
+        if (!address.IsValid || !content.CanSeek) throw new ArgumentException("Authoritative content must be seekable and have a canonical address.");
+        var position = content.Position;
+        await ContentAddress.VerifyAsync(content, address, cancellationToken);
+        content.Position = position;
+        var request = new PutObjectRequest { BucketName = bucket, Key = address.AuthoritativeKey, InputStream = content, ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256, ChecksumSHA256 = Convert.ToBase64String(Convert.FromHexString(address.Sha256)), IfNoneMatch = "*" };
         await s3.PutObjectAsync(request, cancellationToken);
     }
 
-    public string CreateDownloadUrl(ContentAddress address, DateTime expiresAtUtc) =>
-        s3.GetPreSignedURL(new GetPreSignedUrlRequest { BucketName = bucket, Key = address.AuthoritativeKey, Verb = HttpVerb.GET, Expires = expiresAtUtc });
-
-    public string CreateStagingUploadUrl(Guid session, DateTime expiresAtUtc) =>
-        s3.GetPreSignedURL(new GetPreSignedUrlRequest { BucketName = bucket, Key = StagingKey(session), Verb = HttpVerb.PUT, Expires = expiresAtUtc });
+    public PresignedTransfer CreateStagingUploadUrl(TransferGrant grant, DateTime nowUtc)
+    {
+        grant.Validate(nowUtc);
+        var headers = new Dictionary<string, string> { ["x-amz-checksum-sha256"] = grant.ExpectedChecksumBase64, ["x-amz-server-side-encryption"] = "aws:kms", ["x-amz-server-side-encryption-aws-kms-key-id"] = kmsKeyId, ["x-amz-meta-owner"] = grant.OwnerId };
+        var request = new GetPreSignedUrlRequest { BucketName = bucket, Key = StagingKey(grant.SessionId), Verb = HttpVerb.PUT, Expires = grant.ExpiresAtUtc };
+        foreach (var header in headers) request.Headers[header.Key] = header.Value;
+        return new(s3.GetPreSignedURL(request), headers);
+    }
     public string StagingKey(Guid session) => $"staging/{session:N}";
     public string QuarantineKey(Guid session) => $"quarantine/{session:N}";
 }

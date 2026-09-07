@@ -49,6 +49,21 @@ The independent reviewer found no unrelated changes, secrets, deployment mutatio
 
 **Final gate result: BLOCKED.** High findings remain unresolved. No push is authorized.
 
+### Round 2 — implementation disposition before follow-up review
+
+| Prior finding | Disposition | Evidence / remaining work |
+|---|---|---|
+| Authoritative write integrity | **Valid and fixed** for the storage primitive. | `ContentAddress.IsValid` now permits canonical lowercase hexadecimal only; `S3ObjectStore.PutAuthoritativeAsync` verifies the seekable stream against SHA-256/length before upload, sends the base64 checksum, and uses `If-None-Match: *` to prevent overwrite. Focused storage build and unit executable pass. |
+| Publication worker/repair protocol | **Valid.** | Still unresolved; no claim is made that T008 is complete. |
+| Persisted scoped transfer authorization | **Valid.** | `TransferGrant` now rejects missing owner/session, invalid content, expired grants, and grants over 15 minutes; signed upload headers bind checksum, KMS, and owner metadata. Persisted session-state authorization remains for T006. |
+| Idempotency/lifecycle enforcement | **Valid.** | Still unresolved in T004. |
+| Telemetry/audit/health/alert path | **Valid.** | Still unresolved in T009. |
+| Migration data-model gaps | **Valid.** | Still unresolved in T005. |
+| Mutable integration images | **Valid.** | Still unresolved in T002. |
+| Test depth | **Valid.** | The original broad-exception helper remains; exact storage and fault tests remain required. |
+
+**Round 2 validation before follow-up**: `dotnet build packages/storage/Platform.Storage.csproj --no-restore` and `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --no-restore` passed.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
