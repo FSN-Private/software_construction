@@ -33,6 +33,62 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review — ruleset-backed protection audit and repository transfer
+
+**Status**: PASS
+**Review date**: 2026-09-07
+**Alternate reviewer model**: gpt-5.6-sol
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd` (`https://github.com/FSN-Private/software_construction.git`)
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`a1555fe`)
+**Reviewed committed range**: `a1555fe..b2d1c91` (`f3d4173`, `fa01e2d`, `b2d1c91`)
+**Pending scope**: migrate the live protection audit from legacy branch-protection endpoints to active GitHub rulesets after the repository transfer; retain fail-closed bypass and production controls; correct canonical repository links. No AWS deployment permission or resource is added.
+
+## Reviewer prompt scope
+
+The independent reviewer received the governing Feature 004 specification, plan, tasks, repository instructions, the complete committed range, verifier, baseline, tests, workflow, runbooks, pre-deploy checklist, and validation results. It was instructed to disprove correctness, API semantics, bypass handling, token least privilege, repository-transfer safety, test coverage, documentation, and operational risk.
+
+## Round 1 — initial independent review
+
+| ID | Severity | Evidence and affected IDs | Impact and suggested remediation | Implementer assessment and disposition |
+|---|---|---|---|---|
+| R1-1 | High | `GET /rules/branches/master` reports rule and ruleset IDs but not ruleset bypass actors. The first revision therefore could report matching required checks while a bypass actor could avoid them. Affected: FR-003, FR-017, AC-001/010, T010, NFR-003. | Protection drift could be falsely accepted. Fetch each applied ruleset detail, require an inspectable bypass list, compare it with the versioned no-bypass policy, and test both bypass and absent-data paths. | **Valid and fixed.** The verifier obtains each applied repository ruleset, rejects absent/non-repository references and a non-array `bypass_actors` value, normalizes a populated list to `allowBypassActors: true`, and compares it with baseline `false`. API-shaped tests prove both omitted data fails closed and populated bypass actors produce drift. |
+| R1-2 | Medium | The README described read-only administration/environment access, but GitHub's current APIs require Actions read for environments and Metadata read for applied rules. Affected: FR-017, AC-010, T010, NFR-003/009. | A token created as documented could not perform the audit. | **Valid and fixed.** README and bootstrap runbook now require a repository-limited fine-grained token with Actions read-only, identify automatic Metadata read access, prohibit Administration/write access, and state that the issuing identity must be able to disclose bypass actors. Missing disclosure fails closed rather than escalating the token silently. |
+| R1-3 | High | Local `origin` and CDK CloudWatch alarm descriptions still used the old `XIB1/software_construction` address after the repository transfer. Affected: FR-014, T025/T028, NFR-012 and requested transfer correction. | Redirects are not a durable push destination; incident alarms could point to stale recovery documentation. | **Valid and fixed.** Local `origin` now uses the verified `FSN-Private` URL. Alarm runbook URLs use the canonical location and infrastructure assertions enforce it. |
+
+### Round 1 areas with no finding
+
+The reviewer found no issue in the use of GitHub's applied-rules endpoint for active controls, unioned required checks, restrictive-rule normalization, OIDC environment binding, missing-token/non-2xx failures, production deployment prohibition, dependencies, action pins, or unrelated artifacts.
+
+## Round 2 — R1-1 follow-up
+
+The reviewer found R1-1 still valid because an omitted `bypass_actors` property was initially normalized as an empty list. It required explicit rejection and API-level coverage.
+
+| ID | Severity | Implementer disposition |
+|---|---|---|
+| R2-1 | High | **Valid and fixed.** `branchProtectionSettings` now rejects every ruleset detail whose `bypass_actors` property is not an array. The test supplies `{}` and asserts rejection, then supplies a populated list and asserts the exact drift result. The README/runbook document the issuing-identity disclosure prerequisite and no-permission-escalation policy. |
+
+## Validation
+
+- `npm run validate:toolchain` — passed.
+- `node tests/infrastructure/protection-drift.mjs` — passed, including ruleset-backed matching state, omitted bypass disclosure refusal, and populated bypass drift.
+- `npm run test:ci-contract` — passed.
+- `npm --prefix packages/infrastructure run build` — passed.
+- `npm --prefix packages/infrastructure run synth` — passed (existing CDK deprecation/feature-flag notices only).
+- `npm --prefix packages/infrastructure run assert` — passed, including canonical alarm runbook URL.
+- `git diff --check a1555fe..b2d1c91` — passed.
+
+## Round 3 — substantive final agreement
+
+The alternate reviewer explicitly agreed that R1-1 through R1-3 and R2-1 are resolved. It found no new valid finding in the complete reviewed range, including ruleset aggregation, error handling, token exposure, environment verification, repository transfer, OIDC guidance, production blocking, documentation, or coverage. The reviewer reported a substantive **PASS**, pending only its inspection of this completed record as required by the review procedure.
+
+## Final-record inspection and agreement
+
+The alternate reviewer inspected this exact completed record after all rounds and accepted every recorded disposition. It confirmed no valid unresolved finding remains for `a1555fe..b2d1c91`; this record must be committed unchanged before push.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial pre-push review -- Phase 6 pre-AWS readiness
 
 **Status**: PASS
