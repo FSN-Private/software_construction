@@ -30,7 +30,7 @@ public sealed class PublicationRepairWorker(PublicationOutbox outbox, Publicatio
             try
             {
                 var promoted = await promoter.PromoteAsync(intent, cancellationToken);
-                await outbox.MarkPromotedAsync(intent.Id, promoted.StorageVersion, cancellationToken);
+                await outbox.MarkPromotedAsync(intent.Id, promoted, cancellationToken);
                 if (!await outbox.MarkPublishedAsync(intent.Id, cancellationToken)) throw new InvalidOperationException("publication_metadata_not_ready");
                 IngestTelemetry.VerifiedBytes.Add(promoted.Address.Length);
             }

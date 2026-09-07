@@ -70,7 +70,9 @@ app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContex
     if (!RequestContracts.TryGetLifecycleVersion(context, out var version)) return RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "lifecycle_version_required", "Lifecycle version required");
     var issuer = services.GetService<TransferGrantIssuer>();
     if (issuer is null) return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured");
-    var storage = services.GetRequiredService<S3ObjectStore>();
+    S3ObjectStore storage;
+    try { storage = services.GetRequiredService<S3ObjectStore>(); }
+    catch (InvalidOperationException) { return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured"); }
     try
     {
         var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);

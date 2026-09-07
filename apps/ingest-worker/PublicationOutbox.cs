@@ -34,10 +34,10 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
             : null;
     }
 
-    public async Task MarkPromotedAsync(Guid intentId, string storageVersion, CancellationToken cancellationToken = default)
+    public async Task MarkPromotedAsync(Guid intentId, PromotedContent promoted, CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand("WITH promoted AS (UPDATE publication_intents SET object_state = 'promoted', updated_at = now() WHERE id = $1 AND state = 'publishing' RETURNING id) UPDATE content_objects SET storage_version = $2 WHERE sha256 IN (SELECT content_sha256 FROM publication_intent_items WHERE intent_id IN (SELECT id FROM promoted))");
-        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(storageVersion);
+        await using var command = dataSource.CreateCommand("WITH valid AS (SELECT item.intent_id, item.content_sha256 FROM publication_intent_items item JOIN publication_intents intent ON intent.id = item.intent_id JOIN content_objects content ON content.sha256 = item.content_sha256 JOIN assets asset ON asset.id = item.asset_id JOIN upload_sessions session ON session.id = item.upload_session_id WHERE item.intent_id = $1 AND item.content_sha256 = $2 AND content.storage_key = $3 AND intent.payload ->> 'sha256' = item.content_sha256 AND (intent.payload ->> 'sessionId')::uuid = item.upload_session_id AND (intent.payload ->> 'length')::bigint = content.byte_length AND asset.original_sha256 = item.content_sha256 AND session.expected_sha256 = item.content_sha256 AND session.expected_length = content.byte_length AND session.state = 'verifying'), marked AS (UPDATE publication_intents SET object_state = 'promoted', updated_at = now() WHERE id IN (SELECT intent_id FROM valid) AND state = 'publishing' RETURNING id) UPDATE content_objects SET storage_version = $4 WHERE sha256 IN (SELECT content_sha256 FROM valid) AND EXISTS (SELECT 1 FROM marked)");
+        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(promoted.Address.Sha256); command.Parameters.AddWithValue(promoted.Address.AuthoritativeKey); command.Parameters.AddWithValue(promoted.StorageVersion);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
     }
 
