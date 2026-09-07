@@ -1,0 +1,139 @@
+name: Promote production release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    outputs:
+      release_run_id: ${{ steps.evidence-runs.outputs.release_run_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: evidence-runs
+        name: Resolve successful build and non-production evidence for this exact tag revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          RELEASE_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-release.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          NONPROD_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-nonprod.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          test -n "$RELEASE_RUN_ID" && test "$RELEASE_RUN_ID" != null
+          test -n "$NONPROD_RUN_ID" && test "$NONPROD_RUN_ID" != null
+          echo "release_run_id=$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "nonprod_run_id=$NONPROD_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.nonprod_run_id }}
+          name: nonprod-deployment-evidence
+          path: artifacts/nonprod
+      - run: node scripts/verify-promotion-evidence.mjs artifacts/release/release-manifest.json artifacts/nonprod/nonprod-deployment.json "$GITHUB_SHA" "${{ steps.evidence-runs.outputs.release_run_id }}"
+
+  promote:
+    needs: preflight
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.AWS_PRODUCTION_ECR_REGISTRY }}
+      API_REPOSITORY: ${{ vars.AWS_PRODUCTION_API_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
+      ECS_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_ECS_TASK_DEFINITION }}
+      ECS_API_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_API_CONTAINER }}
+      HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+      COGNITO_AUTHORITY: ${{ vars.AWS_PRODUCTION_COGNITO_AUTHORITY }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_PRODUCTION_COGNITO_CLIENT_ID }}
+      COGNITO_OWNER_USERNAME: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_USERNAME }}
+      COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.preflight.outputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - name: Verify tag, protected-default ancestry, and immutable evidence
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = tag
+          case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA"
+          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+      - name: Require explicit production deployment configuration
+        run: |
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" "$COGNITO_OWNER_USERNAME" "$COGNITO_OWNER_PASSWORD"; do
+            test -n "$VALUE"
+          done
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: production-release-${{ github.run_id }}
+      - name: Promote the same verified API image by immutable digest
+        run: |
+          set -euo pipefail
+          API_TAR_DIGEST="$(jq -r '.artifacts[] | select(.name == "api.tar") | .digest' artifacts/release/release-manifest.json)"
+          test "$API_TAR_DIGEST" != null
+          docker load --input artifacts/release/api.tar
+          docker tag "platform-api:$GITHUB_SHA" "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker push "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA"
+          API_IMAGE="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$API_REPOSITORY:$GITHUB_SHA")"
+          TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
+          RELEASE_ID="$(jq -r .releaseId artifacts/release/release-manifest.json)"
+          MANIFEST_DIGEST="sha256:$(sha256sum artifacts/release/release-manifest.json | awk '{print $1}')"
+          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" --arg release "$RELEASE_ID" --arg source "$GITHUB_SHA" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "Authentication__CognitoAuthority" and .name != "Authentication__CognitoClientId" and .name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"Authentication__CognitoAuthority",value:$authority},{name:"Authentication__CognitoClientId",value:$client},{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
+          TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
+          PREVIOUS_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --query service.taskDefinition --output text
+          authenticated_ready() {
+            ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
+            test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
+          }
+          if ! aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" || ! curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" || ! authenticated_ready; then
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK" --query service.taskDefinition --output text
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
+            authenticated_ready
+            exit 1
+          fi
+          printf '{"tag":"%s","sourceRevision":"%s","releaseRunId":"%s","releaseArtifactDigest":"%s","apiImage":"%s","taskDefinition":"%s","previousTaskDefinition":"%s","cognitoAuthority":"%s","cognitoClientId":"%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "${{ needs.preflight.outputs.release_run_id }}" "$API_TAR_DIGEST" "$API_IMAGE" "$TASK_ARN" "$PREVIOUS_TASK" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" > artifacts/release/production-promotion.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-promotion-evidence
+          path: artifacts/release
+          retention-days: 90

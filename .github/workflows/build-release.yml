@@ -1,0 +1,83 @@
+name: Build release evidence
+
+on:
+  workflow_run:
+    workflows: [Continuous integration]
+    branches: [master]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: release-build-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  linux-artifacts:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: docker build --file apps/api/Dockerfile --tag platform-api:${{ github.event.workflow_run.head_sha }} .
+      - run: docker build --file apps/web/Dockerfile --tag platform-web:${{ github.event.workflow_run.head_sha }} .
+      - run: docker build --file packages/infrastructure/Dockerfile --tag platform-infrastructure:${{ github.event.workflow_run.head_sha }} .
+      - run: mkdir -p artifacts/release && docker save platform-api:${{ github.event.workflow_run.head_sha }} -o artifacts/release/api.tar && docker save platform-web:${{ github.event.workflow_run.head_sha }} -o artifacts/release/web.tar && docker save platform-infrastructure:${{ github.event.workflow_run.head_sha }} -o artifacts/release/infrastructure.tar
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release
+          retention-days: 30
+  windows-artifact:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm run package:windows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-release-artifact
+          path: artifacts/windows/platform-api-win-x64.zip
+          retention-days: 30
+  evidence:
+    needs: [linux-artifacts, windows-artifact]
+    permissions:
+      actions: read
+      contents: read
+      attestations: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts/release
+          merge-multiple: true
+      - run: node scripts/generate-release-evidence.mjs "${{ github.event.workflow_run.head_sha }}" artifacts/release "${{ github.event.workflow_run.id }}"
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: artifacts/release/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence
+          path: artifacts/release
+          retention-days: 90

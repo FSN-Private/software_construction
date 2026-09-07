@@ -1,0 +1,30 @@
+{
+  "version": "v1",
+  "repository": "FSN-Private/software_construction",
+  "branch": "master",
+  "requiredChecks": [
+    "ci / backend",
+    "ci / web",
+    "ci / windows",
+    "ci / infrastructure",
+    "ci / security",
+    "ci / required"
+  ],
+  "branchProtection": {
+    "requireBranchesToBeUpToDate": true,
+    "requireLinearHistory": true,
+    "allowForcePushes": false,
+    "allowDeletions": false,
+    "allowBypassActors": false
+  },
+  "environments": {
+    "nonprod": {
+      "requiredReviewers": false,
+      "deploymentBranchPolicy": "protected-branches"
+    },
+    "production": {
+      "requiredReviewers": true,
+      "deploymentBranchPolicy": "protected-branches"
+    }
+  }
+}

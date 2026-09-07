@@ -1,0 +1,23 @@
+{
+  "contractVersion": "v1",
+  "live": {
+    "path": "/live",
+    "authentication": "none",
+    "successStatus": 200,
+    "body": {
+      "status": "live",
+      "contractVersion": "v1"
+    }
+  },
+  "ready": {
+    "path": "/ready",
+    "authentication": "owner",
+    "successStatus": 200,
+    "failureStatuses": [401, 403, 503],
+    "body": {
+      "status": "ready",
+      "operationId": "op_01J00000000000000000000000",
+      "releaseId": "v0.0.0-dev"
+    }
+  }
+}

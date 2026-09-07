@@ -1,0 +1,8 @@
+{
+  "contractVersion": "v1",
+  "artifactIdentity": "sha256:example-artifact-digest",
+  "manifestDigest": "sha256:example-manifest-digest",
+  "sourceRevision": "0123456789abcdef0123456789abcdef01234567",
+  "promotionRule": "same-digest-with-separate-audited-configuration",
+  "approvalRequired": true
+}
