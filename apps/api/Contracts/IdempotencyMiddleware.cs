@@ -23,7 +23,7 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
                 existing = null;
             }
             if (existing is { StatusCode: { } status, Response: { } replay }) { context.Response.StatusCode = status; await context.Response.WriteAsync(replay, context.RequestAborted); return; }
-            if (existing is not null && !existing.Reissue) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
+            if (existing is not null && !existing.Reissue && !await store.ReleaseStaleAsync(ownerId, key, CancellationToken.None)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
             if (!await store.ReserveAsync(ownerId, key, fingerprint, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
         }
         catch (InvalidOperationException) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_key_reused", "Idempotency key cannot be reused").ExecuteAsync(context); return; }
