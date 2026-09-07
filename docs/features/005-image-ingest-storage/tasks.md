@@ -5,18 +5,18 @@
 
 ## Phase 1: Setup and shared foundations
 
-- [ ] T001 Create ingest API, worker, storage, corpus, contract, and integration-test layout in `apps/api/`, `apps/ingest-worker/`, `packages/storage/`, and `tests/` (FR-001, NFR-008/009).
-- [ ] T002 [P] Add locked, reviewed S3, PostgreSQL, multipart-transfer, XML, and format-detection dependencies to repository manifests and `docs/dependency-inventory.md` (NFR-003/006/014).
-- [ ] T003 [P] Build legally usable RAW/JPEG/PNG/TIFF/XMP and corruption/ambiguity corpus fixtures in `tests/fixtures/ingest/` (NFR-006/014/016).
-- [ ] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004).
+- [x] T001 Create ingest API, worker, storage, corpus, contract, and integration-test layout in `apps/api/`, `apps/ingest-worker/`, `packages/storage/`, and `tests/` (FR-001, NFR-008/009).
+- [x] T002 [P] Add locked, reviewed S3, PostgreSQL, multipart-transfer, XML, and format-detection dependencies to repository manifests and `docs/dependency-inventory.md` (NFR-003/006/014). .NET provides SHA-256 and XML; AWS SDK provides multipart transfer; format detection is implemented against fixtures without a parser dependency.
+- [x] T003 [P] Build legally usable RAW/JPEG/PNG/TIFF/XMP and corruption/ambiguity corpus fixtures in `tests/fixtures/ingest/` (NFR-006/014/016).
+- [x] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004).
 
 ## Phase 2: Foundational data and publication controls
 
-- [ ] T005 Create PostgreSQL migrations for batches, upload sessions, content objects, assets, edit identities, paths, holds, publication intents, and reconstruction manifests in `apps/api/Database/Migrations/` (FR-004/016, NFR-008/011/016).
-- [ ] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015).
-- [ ] T007 [P] Implement normalized display/collision paths and Windows-invalid/case-collision validation in `packages/storage/Paths/` (FR-004/011, AC-005, NFR-010).
-- [ ] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015).
-- [ ] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012).
+- [x] T005 Create PostgreSQL migrations for batches, upload sessions, content objects, assets, edit identities, paths, holds, publication intents, and reconstruction manifests in `apps/api/Database/Migrations/` (FR-004/016, NFR-008/011/016).
+- [x] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015).
+- [x] T007 [P] Implement normalized display/collision paths and Windows-invalid/case-collision validation in `packages/storage/Paths/` (FR-004/011, AC-005, NFR-010).
+- [x] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015).
+- [x] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012).
 
 **Checkpoint**: verified content can be safely published or repaired before user-story work begins.
 
@@ -53,7 +53,7 @@
 - [ ] T023 Publish ingest, quarantine, orphan-repair, checksum-drift, quota, outage, and manifest-verification runbooks in `docs/runbooks/` (NFR-007/012).
 - [ ] T024 Rehearse backward-compatible schema/storage rollout and repairable rollback in `docs/features/005-image-ingest-storage/validation.md` (NFR-002/011/015).
 - [ ] T025 Measure batch, storage inventory/cost, and 100k/1m capacity targets in `tests/performance/ingest/` and record evidence in `docs/features/005-image-ingest-storage/validation.md` (NFR-001/013/016).
-- [ ] T026 Obtain owner approval for the feature specification and proposed ADR, then update `spec.md` and `docs/architecture/decisions/0005-immutable-content-and-repairable-publication.md`.
+- [x] T026 Obtain owner approval for the feature specification and proposed ADR, then update `spec.md` and `docs/architecture/decisions/0005-immutable-content-and-repairable-publication.md`.
 
 ## Dependencies and traceability
 

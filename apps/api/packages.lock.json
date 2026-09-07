@@ -65,6 +65,9 @@
           "Microsoft.IdentityModel.JsonWebTokens": "8.0.1",
           "Microsoft.IdentityModel.Tokens": "8.0.1"
         }
+      },
+      "platform.contracts": {
+        "type": "Project"
       }
     },
     "net10.0/win-x64": {}
