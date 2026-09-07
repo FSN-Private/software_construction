@@ -64,7 +64,7 @@ await AssertThrowsAsync(() => ContentAddress.VerifyAsync(mismatchStream, address
 Assert(LibraryPath.Normalize("folder\\photo.dng") == "folder/photo.dng", "Display paths must normalize separators.");
 Assert(LibraryPath.CollisionKey("Folder/photo.dng") == LibraryPath.CollisionKey("folder/PHOTO.dng"), "Collision keys must be case insensitive.");
 AssertThrows(() => LibraryPath.Normalize("folder/aux"), "Windows reserved device names must be rejected.");
-Assert(new PublicationIntent(Guid.NewGuid(), "pending-publication", 0).Repair().State == "reconciled", "Pending publication repair must be explicit and idempotent.");
+Assert(new PublicationIntent(Guid.NewGuid(), "pending-publication", 0, "{}").Repair().State == "reconciled", "Pending publication repair must be explicit and idempotent.");
 
 Console.WriteLine("Platform API telemetry foundation tests passed.");
 
