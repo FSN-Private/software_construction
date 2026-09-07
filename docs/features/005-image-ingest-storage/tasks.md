@@ -13,9 +13,9 @@
 ## Phase 2: Foundational data and publication controls
 
 - [ ] T005 Create PostgreSQL migrations for batches, upload sessions, content objects, assets, edit identities, paths, holds, publication intents, and reconstruction manifests in `apps/api/Database/Migrations/` (FR-004/016, NFR-008/011/016). — IN PROGRESS: resumability, object version, and repair-evidence fields remain.
-- [ ] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015). — IN PROGRESS: verified conditional publication and persisted owner/session constraints remain.
+- [ ] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015). — IN PROGRESS: server-side checksum-verified conditional promotion/reuse is implemented; persisted owner/session constraints and S3 fault coverage remain.
 - [x] T007 [P] Implement normalized display/collision paths and Windows-invalid/case-collision validation in `packages/storage/Paths/` (FR-004/011, AC-005, NFR-010).
-- [ ] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015). — IN PROGRESS: durable worker registration, verified-promotion gate, and retryable reconciliation remain.
+- [ ] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015). — IN PROGRESS: worker failures are isolated and retained for retry; PostgreSQL/MinIO fault coverage and atomic multi-item publication remain.
 - [ ] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012). — IN PROGRESS: outcome instrumentation, durable audit writer, health endpoint, and alert path remain.
 
 **Checkpoint**: verified content can be safely published or repaired before user-story work begins.

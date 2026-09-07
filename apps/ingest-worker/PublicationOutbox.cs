@@ -13,7 +13,7 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
     }
     public async Task<int> ReconcileAsync(CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'pending-publication', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastRepair}', to_jsonb(now())), updated_at = now() WHERE state = 'publishing' AND updated_at < now() - interval '15 minutes'");
+        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'pending-publication', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastRepair}', to_jsonb(now())), updated_at = now() WHERE state IN ('publishing', 'failed') AND updated_at < now() - interval '15 minutes'");
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -41,6 +41,13 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
     }
 
+    public async Task MarkFailedAsync(Guid intentId, string code, CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'failed', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastFailure}', to_jsonb($2::text)), updated_at = now() WHERE id = $1 AND state = 'publishing'");
+        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(code);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
+    }
+
     public async Task<bool> MarkPublishedAsync(Guid intentId, CancellationToken cancellationToken = default)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -50,7 +57,7 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
         command.CommandText = """
             WITH ready AS (
                 SELECT intent_id FROM publication_intent_items JOIN content_objects ON sha256 = content_sha256
-                WHERE intent_id = $1 GROUP BY intent_id HAVING bool_and(integrity_state = 'pending-publication')
+                WHERE intent_id = $1 GROUP BY intent_id HAVING count(*) = 1 AND bool_and(integrity_state = 'pending-publication')
             ), published AS (
                 UPDATE publication_intents SET state = 'published', updated_at = now()
                 WHERE id = $1 AND state = 'publishing' AND object_state = 'promoted' AND id IN (SELECT intent_id FROM ready) RETURNING id
