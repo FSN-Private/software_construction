@@ -1,7 +1,7 @@
 # Tasks: Image Ingest and Durable Storage
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: Proposed — execute after specification/ADR approval and feature-004 contract availability.
+**Status**: In progress — specification/ADR approval recorded by T026; foundational review remediation continues.
 
 ## Phase 1: Setup and shared foundations
 

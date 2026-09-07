@@ -1,7 +1,7 @@
 # Implementation Plan: Image Ingest and Durable Storage
 
 **Branch**: `feature/005-image-ingest-storage` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
-**Status**: Proposed — pending approval with the feature specification
+**Status**: Approved — owner authorization recorded 2026-09-07
 
 ## Summary
 

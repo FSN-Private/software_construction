@@ -45,7 +45,7 @@ public sealed class PlatformTelemetryMiddleware(
                 }
                 else
                 {
-                    logger.LogError(exception, "Request failed with status {StatusCode} in {DurationMs} ms", statusCode, duration);
+                    logger.LogError("Request failed with status {StatusCode} in {DurationMs} ms ({ExceptionType})", statusCode, duration, exception.GetType().Name);
                 }
             }
         }

@@ -45,12 +45,14 @@ app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
-app.MapGet("/ready", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
+app.MapGet("/ready", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => string.IsNullOrWhiteSpace(ingestConnection)
+    ? Results.Problem(type: "https://example.invalid/problems/ingest_unavailable", title: "Ingest is not configured", statusCode: StatusCodes.Status503ServiceUnavailable, extensions: ProblemExtensions(context, "ingest_unavailable"))
+    : Results.Ok(new
 {
     status = "ready",
     operationId = OperationId(context),
     releaseId = ReleaseId(),
-})));
+}))); 
 app.MapGet("/v1/session", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
 {
     subject = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub"),
