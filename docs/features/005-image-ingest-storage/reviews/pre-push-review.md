@@ -25,6 +25,30 @@ The alternate reviewer confirmed quarantine-only unassociated XMP and complete r
 
 **Final gate result: PASS**
 
+## Pre-push review — 2026-09-07 (single additional round)
+
+**Status**: blocked | **Reviewer model**: gpt-6-astra | **Base**: `3195561c0c1f4ba37bc475ff5552adc2952a3cba` | **Reviewed range**: `3195561c0c1f4ba37bc475ff5552adc2952a3cba..d88f9ab3d159ca7ccaaad23e6654bead7b1cfd3a` | **Pending push scope**: `origin/feature/005-image-ingest-storage..HEAD`
+
+### Round 6 — independent follow-up assessment
+
+**Prompt scope**: The alternate reviewer received the approved Feature 005 artifacts, the complete pending range and relevant implementation, tests, migrations, configuration, all prior dispositions, and repository policy. It was asked to disprove correctness and completeness. It made no file, commit, container, or remote changes.
+
+| Finding | Severity | Affected IDs | Evidence, impact, remediation | Implementer disposition |
+|---|---|---|---|---|
+| Stale idempotency owners can overwrite or delete a newer reservation. | Medium | T004; FR-015; NFR-015 | `IdempotencyStore` replaces a stale owner/key reservation, while later completion and cleanup use only that owner/key. A late request A can overwrite or remove replacement request B. Add a reservation generation/token and condition completion/release on it; test A expiry, B takeover, then late A completion/failure. | **Valid.** Unresolved; review-only round, no implementation authorized. |
+| Replayed idempotency responses lose their original content type. | Medium | T004; FR-015; versioned error contract | `IdempotencyMiddleware` persists/replays status and body but not content type, so a replayed problem response can lose `application/problem+json`. Persist/replay required response metadata and test duplicate error responses. | **Valid.** Unresolved; review-only round, no implementation authorized. |
+| Readiness and ingest observability remain incomplete. | Medium | T009; NFR-002/007/012 | API readiness only checks a nonempty connection string while transfer handling requires bucket/KMS configuration; unavailable PostgreSQL can still appear ready. Worker signals remain unconnected and no ingest export/15-minute alert evidence exists. Check required configuration and bounded dependencies, wire signals/alerts, and test an injected outage. | **Valid.** Unresolved; review-only round, no implementation authorized. |
+| Critical publication/storage boundaries lack executable behavior and fault evidence. | Medium | T004/T006/T008/T009; AC-002/007; NFR-009/015 | The focused executable does not exercise S3 storage, transfer grants, idempotency persistence, outbox, or worker; the integration ingest directory provides Compose only. Add targeted S3/PostgreSQL/worker tests for source-version, metadata binding, reuse, stale reservation, and infrastructure faults. | **Valid.** Unresolved; review-only round, no implementation authorized. |
+| Required backend formatter fails. | Medium | T004/T009; NFR-009; CI compatibility | `dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore --verbosity quiet` exits 1 for `apps/api/Program.cs` lines 50–55, the command run by CI. Format the file and rerun the command. | **Valid.** Unresolved; review-only round, no implementation authorized. |
+
+**Prior disposition assessment**: source-version binding, destination version evidence, publication binding checks/single-item enforcement, authoritative reuse, worker infrastructure isolation, persisted transfer authorization, Windows path validation, digest-pinned images, exact exception assertions, and fixture licensing are materially addressed in their stated scopes. The remaining idempotency and observability work is only partially remediated. Historical XMP quarantine/reconstruction work remains consistent. Later planned user-story, reconstruction, and capacity tasks were not counted as new findings.
+
+**Validation reproduced**: the focused unit executable, `npm run test:contract`, the API correlation integration test, and worker build passed; binary fixture SHA-256 values match provenance. The formatter verification failed. `git diff --check origin/feature/005-image-ingest-storage..HEAD` also fails on the newly introduced `Program.cs` trailing whitespace plus inherited Markdown whitespace. Docker was available, but no test containers or PostgreSQL/MinIO behavior tests existed; the reviewer did not create infrastructure in this read-only round.
+
+**No additional issue found**: the inspected owner-subject authorization, fixture integrity/provenance, dependency lock presence, API container project-copy wiring, destructive migration behavior, accidental secrets/artifacts, and remediated storage primitives had no additional defect identified.
+
+**Final gate result: BLOCKED.** Valid unresolved findings remain. This was the user-requested maximum of one additional review round; no push is authorized.
+
 ## Current gate status — 2026-09-07
 
 The historical PASS immediately above applies only to the earlier documented range. Round 5 independently reviewed `93ff52a..27fca41` and is **BLOCKED** with valid unresolved high- and medium-severity findings. Commits `4efe5c4` and this review record were created after that independent review, so the current pending range `93ff52a..HEAD` also requires a fresh complete review after the blocking findings are resolved. No push is authorized.
