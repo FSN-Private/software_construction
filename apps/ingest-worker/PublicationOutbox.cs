@@ -7,13 +7,13 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
     public async Task<Guid> EnqueueAsync(string payload, CancellationToken cancellationToken = default)
     {
         var id = Guid.NewGuid();
-        await using var command = dataSource.CreateCommand("INSERT INTO publication_intents (id, state, payload) VALUES ($1, 'pending-publication', $2::jsonb)");
+        await using var command = dataSource.CreateCommand("INSERT INTO publication_intents (id, state, object_state, payload) VALUES ($1, 'pending-publication', 'unverified', $2::jsonb)");
         command.Parameters.AddWithValue(id); command.Parameters.AddWithValue(payload);
         await command.ExecuteNonQueryAsync(cancellationToken); return id;
     }
     public async Task<int> ReconcileAsync(CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'reconciled', retry_count = retry_count + 1, updated_at = now() WHERE state = 'publishing' AND updated_at < now() - interval '15 minutes'");
+        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'pending-publication', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastRepair}', to_jsonb(now())), updated_at = now() WHERE state = 'publishing' AND updated_at < now() - interval '15 minutes'");
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -41,9 +41,15 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            WITH published AS (
+            WITH ready AS (
+                SELECT intent_id FROM publication_intent_items JOIN content_objects ON sha256 = content_sha256
+                WHERE intent_id = $1 GROUP BY intent_id HAVING bool_and(integrity_state = 'pending-publication')
+            ), published AS (
                 UPDATE publication_intents SET state = 'published', updated_at = now()
-                WHERE id = $1 AND state = 'publishing' RETURNING id
+                WHERE id = $1 AND state = 'publishing' AND object_state = 'promoted' AND id IN (SELECT intent_id FROM ready) RETURNING id
+            ), authoritative AS (
+                UPDATE content_objects SET integrity_state = 'authoritative'
+                WHERE sha256 IN (SELECT content_sha256 FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published))
             )
             UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
             WHERE state = 'prepared' AND id IN (SELECT asset_id FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published));
