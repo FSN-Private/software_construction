@@ -38,7 +38,7 @@ using (var listener = new MeterListener())
         NullLogger<PlatformTelemetryMiddleware>.Instance,
         factory);
     var context = new DefaultHttpContext();
-    await AssertThrowsAsync(() => middleware.InvokeAsync(context), "Middleware must preserve downstream failures.");
+    await AssertThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(context), "Middleware must preserve downstream failures.");
 }
 Assert(failedRequestMeasurements == 1, "A failed request must still produce one normalized request metric.");
 
@@ -60,10 +60,12 @@ await using var validStream = new MemoryStream(Encoding.UTF8.GetBytes("immutable
 var address = await ContentAddress.FromAsync(validStream);
 Assert(address.IsValid && address.Length == 15 && address.AuthoritativeKey == $"sha256/{address.Sha256}", "Content addresses must be immutable SHA-256 plus length identities.");
 await using var mismatchStream = new MemoryStream(Encoding.UTF8.GetBytes("different bytes"));
-await AssertThrowsAsync(() => ContentAddress.VerifyAsync(mismatchStream, address), "Checksum mismatch must prevent publication.");
+await AssertThrowsAsync<InvalidDataException>(() => ContentAddress.VerifyAsync(mismatchStream, address), "Checksum mismatch must prevent publication.");
 Assert(LibraryPath.Normalize("folder\\photo.dng") == "folder/photo.dng", "Display paths must normalize separators.");
 Assert(LibraryPath.CollisionKey("Folder/photo.dng") == LibraryPath.CollisionKey("folder/PHOTO.dng"), "Collision keys must be case insensitive.");
 AssertThrows(() => LibraryPath.Normalize("folder/aux"), "Windows reserved device names must be rejected.");
+AssertThrows(() => LibraryPath.Normalize("folder/CON.photo.jpg"), "Windows device names must be rejected before every extension.");
+AssertThrows(() => LibraryPath.Normalize("folder/a\u0001.jpg"), "Windows control characters must be rejected on every host.");
 Assert(new PublicationIntent(Guid.NewGuid(), "pending-publication", 0, "{}").Repair().State == "reconciled", "Pending publication repair must be explicit and idempotent.");
 
 Console.WriteLine("Platform API telemetry foundation tests passed.");
@@ -76,13 +78,13 @@ static void Assert(bool condition, string message)
     }
 }
 
-static async Task AssertThrowsAsync(Func<Task> action, string message)
+static async Task AssertThrowsAsync<T>(Func<Task> action, string message) where T : Exception
 {
     try
     {
         await action();
     }
-    catch (Exception)
+    catch (T)
     {
         return;
     }

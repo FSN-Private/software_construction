@@ -43,8 +43,8 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
 
     public async Task MarkFailedAsync(Guid intentId, string code, CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET state = 'failed', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastFailure}', to_jsonb($2::text)), updated_at = now() WHERE id = $1 AND state = 'publishing'");
-        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(code);
+        await using var command = dataSource.CreateCommand("WITH failed AS (UPDATE publication_intents SET state = 'failed', retry_count = retry_count + 1, repair_evidence = jsonb_set(repair_evidence, '{lastFailure}', to_jsonb($2::text)), updated_at = now() WHERE id = $1 AND state = 'publishing' RETURNING id) INSERT INTO audit_events (id, owner_id, operation_id, event_type, outcome, reason_code) SELECT $3, session.owner_id, 'publication/' || failed.id::text, 'publication.completed', 'failed', $2 FROM failed JOIN publication_intent_items item ON item.intent_id = failed.id JOIN upload_sessions session ON session.id = item.upload_session_id");
+        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(code); command.Parameters.AddWithValue(Guid.NewGuid());
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
     }
 
@@ -56,8 +56,15 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
         command.Transaction = transaction;
         command.CommandText = """
             WITH ready AS (
-                SELECT intent_id FROM publication_intent_items JOIN content_objects ON sha256 = content_sha256
-                WHERE intent_id = $1 GROUP BY intent_id HAVING count(*) = 1 AND bool_and(integrity_state = 'pending-publication')
+                SELECT item.intent_id FROM publication_intent_items AS item
+                JOIN publication_intents AS intent ON intent.id = item.intent_id
+                JOIN content_objects AS content ON content.sha256 = item.content_sha256
+                JOIN assets AS asset ON asset.id = item.asset_id
+                WHERE item.intent_id = $1
+                    AND intent.payload ->> 'sha256' = item.content_sha256
+                    AND (intent.payload ->> 'sessionId')::uuid = item.upload_session_id
+                    AND asset.original_sha256 = item.content_sha256
+                GROUP BY item.intent_id HAVING count(*) = 1 AND bool_and(content.integrity_state IN ('pending-publication', 'authoritative'))
             ), published AS (
                 UPDATE publication_intents SET state = 'published', updated_at = now()
                 WHERE id = $1 AND state = 'publishing' AND object_state = 'promoted' AND id IN (SELECT intent_id FROM ready) RETURNING id
@@ -65,10 +72,15 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
                 UPDATE content_objects SET integrity_state = 'authoritative'
                 WHERE sha256 IN (SELECT content_sha256 FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published))
             )
-            UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
-            WHERE state = 'prepared' AND id IN (SELECT asset_id FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published));
+            activated AS (
+                UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
+                WHERE state = 'prepared' AND id IN (SELECT asset_id FROM publication_intent_items WHERE intent_id IN (SELECT id FROM published)) RETURNING id
+            )
+            INSERT INTO audit_events (id, owner_id, operation_id, event_type, outcome)
+            SELECT $2, session.owner_id, 'publication/' || published.id::text, 'publication.completed', 'published'
+            FROM published JOIN publication_intent_items item ON item.intent_id = published.id JOIN upload_sessions session ON session.id = item.upload_session_id;
             """;
-        command.Parameters.AddWithValue(intentId);
+        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(Guid.NewGuid());
         await command.ExecuteNonQueryAsync(cancellationToken);
         await using var state = connection.CreateCommand();
         state.Transaction = transaction;
