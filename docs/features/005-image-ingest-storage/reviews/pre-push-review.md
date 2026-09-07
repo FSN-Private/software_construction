@@ -25,6 +25,30 @@ The alternate reviewer confirmed quarantine-only unassociated XMP and complete r
 
 **Final gate result: PASS**
 
+## Pre-push review — 2026-09-07
+
+**Status**: blocked | **Reviewer model**: gpt-5.6-terra | **Base**: `93ff52a` | **Reviewed range**: `93ff52a..16c7f46` | **Pending push scope**: `origin/feature/005-image-ingest-storage..HEAD`
+
+### Round 1
+
+The independent reviewer found no unrelated changes, secrets, deployment mutation, fixture checksum mismatch, or defect in the basic owner/path primitives. The reviewer reproduced the focused unit executable and whitespace check. It found the following unresolved findings:
+
+| Finding | Severity | Affected IDs | Disposition |
+|---|---|---|---|
+| Authoritative writes do not verify the supplied stream or prevent overwrite; canonical digest casing also differs from the database constraint. | High | T006; FR-002/003/008; AC-001/002; NFR-015 | **Valid.** No fix yet; T006 returned to in progress. |
+| The worker does not register or execute the outbox; stale publication cannot retry and activation is not gated on verified storage. | High | T008; FR-007/009; AC-002/007; NFR-002/015 | **Valid.** No fix yet; T008 returned to in progress. |
+| Presigned URLs lack persisted owner/session, expiry, length, and checksum constraints. | High | T006; FR-002/008; NFR-003 | **Valid.** No fix yet; T006 returned to in progress. |
+| Idempotency/lifecycle headers are only presence checks; replay, key validation, and optimistic concurrency are absent. | Medium | T004; FR-015; NFR-003/015 | **Valid.** No fix yet; T004 returned to in progress. |
+| Metrics are declared but not emitted; audit writer, health, and alert path are absent. | Medium | T004/T009; FR-014/015; NFR-004/007/012 | **Valid.** No fix yet; T009 returned to in progress. |
+| Migration lacks received-part/target binding, content version, and publication object/repair evidence fields. | Medium | T005; FR-004/016; NFR-008/011/016 | **Valid.** Add before migration rehearsal. |
+| Integration container tags are mutable. | Medium | T002; NFR-003/014 | **Valid.** Pin reviewed digests before running integration environments. |
+| The focused tests do not cover S3, PostgreSQL, worker registration, or fault paths; one helper accepted any exception. | Medium | T006/T008/T009; AC-002/007; NFR-009/015 | **Valid.** Add exact unit and container-backed tests with the implementations. |
+| Fixture README called all materials public-domain despite MIT corpus fixtures. | Low | T003; NFR-014 | **Valid and fixed** in the follow-up review-record commit. |
+
+**Validation evidence**: locked restores and all three project builds passed; the focused unit executable and `npm run test:contract` passed; `git diff --check` passed. The initial locked restore required normal network access only to retrieve NuGet vulnerability metadata. The reviewer confirmed those commands were consistent with the range.
+
+**Final gate result: BLOCKED.** High findings remain unresolved. No push is authorized.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
