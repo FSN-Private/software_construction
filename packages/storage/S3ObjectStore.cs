@@ -1,5 +1,6 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using System.Net;
 
 namespace Platform.Storage;
 
@@ -12,7 +13,11 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
         await ContentAddress.VerifyAsync(content, address, cancellationToken);
         content.Position = position;
         var request = new PutObjectRequest { BucketName = bucket, Key = address.AuthoritativeKey, InputStream = content, ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256, ChecksumSHA256 = Convert.ToBase64String(Convert.FromHexString(address.Sha256)), IfNoneMatch = "*" };
-        await s3.PutObjectAsync(request, cancellationToken);
+        try { await s3.PutObjectAsync(request, cancellationToken); }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+        {
+            await VerifyAuthoritativeAsync(address, cancellationToken);
+        }
     }
 
     public PresignedTransfer CreateStagingUploadUrl(TransferGrant grant, DateTime nowUtc)
@@ -25,17 +30,28 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
     }
     public async Task PromoteStagedAsync(Guid session, ContentAddress address, CancellationToken cancellationToken = default)
     {
-        var staging = await s3.GetObjectAsync(bucket, StagingKey(session), cancellationToken);
-        await using var body = staging.ResponseStream;
-        await PutAuthoritativeAsync(address, await CopyToSeekableAsync(body, cancellationToken), cancellationToken);
+        if (!address.IsValid) throw new ArgumentException("Authoritative content must have a canonical address.", nameof(address));
+        var staged = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = StagingKey(session), ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
+        if (staged.ContentLength != address.Length || staged.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("checksum_mismatch");
+        try
+        {
+            await s3.CopyObjectAsync(new CopyObjectRequest
+            {
+                SourceBucket = bucket, SourceKey = StagingKey(session), DestinationBucket = bucket, DestinationKey = address.AuthoritativeKey,
+                IfNoneMatch = "*", ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS,
+                ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256
+            }, cancellationToken);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+        {
+            await VerifyAuthoritativeAsync(address, cancellationToken);
+        }
     }
 
-    private static async Task<MemoryStream> CopyToSeekableAsync(Stream source, CancellationToken cancellationToken)
+    private async Task VerifyAuthoritativeAsync(ContentAddress address, CancellationToken cancellationToken)
     {
-        var copy = new MemoryStream();
-        await source.CopyToAsync(copy, cancellationToken);
-        copy.Position = 0;
-        return copy;
+        var existing = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = address.AuthoritativeKey, ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
+        if (existing.ContentLength != address.Length || existing.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
     }
     public string StagingKey(Guid session) => $"staging/{session:N}";
     public string QuarantineKey(Guid session) => $"quarantine/{session:N}";
