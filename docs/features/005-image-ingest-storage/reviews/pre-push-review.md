@@ -64,6 +64,21 @@ The independent reviewer found no unrelated changes, secrets, deployment mutatio
 
 **Round 2 validation before follow-up**: `dotnet build packages/storage/Platform.Storage.csproj --no-restore` and `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --no-restore` passed.
 
+### Round 2 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-terra | **Reviewed range**: `93ff52a..da3124f` | **Pending push scope**: `origin/feature/005-image-ingest-storage..HEAD`
+
+The reviewer reproduced `git diff --check`, the storage build, and the focused unit executable. It agreed that the fixture-license correction is resolved and that the earlier specification-only findings remain resolved as specification work. It found no new distinct issue, but explicitly rejected closure of the storage high finding because the new primitive has no registered API/worker call path and lacks S3 behavior tests.
+
+| Finding | Follow-up assessment |
+|---|---|
+| Authoritative write integrity | **Valid and unresolved.** The primitive now checks canonical digest, verifies local bytes, sends checksum, and uses conditional creation; verified promotion is not wired or proven against S3/MinIO. |
+| Publication worker/repair protocol | **Valid and unresolved.** No data source/hosted worker registration; stale `publishing` intents become unclaimable `reconciled`; activation is not gated on object verification. |
+| Persisted scoped transfer authorization | **Valid and unresolved.** `TransferGrant` validates only caller-provided data; there is no persisted owner/session/target authorization, content-length constraint, issuance authorization, or call site. |
+| Idempotency/lifecycle, observability/audit/health/alerts, migration gaps, mutable images, and test depth | **Valid and unresolved.** The reviewer confirmed the Round 1 evidence remains applicable. |
+
+**Final gate result: BLOCKED.** The reviewer explicitly found valid unresolved high findings. No push is authorized.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
