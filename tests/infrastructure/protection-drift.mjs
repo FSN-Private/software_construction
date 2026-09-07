@@ -16,17 +16,23 @@ const current = await fetchCurrentProtection(observed, 'test-token', async (url)
   const path = new URL(url).pathname;
   const responses = {
     '/repos/FSN-Private/software_construction/rules/branches/master': [
-      { type: 'deletion' },
-      { type: 'non_fast_forward' },
-      { type: 'required_linear_history' },
+      { type: 'deletion', ruleset_source_type: 'Repository', ruleset_source: observed.repository, ruleset_id: 99 },
+      { type: 'non_fast_forward', ruleset_source_type: 'Repository', ruleset_source: observed.repository, ruleset_id: 99 },
+      { type: 'required_linear_history', ruleset_source_type: 'Repository', ruleset_source: observed.repository, ruleset_id: 99 },
       {
         type: 'required_status_checks',
         parameters: {
           strict_required_status_checks_policy: true,
           required_status_checks: observed.requiredChecks.map((context) => ({ context })),
         },
+        ruleset_source_type: 'Repository',
+        ruleset_source: observed.repository,
+        ruleset_id: 99,
       },
     ],
+    '/repos/FSN-Private/software_construction/rulesets/99': {
+      bypass_actors: [],
+    },
     '/repos/FSN-Private/software_construction/environments/nonprod': {
       deployment_branch_policy: { protected_branches: true },
       protection_rules: [],
@@ -36,9 +42,14 @@ const current = await fetchCurrentProtection(observed, 'test-token', async (url)
       protection_rules: [{ type: 'required_reviewers', reviewers: [{ type: 'User', id: 1 }] }],
     },
   };
-  return { ok: true, status: 200, json: async () => responses[path] };
+  const response = responses[path];
+  return { ok: response !== undefined, status: response === undefined ? 404 : 200, json: async () => response };
 });
 assert.deepEqual(detectDrift(observed, current), []);
 assert.deepEqual(detectDrift(observed, { ...current, requiredChecks: current.requiredChecks.slice(1) }), ['missing required check: ci / backend']);
+assert.deepEqual(detectDrift(observed, {
+  ...current,
+  branchProtection: { ...current.branchProtection, allowBypassActors: true },
+}), ['branch protection allowBypassActors expected false, found true']);
 
 console.log('Protection evidence drift tests passed.');

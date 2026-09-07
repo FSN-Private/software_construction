@@ -24,7 +24,7 @@ function environmentSettings(environment) {
   };
 }
 
-function branchProtectionSettings(rules) {
+function branchProtectionSettings(rules, rulesets) {
   const statusCheckRules = rules.filter((rule) => rule.type === 'required_status_checks');
 
   return {
@@ -38,6 +38,7 @@ function branchProtectionSettings(rules) {
       requireLinearHistory: rules.some((rule) => rule.type === 'required_linear_history'),
       allowForcePushes: !rules.some((rule) => rule.type === 'non_fast_forward'),
       allowDeletions: !rules.some((rule) => rule.type === 'deletion'),
+      allowBypassActors: rulesets.some((ruleset) => (ruleset.bypass_actors?.length ?? 0) > 0),
     },
   };
 }
@@ -56,11 +57,25 @@ export async function fetchCurrentProtection(expected, token, fetchImpl = fetch)
       environmentSettings(await getJson(`${prefix}/environments/${name}`, token, fetchImpl)),
     ])),
   ]);
+  const rulesetReferences = [...new Map(rules.map((rule) => [
+    `${rule.ruleset_source_type}:${rule.ruleset_id}`,
+    { sourceType: rule.ruleset_source_type, source: rule.ruleset_source, id: rule.ruleset_id },
+  ])).values()];
+
+  if (rulesetReferences.length === 0 || rulesetReferences.some(({ sourceType, source, id }) =>
+    sourceType !== 'Repository' || source !== expected.repository || !id,
+  )) {
+    throw new Error('GitHub protection audit requires active repository rulesets with inspectable bypass actors.');
+  }
+
+  const rulesets = await Promise.all(rulesetReferences.map(({ id }) =>
+    getJson(`${prefix}/rulesets/${id}`, token, fetchImpl),
+  ));
 
   return {
     repository: expected.repository,
     branch: expected.branch,
-    ...branchProtectionSettings(rules),
+    ...branchProtectionSettings(rules, rulesets),
     environments: Object.fromEntries(environments),
   };
 }

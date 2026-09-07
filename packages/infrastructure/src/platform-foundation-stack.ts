@@ -69,7 +69,7 @@ export class PlatformFoundationStack extends Stack {
     }));
     alerts.addSubscription(new EmailSubscription(props.alertEmail));
     const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
-    const runbook = 'https://github.com/XIB1/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
+    const runbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
     const availabilityAlarm = new Alarm(this, 'ServiceAvailabilityAlarm', { metric: availability, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
     availabilityAlarm.addAlarmAction(new SnsAction(alerts));
     const authenticationFailures = new MetricFilter(this, 'AuthenticationFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "authorization.denied" }'), metricNamespace: 'Platform/Auth', metricName: 'AuthenticationFailures', metricValue: '1' });
