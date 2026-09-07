@@ -23,6 +23,20 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
         foreach (var header in headers) request.Headers[header.Key] = header.Value;
         return new(s3.GetPreSignedURL(request), headers);
     }
+    public async Task PromoteStagedAsync(Guid session, ContentAddress address, CancellationToken cancellationToken = default)
+    {
+        var staging = await s3.GetObjectAsync(bucket, StagingKey(session), cancellationToken);
+        await using var body = staging.ResponseStream;
+        await PutAuthoritativeAsync(address, await CopyToSeekableAsync(body, cancellationToken), cancellationToken);
+    }
+
+    private static async Task<MemoryStream> CopyToSeekableAsync(Stream source, CancellationToken cancellationToken)
+    {
+        var copy = new MemoryStream();
+        await source.CopyToAsync(copy, cancellationToken);
+        copy.Position = 0;
+        return copy;
+    }
     public string StagingKey(Guid session) => $"staging/{session:N}";
     public string QuarantineKey(Guid session) => $"quarantine/{session:N}";
 }

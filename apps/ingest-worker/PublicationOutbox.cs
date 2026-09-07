@@ -26,12 +26,19 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
             )
             UPDATE publication_intents AS intent SET state = 'publishing', updated_at = now()
             FROM next WHERE intent.id = next.id
-            RETURNING intent.id, intent.state, intent.retry_count;
+            RETURNING intent.id, intent.state, intent.retry_count, intent.payload::text;
             """);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new PublicationIntent(reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2))
+            ? new PublicationIntent(reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2), reader.GetString(3))
             : null;
+    }
+
+    public async Task MarkPromotedAsync(Guid intentId, CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET object_state = 'promoted', updated_at = now() WHERE id = $1 AND state = 'publishing'");
+        command.Parameters.AddWithValue(intentId);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
     }
 
     public async Task<bool> MarkPublishedAsync(Guid intentId, CancellationToken cancellationToken = default)
