@@ -79,6 +79,15 @@ The reviewer reproduced `git diff --check`, the storage build, and the focused u
 
 **Final gate result: BLOCKED.** The reviewer explicitly found valid unresolved high findings. No push is authorized.
 
+### Round 3 — implementation disposition before follow-up review
+
+| Prior finding | Disposition | Evidence / remaining work |
+|---|---|---|
+| Publication worker/repair protocol | **Valid.** | The host now registers `NpgsqlDataSource`, `PublicationOutbox`, and `PublicationRepairWorker`; stale publishing intents return to `pending-publication` with repair evidence, and metadata activation requires `object_state = promoted` plus pending content, which transitions atomically to authoritative. Verified object promotion still needs a worker handler and integration fault tests. |
+| Migration gaps | **Valid.** | Sessions now retain owner, target key, and received parts; content retains storage version; intents retain object state and repair evidence. Migration rehearsal remains T024. |
+
+**Round 3 validation before follow-up**: worker/API builds and the focused unit executable passed; `git diff --check` passed.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
