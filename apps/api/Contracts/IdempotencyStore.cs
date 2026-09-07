@@ -16,7 +16,7 @@ public sealed class IdempotencyStore(NpgsqlDataSource dataSource)
 
     public async Task<bool> ReserveAsync(string ownerId, string key, string fingerprint, CancellationToken cancellationToken)
     {
-        await using var command = dataSource.CreateCommand("INSERT INTO idempotency_results (owner_id, idempotency_key, fingerprint) VALUES ($1, $2, $3) ON CONFLICT (owner_id, idempotency_key) DO NOTHING RETURNING 1");
+        await using var command = dataSource.CreateCommand("INSERT INTO idempotency_results (owner_id, idempotency_key, fingerprint) VALUES ($1, $2, $3) ON CONFLICT (owner_id, idempotency_key) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, created_at = now() WHERE idempotency_results.status_code IS NULL AND idempotency_results.created_at < now() - interval '15 minutes' RETURNING 1");
         command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(key); command.Parameters.AddWithValue(fingerprint);
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
@@ -35,11 +35,11 @@ public sealed class IdempotencyStore(NpgsqlDataSource dataSource)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task ResetAsync(string ownerId, string key, CancellationToken cancellationToken)
+    public async Task<bool> ResetAsync(string ownerId, string key, CancellationToken cancellationToken)
     {
-        await using var command = dataSource.CreateCommand("UPDATE idempotency_results SET status_code = NULL, response_body = NULL, reissue_response = false, completed_at = NULL WHERE owner_id = $1 AND idempotency_key = $2");
+        await using var command = dataSource.CreateCommand("DELETE FROM idempotency_results WHERE owner_id = $1 AND idempotency_key = $2 AND reissue_response AND status_code IS NOT NULL RETURNING 1");
         command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(key);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 }
 
