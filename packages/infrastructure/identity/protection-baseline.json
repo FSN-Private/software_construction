@@ -1,6 +1,6 @@
 {
   "version": "v1",
-  "repository": "XIB1/software_construction",
+  "repository": "FSN-Private/software_construction",
   "branch": "master",
   "requiredChecks": [
     "ci / backend",
@@ -14,7 +14,8 @@
     "requireBranchesToBeUpToDate": true,
     "requireLinearHistory": true,
     "allowForcePushes": false,
-    "allowDeletions": false
+    "allowDeletions": false,
+    "allowBypassActors": false
   },
   "environments": {
     "nonprod": {

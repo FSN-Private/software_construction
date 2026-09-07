@@ -33,6 +33,175 @@ The independent review confirms that no valid unresolved finding remains for the
 
 ---
 
+# Adversarial pre-push review — ruleset-backed protection audit and repository transfer
+
+**Status**: PASS
+**Review date**: 2026-09-07
+**Alternate reviewer model**: gpt-5.6-sol
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd` (`https://github.com/FSN-Private/software_construction.git`)
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`a1555fe`)
+**Reviewed committed range**: `a1555fe..b2d1c91` (`f3d4173`, `fa01e2d`, `b2d1c91`)
+**Pending scope**: migrate the live protection audit from legacy branch-protection endpoints to active GitHub rulesets after the repository transfer; retain fail-closed bypass and production controls; correct canonical repository links. No AWS deployment permission or resource is added.
+
+## Reviewer prompt scope
+
+The independent reviewer received the governing Feature 004 specification, plan, tasks, repository instructions, the complete committed range, verifier, baseline, tests, workflow, runbooks, pre-deploy checklist, and validation results. It was instructed to disprove correctness, API semantics, bypass handling, token least privilege, repository-transfer safety, test coverage, documentation, and operational risk.
+
+## Round 1 — initial independent review
+
+| ID | Severity | Evidence and affected IDs | Impact and suggested remediation | Implementer assessment and disposition |
+|---|---|---|---|---|
+| R1-1 | High | `GET /rules/branches/master` reports rule and ruleset IDs but not ruleset bypass actors. The first revision therefore could report matching required checks while a bypass actor could avoid them. Affected: FR-003, FR-017, AC-001/010, T010, NFR-003. | Protection drift could be falsely accepted. Fetch each applied ruleset detail, require an inspectable bypass list, compare it with the versioned no-bypass policy, and test both bypass and absent-data paths. | **Valid and fixed.** The verifier obtains each applied repository ruleset, rejects absent/non-repository references and a non-array `bypass_actors` value, normalizes a populated list to `allowBypassActors: true`, and compares it with baseline `false`. API-shaped tests prove both omitted data fails closed and populated bypass actors produce drift. |
+| R1-2 | Medium | The README described read-only administration/environment access, but GitHub's current APIs require Actions read for environments and Metadata read for applied rules. Affected: FR-017, AC-010, T010, NFR-003/009. | A token created as documented could not perform the audit. | **Valid and fixed.** README and bootstrap runbook now require a repository-limited fine-grained token with Actions read-only, identify automatic Metadata read access, prohibit Administration/write access, and state that the issuing identity must be able to disclose bypass actors. Missing disclosure fails closed rather than escalating the token silently. |
+| R1-3 | High | Local `origin` and CDK CloudWatch alarm descriptions still used the old `XIB1/software_construction` address after the repository transfer. Affected: FR-014, T025/T028, NFR-012 and requested transfer correction. | Redirects are not a durable push destination; incident alarms could point to stale recovery documentation. | **Valid and fixed.** Local `origin` now uses the verified `FSN-Private` URL. Alarm runbook URLs use the canonical location and infrastructure assertions enforce it. |
+
+### Round 1 areas with no finding
+
+The reviewer found no issue in the use of GitHub's applied-rules endpoint for active controls, unioned required checks, restrictive-rule normalization, OIDC environment binding, missing-token/non-2xx failures, production deployment prohibition, dependencies, action pins, or unrelated artifacts.
+
+## Round 2 — R1-1 follow-up
+
+The reviewer found R1-1 still valid because an omitted `bypass_actors` property was initially normalized as an empty list. It required explicit rejection and API-level coverage.
+
+| ID | Severity | Implementer disposition |
+|---|---|---|
+| R2-1 | High | **Valid and fixed.** `branchProtectionSettings` now rejects every ruleset detail whose `bypass_actors` property is not an array. The test supplies `{}` and asserts rejection, then supplies a populated list and asserts the exact drift result. The README/runbook document the issuing-identity disclosure prerequisite and no-permission-escalation policy. |
+
+## Validation
+
+- `npm run validate:toolchain` — passed.
+- `node tests/infrastructure/protection-drift.mjs` — passed, including ruleset-backed matching state, omitted bypass disclosure refusal, and populated bypass drift.
+- `npm run test:ci-contract` — passed.
+- `npm --prefix packages/infrastructure run build` — passed.
+- `npm --prefix packages/infrastructure run synth` — passed (existing CDK deprecation/feature-flag notices only).
+- `npm --prefix packages/infrastructure run assert` — passed, including canonical alarm runbook URL.
+- `git diff --check a1555fe..b2d1c91` — passed.
+
+## Round 3 — substantive final agreement
+
+The alternate reviewer explicitly agreed that R1-1 through R1-3 and R2-1 are resolved. It found no new valid finding in the complete reviewed range, including ruleset aggregation, error handling, token exposure, environment verification, repository transfer, OIDC guidance, production blocking, documentation, or coverage. The reviewer reported a substantive **PASS**, pending only its inspection of this completed record as required by the review procedure.
+
+## Final-record inspection and agreement
+
+The alternate reviewer inspected this exact completed record after all rounds and accepted every recorded disposition. It confirmed no valid unresolved finding remains for `a1555fe..b2d1c91`; this record must be committed unchanged before push.
+
+**Final gate result: PASS**
+
+---
+
+# Adversarial pre-push review -- Phase 6 pre-AWS readiness
+
+**Status**: PASS
+**Review date**: 2026-09-06
+**Alternate reviewer model**: gpt-5.6-sol
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `2a44ce9`
+**Reviewed pending scope**: T028 runbooks, T029 inventory, pre-AWS T031 contract coverage, T032 checklist, validation record, task status, and this review milestone. T030, executed T031 fault injection, and account-specific T032 evidence remain open.
+
+## Round 1 findings and dispositions
+
+| ID | Severity | Affected IDs | Disposition and evidence |
+|---|---|---|---|
+| R1-1 | Medium | T029, FR-015, AC-008, NFR-003/014/016 | **Valid and fixed.** The initial inventory grouped inputs and overstated vulnerability coverage. It now records each action's SHA/source/license/permissions, direct package ecosystems and locked closure, accepted license exceptions, validation evidence, and the explicit pending image advisory review in T032. |
+| R1-2 | Medium | T031, FR-003/009, AC-004, NFR-015 | **Valid and fixed.** Static reliability contracts were incorrectly described as executed fault injection. T031 is now unchecked and accurately names the contract coverage; actual GitHub Actions/AWS fault injection remains pending. |
+
+## Round 2 -- final substantive agreement
+
+The alternate reviewer confirmed both dispositions and found no new substantive issue in runbook safety, dependency controls, pending-AWS boundaries, test scope, secrets/privacy, or unrelated changes. It required only this record before final agreement.
+
+## Validation
+
+- `npm run validate:toolchain` -- passed.
+- `npm run test:reliability`, `npm run test:ci-contract`, and `npm run test:release-evidence` -- passed.
+- `npm run validate:security` -- passed on normal network; all three npm audits, secret scan, dependency tree, and license check passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+## Final agreement
+
+The pending scope accurately completes only pre-AWS readiness. No AWS, GitHub environment, or deployment mutation occurred. The reviewer inspected this record unchanged and confirmed no valid unresolved finding remains.
+
+**Final gate result: PASS**
+
+---
+
+# Adversarial pre-push review -- web CI formatting repair
+
+**Status**: PASS
+**Review date**: 2026-09-06
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `a203f03`
+**Reviewed pending scope**: formatting-only changes to `apps/web/scripts/test-accessibility.mjs`, `apps/web/scripts/test-source.mjs`, `apps/web/src/App.tsx`, and `apps/web/src/platform-config.ts`, plus this review milestone.
+
+## Round 1
+
+The independent reviewer found R1-1 (High): after Prettier wrapped JSX copy, `test-source.mjs` still required the exact contiguous `public registration is unavailable` string, so the CI web test would fail after the format gate. This affected the CI repair's completeness. The implementer assessed it **valid and fixed** by normalizing source whitespace before retaining the same required-copy assertion.
+
+## Round 2 -- final agreement
+
+The reviewer verified that normalization preserves the intended private-owner boundary while removing formatting brittleness. It found no new issue in scope, application behavior, dependencies, configuration, security, or tests. It accepted R1-1 as fixed and explicitly confirmed no valid unresolved finding remains.
+
+## Validation
+
+- `npm --prefix apps/web run format`, `typecheck`, `test`, `test:accessibility`, and `build` -- passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+**Final gate result: PASS**
+
+---
+
+# Adversarial pre-push review — Phase 5 authenticated platform slice
+
+**Status**: PASS
+**Review date**: 2026-09-05
+**Alternate reviewer model**: gpt-5.5
+**Remote/destination**: `origin/feature/004-platform-foundation-ci-cd`
+**Base**: `origin/feature/004-platform-foundation-ci-cd` (`1b827a9`)
+**Reviewed scope**: `origin/feature/004-platform-foundation-ci-cd..HEAD` through `d615eda` plus the corrections below.
+
+## Round 1 findings and dispositions
+
+| ID | Severity | Affected IDs | Disposition and evidence |
+|---|---|---|---|
+| R1-1 | High | FR-012/013, AC-005, T022/T026 | **Valid and fixed.** Added the official locked `Microsoft.AspNetCore.Authentication.JwtBearer` package, Cognito authority/audience configuration, authentication/authorization middleware, and owner-group claim enforcement. Restore/build passes. |
+| R1-2 | Medium | FR-014, AC-007, T025/T027 | **Valid and fixed.** The KMS CMK now grants only CloudWatch and SNS service principals `Decrypt`/`GenerateDataKey*`, constrained to this account, so encrypted alarm notifications can publish. CDK assertion passes. |
+| R1-3 | Medium | FR-012, AC-005, T023 | **Valid and fixed.** The owner-to-group attachment now depends explicitly on both the owner and owner group. CDK synthesis succeeds. |
+
+## Validation after fixes
+
+- `dotnet restore apps/api/Platform.Api.csproj --runtime win-x64` and `dotnet build apps/api/Platform.Api.csproj --nologo` — passed.
+- `npm --prefix packages/infrastructure run build`, `synth`, and `assert` — passed (CDK emitted only existing deprecation warnings).
+- `node tests/integration/api-correlation.mjs` and `npm run test:phase5-contract` — passed.
+- `git diff --check` — passed.
+
+## Round 2
+
+The alternate reviewer accepted the protected `/ready` smoke checks in non-production deployment, production promotion (including its restore path), and rollback. It found two valid remaining issues: the Hosted UI client allowed no `openid` scope although the web requested it (High, FR-012/013, AC-005, T023/T024/T026), and the authentication metric filter targeted a top-level field while JSON console logs carry `AuditEventType` under `State` (Medium, FR-014, AC-007, T025/T027). Both were **valid and fixed**: the client uses `OAuthScope.OPENID`, asserted in the synthesized template; the filter matches `$.State.AuditEventType`, also asserted against the synthesized template.
+
+## Round 3
+
+The reviewer confirmed both Round 2 fixes, then found one valid Medium trace-correlation issue (FR-013, AC-006, T024/T026): the web sent a raw UUID while the API accepts only `op_`-prefixed operation IDs. It was **valid and fixed** by sending one `op_${crypto.randomUUID()}` header reused for session, readiness, and version calls; the Phase 5 contract test protects the valid shape.
+
+## Round 4 -- final alternate-model agreement
+
+The alternate reviewer (gpt-5.5) inspected the complete revised working tree, synthesized Cognito/metric resources, web flow, workflows, and API operation-ID behavior. It reproduced preservation of a valid operation ID, confirmed the `openid` scope and `$.State.AuditEventType` filter, and confirmed authenticated `/ready` in every delivery path. It explicitly agreed that all Phase 5 findings are resolved and no valid unresolved substantive finding remains.
+
+## Final validation
+
+- `dotnet build apps/api/Platform.Api.csproj --nologo` -- passed.
+- `npm --prefix apps/web run build` -- passed.
+- `npm --prefix packages/infrastructure run synth` and `assert` -- passed (only existing CDK deprecation/feature-flag warnings).
+- `npm run test:phase5-contract`, `npm run test:release-evidence`, and `npm run test:ci-contract` -- passed.
+- `git diff --check` -- passed with CRLF conversion notices only.
+
+## Final agreement
+
+The alternate reviewer agrees every finding is resolved. The pending scope is `origin/feature/004-platform-foundation-ci-cd..HEAD` through `83ff8fc` plus this dedicated remediation/review milestone; no remote mutation occurred during review.
+
+**Final gate result: PASS**
+
+---
+
 # Adversarial pre-push review — locked packages and immutable release path
 
 **Status**: PASS

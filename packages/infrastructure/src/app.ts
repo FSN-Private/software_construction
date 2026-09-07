@@ -10,4 +10,8 @@ new PlatformFoundationStack(app, `PlatformFoundation-${environmentName}`, {
   env,
   environmentName,
   monthlyBudgetUsd: Number(app.node.tryGetContext('monthlyBudgetUsd') ?? 250),
+  ownerEmail: app.node.tryGetContext('ownerEmail') ?? 'owner@example.invalid',
+  alertEmail: app.node.tryGetContext('alertEmail') ?? 'alerts@example.invalid',
+  webOrigin: app.node.tryGetContext('webOrigin') ?? 'https://example.invalid',
+  cognitoDomainPrefix: app.node.tryGetContext('cognitoDomainPrefix') ?? `platform-${environmentName}-example`,
 });

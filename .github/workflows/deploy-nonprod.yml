@@ -42,6 +42,10 @@ jobs:
       ECS_TASK_DEFINITION: ${{ vars.AWS_NONPROD_ECS_TASK_DEFINITION }}
       ECS_API_CONTAINER: ${{ vars.AWS_NONPROD_ECS_API_CONTAINER }}
       HEALTH_URL: ${{ vars.AWS_NONPROD_HEALTH_URL }}
+      COGNITO_AUTHORITY: ${{ vars.AWS_NONPROD_COGNITO_AUTHORITY }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_NONPROD_COGNITO_CLIENT_ID }}
+      COGNITO_OWNER_USERNAME: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_USERNAME }}
+      COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_PASSWORD }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -55,7 +59,7 @@ jobs:
       - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION"
       - name: Require explicit non-production deployment configuration
         run: |
-          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL"; do
+          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECR_REGISTRY" "$API_REPOSITORY" "$ECS_CLUSTER" "$ECS_SERVICE" "$ECS_TASK_DEFINITION" "$ECS_API_CONTAINER" "$HEALTH_URL" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" "$COGNITO_OWNER_USERNAME" "$COGNITO_OWNER_PASSWORD"; do
             test -n "$VALUE"
           done
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
@@ -72,18 +76,21 @@ jobs:
           docker push "$ECR_REGISTRY/$API_REPOSITORY:$SOURCE_REVISION"
           API_IMAGE="$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$API_REPOSITORY:$SOURCE_REVISION")"
           test -n "$API_IMAGE"
+          MANIFEST_DIGEST="sha256:$(sha256sum artifacts/release/release-manifest.json | awk '{print $1}')"
           TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
-          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" '.containerDefinitions |= map(if .name == $name then .image = $image else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
+          RELEASE_ID="$(jq -r .releaseId artifacts/release/release-manifest.json)"
+          UPDATED="$(printf '%s' "$TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "Authentication__CognitoAuthority" and .name != "Authentication__CognitoClientId" and .name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"Authentication__CognitoAuthority",value:$authority},{name:"Authentication__CognitoClientId",value:$client},{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
           TASK_ARN="$(printf '%s' "$UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_ARN" --force-new-deployment --query service.taskDefinition --output text
-          MANIFEST_DIGEST="sha256:$(sha256sum artifacts/release/release-manifest.json | awk '{print $1}')"
-          printf '{"sourceRevision":"%s","releaseRunId":"%s","manifestDigest":"%s","apiImage":"%s","taskDefinition":"%s"}\n' "$SOURCE_REVISION" "$RELEASE_RUN_ID" "$MANIFEST_DIGEST" "$API_IMAGE" "$TASK_ARN" > artifacts/release/nonprod-deployment.json
+          printf '{"sourceRevision":"%s","releaseRunId":"%s","manifestDigest":"%s","apiImage":"%s","taskDefinition":"%s","cognitoAuthority":"%s","cognitoClientId":"%s"}\n' "$SOURCE_REVISION" "$RELEASE_RUN_ID" "$MANIFEST_DIGEST" "$API_IMAGE" "$TASK_ARN" "$COGNITO_AUTHORITY" "$COGNITO_CLIENT_ID" > artifacts/release/nonprod-deployment.json
       - name: Require healthy non-production service
         run: |
           set -euo pipefail
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
           curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/ready"
+          ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
+          test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nonprod-deployment-evidence

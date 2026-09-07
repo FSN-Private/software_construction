@@ -13,6 +13,11 @@
     "path": "/ready",
     "authentication": "owner",
     "successStatus": 200,
-    "failureStatuses": [401, 403, 503]
+    "failureStatuses": [401, 403, 503],
+    "body": {
+      "status": "ready",
+      "operationId": "op_01J00000000000000000000000",
+      "releaseId": "v0.0.0-dev"
+    }
   }
 }

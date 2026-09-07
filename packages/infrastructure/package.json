@@ -9,7 +9,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc",
-    "synth": "npm run build && cdk synth --no-lookups --context environment=nonprod --context region=ap-southeast-1 --quiet",
+    "synth": "npm run build && cdk synth --no-lookups --context environment=nonprod --context region=ap-southeast-1 --context ownerEmail=owner@example.invalid --context alertEmail=alerts@example.invalid --quiet",
     "assert": "node scripts/assert-template.mjs",
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "validate:dependencies": "npm ls --all",
