@@ -88,6 +88,21 @@ The reviewer reproduced `git diff --check`, the storage build, and the focused u
 
 **Round 3 validation before follow-up**: worker/API builds and the focused unit executable passed; `git diff --check` passed.
 
+### Round 3 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-terra | **Reviewed range**: `93ff52a..5bcd438` | **Pending push scope**: `origin/feature/005-image-ingest-storage..HEAD`
+
+The reviewer reproduced the worker/API builds, focused unit executable, and whitespace check. It found no regression in the specification-only or fixture-provenance dispositions and no new distinct issue. It confirmed the migration fields cited in Round 1 are now present and that worker registration, stale-intent requeue, and metadata gating are meaningful partial remediation. It nevertheless found these valid unresolved findings:
+
+- **High T006:** no API/worker call path or S3/MinIO fault evidence for verified immutable publication.
+- **High T008:** the hosted worker only reconciles; no handler calls `ClaimAsync`, verifies/promotes an object, or calls atomic activation.
+- **High T006:** transfer grants remain caller supplied and lack persisted owner/session/target, issuance authorization, and length enforcement.
+- **Medium T004/T009:** durable idempotency/version enforcement, audit, outcome telemetry, health, and alert path remain absent.
+- **Medium T002:** integration images remain tag-pinned rather than digest-pinned.
+- **Medium T006/T008/T009:** no PostgreSQL/MinIO/worker fault coverage; the focused test does not exercise the database repair behavior.
+
+**Final gate result: BLOCKED.** No push is authorized.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
