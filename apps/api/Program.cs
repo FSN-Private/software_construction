@@ -45,14 +45,29 @@ app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
-app.MapGet("/ready", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => string.IsNullOrWhiteSpace(ingestConnection)
-    ? Results.Problem(type: "https://example.invalid/problems/ingest_unavailable", title: "Ingest is not configured", statusCode: StatusCodes.Status503ServiceUnavailable, extensions: ProblemExtensions(context, "ingest_unavailable"))
-    : Results.Ok(new
+app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>
 {
-    status = "ready",
-    operationId = OperationId(context),
-    releaseId = ReleaseId(),
-}))); 
+    if (!OwnerAuthorization.TryGetOwner(context.User, out _)) return RequireOwner(context, logger, () => Results.Empty);
+    if (string.IsNullOrWhiteSpace(ingestConnection) || string.IsNullOrWhiteSpace(builder.Configuration["Ingest:Bucket"]) || string.IsNullOrWhiteSpace(builder.Configuration["Ingest:KmsKeyId"]))
+        return Results.Problem(type: "https://example.invalid/problems/ingest_unavailable", title: "Ingest is not configured", statusCode: StatusCodes.Status503ServiceUnavailable, extensions: ProblemExtensions(context, "ingest_unavailable"));
+    try
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        await using var connection = await services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(timeout.Token);
+        return Results.Ok(new
+        {
+            status = "ready",
+            operationId = OperationId(context),
+            releaseId = ReleaseId(),
+        });
+    }
+    catch (Exception exception) when (exception is NpgsqlException or OperationCanceledException)
+    {
+        logger.LogWarning("Readiness dependency check failed {OperationId}", OperationId(context));
+        return Results.Problem(type: "https://example.invalid/problems/ingest_unavailable", title: "Ingest is unavailable", statusCode: StatusCodes.Status503ServiceUnavailable, extensions: ProblemExtensions(context, "ingest_unavailable"));
+    }
+});
 app.MapGet("/v1/session", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
 {
     subject = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub"),

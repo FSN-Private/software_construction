@@ -8,7 +8,7 @@
 - [x] T001 Create ingest API, worker, storage, corpus, contract, and integration-test layout in `apps/api/`, `apps/ingest-worker/`, `packages/storage/`, and `tests/` (FR-001, NFR-008/009).
 - [x] T002 [P] Add locked, reviewed S3, PostgreSQL, multipart-transfer, XML, and format-detection dependencies to repository manifests and `docs/dependency-inventory.md` (NFR-003/006/014). — .NET provides SHA-256 and XML; AWS SDK provides multipart transfer; API/worker use locked AWS/Npgsql packages; PostgreSQL and MinIO integration images are reviewed digest pins.
 - [x] T003 [P] Build legally usable RAW/JPEG/PNG/TIFF/XMP and corruption/ambiguity corpus fixtures in `tests/fixtures/ingest/` (NFR-006/014/016).
-- [ ] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004). — IN PROGRESS: durable request fingerprint/reservation/replay and lifecycle-version parsing are implemented; endpoint-wide version enforcement and durable audit emission remain.
+- [ ] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004). — IN PROGRESS: durable fingerprint/reservation/replay now uses fenced reservation tokens and preserves response content type; lifecycle-version enforcement and durable audit emission remain.
 
 ## Phase 2: Foundational data and publication controls
 
@@ -16,7 +16,7 @@
 - [ ] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015). — IN PROGRESS: server-side checksum-verified conditional promotion/reuse is implemented; persisted owner/session constraints and S3 fault coverage remain.
 - [x] T007 [P] Implement normalized display/collision paths and Windows-invalid/case-collision validation in `packages/storage/Paths/` (FR-004/011, AC-005, NFR-010). — Explicit Windows control-character and device-name-before-extension cases are validated on every host.
 - [ ] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015). — IN PROGRESS: worker failures are isolated and retained for retry; PostgreSQL/MinIO fault coverage and atomic multi-item publication remain.
-- [ ] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012). — IN PROGRESS: outcome instrumentation, durable audit writer, health endpoint, and alert path remain.
+- [ ] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012). — IN PROGRESS: readiness validates required storage configuration and bounded PostgreSQL availability; outcome instrumentation, durable audit writer, and alert path remain.
 
 **Checkpoint**: verified content can be safely published or repaired before user-story work begins.
 
