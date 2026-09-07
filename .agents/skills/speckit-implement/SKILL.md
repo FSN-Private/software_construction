@@ -80,11 +80,9 @@ You **MUST** consider the user input before proceeding (if not empty).
      - **FAIL**: One or more checklists have unchecked items
 
    - **If any checklist has unchecked items**:
-     - Display the table with unchecked item counts
-     - **STOP** and ask: "Some checklists have unchecked items. Do you want to proceed with implementation anyway? (yes/no)"
-     - Wait for user response before continuing
-     - If user says "no" or "wait" or "stop", halt execution
-     - If user says "yes" or "proceed" or "continue", proceed to step 3
+     - Display the table with unchecked item counts.
+     - If the user has explicitly asked to complete an approved feature, record that the checklist remains reviewer-owned and proceed to step 3; do not mistake an unchecked requirements-quality marker for unfinished implementation.
+     - Otherwise, ask whether to proceed before step 3. If the user says "no", "wait", or "stop", halt execution.
 
    - **If all checklists are checked**:
      - Display the table showing all checklists passed
@@ -164,15 +162,15 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Polish and validation**: Unit tests, performance optimization, documentation
 
 8. Progress tracking and error handling:
-   - Report progress after each completed task
-   - Halt execution if any non-parallel task fails
-   - For parallel tasks [P], continue with successful tasks, report failed ones
-   - Provide clear error messages with context for debugging
-   - Suggest next steps if implementation cannot proceed
+   - Record progress after each completed task in `tasks.md`; use brief in-session updates without ending the implementation request.
+   - If a task fails, diagnose and remediate the failure within approved scope, then rerun validation. Do not halt merely because the first attempt failed.
+   - For a genuinely blocked task, mark its reason and continue independent tasks. Ask the user only when no safe in-scope progress remains and a material decision, authority, or access is required.
+   - For parallel tasks [P], continue with successful tasks while remediating failures.
+   - Provide clear error evidence and the smallest required next step only when implementation truly cannot proceed.
    - **IMPORTANT** For completed tasks, make sure to mark the task off as [X] in the tasks file.
 
 9. Completion validation:
-   - Verify all required tasks are completed
+   - Verify all required tasks are completed; if the repository workflow requires convergence, run it and implement every task it appends before completion
    - Check that implemented features match the original specification
    - Validate that tests pass and coverage meets requirements
    - Confirm the implementation follows the technical plan

@@ -7,7 +7,20 @@ description: Gate any proposed push through a convergent independent alternate-m
 
 Do not push changes until this gate converges with a final `PASS`. This includes feature, maintenance, documentation, policy, agent-instruction, skill, CI, and configuration changes. The reviewer must use a genuinely different available LLM model from the implementing model. A fresh prompt, context, or agent using the same underlying model does not qualify unless the user explicitly accepts that limitation.
 
-The review is read-only. It does not authorize a push, remote mutation, history rewrite, or unrelated change. If an alternate model is unavailable, stop before push and ask the user how to proceed; never self-certify the gate.
+The reviewer pass is read-only. It does not authorize a push, remote mutation, history rewrite, or unrelated change. The implementing agent may remediate supported, in-scope findings after assessing them. If an alternate model is unavailable, stop before push and ask the user how to proceed; never self-certify the gate.
+
+## Do not confuse a blocked gate with a stopped feature
+
+`BLOCKED` means the proposed push cannot proceed in its current state. It is not a terminal result for an active request to complete the feature or prepare it for push. For each valid, in-scope finding in that situation, the implementing agent must:
+
+1. map the finding to its existing numbered task, or append a traceable remediation task when the approved plan has a genuine gap;
+2. implement the smallest supported remediation, update required documentation and task state, and run relevant validation;
+3. rerun independent review with the complete revised range and all prior dispositions; and
+4. repeat until the reviewer explicitly reports no valid unresolved finding and `PASS`.
+
+Use brief progress updates while this loop runs. Do not give the user a final handoff merely because a review round found defects, a first fix was partial, or another round is required. For a review-only request, record findings and stop without changing implementation unless the user separately asks to fix them.
+
+Stop and ask the user only when a finding needs a material product or design choice, an explicit waiver or risk acceptance, unavailable required credentials or infrastructure, or authority outside the approved feature scope. A routine code, test, documentation, configuration, or validation fix within approved scope must be completed without a new approval.
 
 ## Prepare an independent review
 
@@ -51,7 +64,7 @@ Do not close a finding merely because the agent disagrees. Critical and high fin
 5. If the reviewer disputes a disposition, reports a valid unresolved finding, or identifies a new finding, repeat from step 2. Record each round; do not replace earlier findings or evidence.
 6. Finish only when the reviewer explicitly agrees that every finding is resolved, invalid with sufficient evidence, or validly user-waived, and states that no valid unresolved finding remains.
 
-There is no arbitrary maximum number of review rounds. If the loop cannot converge, the reviewer is unavailable, evidence cannot be reproduced, or a finding needs user authority, stop without pushing and ask the user for direction.
+There is no arbitrary maximum number of review rounds. If the loop cannot converge because the reviewer is unavailable, evidence cannot be reproduced after reasonable in-scope investigation, or a finding needs user authority, stop without pushing and ask the user for direction. Otherwise, continue remediation and review; never stop solely because a finding is unresolved.
 
 ## Resolve and record
 
