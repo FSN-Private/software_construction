@@ -28,7 +28,7 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
         foreach (var header in headers) request.Headers[header.Key] = header.Value;
         return new(s3.GetPreSignedURL(request), headers);
     }
-    public async Task PromoteStagedAsync(Guid session, ContentAddress address, CancellationToken cancellationToken = default)
+    public async Task<string> PromoteStagedAsync(Guid session, ContentAddress address, CancellationToken cancellationToken = default)
     {
         if (!address.IsValid) throw new ArgumentException("Authoritative content must have a canonical address.", nameof(address));
         var staged = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = StagingKey(session), ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
@@ -42,18 +42,21 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
                 IfNoneMatch = "*", ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS,
                 ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256
             }, cancellationToken);
-            if (!string.IsNullOrEmpty(copied.ChecksumSHA256) && copied.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
+            if (string.IsNullOrWhiteSpace(copied.VersionId) || !string.IsNullOrEmpty(copied.ChecksumSHA256) && copied.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
+            return copied.VersionId;
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
         {
-            await VerifyAuthoritativeAsync(address, cancellationToken);
+            return await VerifyAuthoritativeAsync(address, cancellationToken);
         }
     }
 
-    private async Task VerifyAuthoritativeAsync(ContentAddress address, CancellationToken cancellationToken)
+    private async Task<string> VerifyAuthoritativeAsync(ContentAddress address, CancellationToken cancellationToken)
     {
         var existing = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = address.AuthoritativeKey, ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
         if (existing.ContentLength != address.Length || existing.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
+        if (string.IsNullOrWhiteSpace(existing.VersionId)) throw new InvalidDataException("authoritative_version_missing");
+        return existing.VersionId;
     }
     public string StagingKey(Guid session) => $"staging/{session:N}";
     public string QuarantineKey(Guid session) => $"quarantine/{session:N}";

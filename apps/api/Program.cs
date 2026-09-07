@@ -64,11 +64,13 @@ app.MapGet("/v1/version", (HttpContext context, ILogger<Program> logger) => Requ
     manifestDigest = Environment.GetEnvironmentVariable("PLATFORM_MANIFEST_DIGEST") ?? $"sha256:{new string('0', 64)}",
     operationId = OperationId(context),
 })));
-app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, TransferGrantIssuer? issuer, S3ObjectStore storage, ILogger<Program> logger, CancellationToken cancellationToken) =>
+app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, IServiceProvider services, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequireOwner(context, logger, () => Results.Empty);
     if (!RequestContracts.TryGetLifecycleVersion(context, out var version)) return RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "lifecycle_version_required", "Lifecycle version required");
+    var issuer = services.GetService<TransferGrantIssuer>();
     if (issuer is null) return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured");
+    var storage = services.GetRequiredService<S3ObjectStore>();
     try
     {
         var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);

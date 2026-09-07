@@ -29,10 +29,10 @@ public sealed class PublicationRepairWorker(PublicationOutbox outbox, Publicatio
         {
             try
             {
-                var address = await promoter.PromoteAsync(intent, cancellationToken);
-                await outbox.MarkPromotedAsync(intent.Id, cancellationToken);
+                var promoted = await promoter.PromoteAsync(intent, cancellationToken);
+                await outbox.MarkPromotedAsync(intent.Id, promoted.StorageVersion, cancellationToken);
                 if (!await outbox.MarkPublishedAsync(intent.Id, cancellationToken)) throw new InvalidOperationException("publication_metadata_not_ready");
-                IngestTelemetry.VerifiedBytes.Add(address.Length);
+                IngestTelemetry.VerifiedBytes.Add(promoted.Address.Length);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception)

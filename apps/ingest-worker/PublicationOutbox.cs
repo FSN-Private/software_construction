@@ -34,10 +34,10 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
             : null;
     }
 
-    public async Task MarkPromotedAsync(Guid intentId, CancellationToken cancellationToken = default)
+    public async Task MarkPromotedAsync(Guid intentId, string storageVersion, CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand("UPDATE publication_intents SET object_state = 'promoted', updated_at = now() WHERE id = $1 AND state = 'publishing'");
-        command.Parameters.AddWithValue(intentId);
+        await using var command = dataSource.CreateCommand("WITH promoted AS (UPDATE publication_intents SET object_state = 'promoted', updated_at = now() WHERE id = $1 AND state = 'publishing' RETURNING id) UPDATE content_objects SET storage_version = $2 WHERE sha256 IN (SELECT content_sha256 FROM publication_intent_items WHERE intent_id IN (SELECT id FROM promoted))");
+        command.Parameters.AddWithValue(intentId); command.Parameters.AddWithValue(storageVersion);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("publication_intent_not_claimed");
     }
 
@@ -68,6 +68,8 @@ public sealed class PublicationOutbox(NpgsqlDataSource dataSource)
                     AND (intent.payload ->> 'length')::bigint = content.byte_length
                     AND session.expected_sha256 = item.content_sha256 AND session.expected_length = content.byte_length
                     AND session.state = 'verifying'
+                    AND content.storage_key = 'sha256/' || item.content_sha256
+                    AND content.storage_version IS NOT NULL
                 GROUP BY item.intent_id HAVING count(*) = 1 AND bool_and(content.integrity_state IN ('pending-publication', 'authoritative') AND asset.state = 'prepared')
             ), activated AS (
                 UPDATE assets SET state = 'active', lifecycle_version = lifecycle_version + 1
