@@ -17,8 +17,12 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
         try
         {
             var existing = await store.GetAsync(ownerId, key, fingerprint, context.RequestAborted);
-            if (existing?.Reissue == true && existing.StatusCode is not null && !await store.ResetAsync(ownerId, key, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
-            else if (existing is { StatusCode: { } status, Response: { } replay }) { context.Response.StatusCode = status; await context.Response.WriteAsync(replay, context.RequestAborted); return; }
+            if (existing?.Reissue == true && existing.StatusCode is not null)
+            {
+                if (!await store.ResetAsync(ownerId, key, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
+                existing = null;
+            }
+            if (existing is { StatusCode: { } status, Response: { } replay }) { context.Response.StatusCode = status; await context.Response.WriteAsync(replay, context.RequestAborted); return; }
             if (existing is not null && !existing.Reissue) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
             if (!await store.ReserveAsync(ownerId, key, fingerprint, context.RequestAborted)) { await RequestContracts.Problem(context, StatusCodes.Status409Conflict, "idempotency_in_progress", "Request is in progress").ExecuteAsync(context); return; }
         }
