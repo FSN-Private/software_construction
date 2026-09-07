@@ -24,34 +24,43 @@ function environmentSettings(environment) {
   };
 }
 
+function branchProtectionSettings(rules) {
+  const statusCheckRules = rules.filter((rule) => rule.type === 'required_status_checks');
+
+  return {
+    requiredChecks: statusCheckRules.flatMap((rule) =>
+      (rule.parameters?.required_status_checks ?? []).map((check) => check.context),
+    ),
+    branchProtection: {
+      requireBranchesToBeUpToDate: statusCheckRules.some(
+        (rule) => rule.parameters?.strict_required_status_checks_policy === true,
+      ),
+      requireLinearHistory: rules.some((rule) => rule.type === 'required_linear_history'),
+      allowForcePushes: !rules.some((rule) => rule.type === 'non_fast_forward'),
+      allowDeletions: !rules.some((rule) => rule.type === 'deletion'),
+    },
+  };
+}
+
 export async function fetchCurrentProtection(expected, token, fetchImpl = fetch) {
   if (!token) {
     throw new Error('PROTECTION_AUDIT_TOKEN is required to read live GitHub protection settings.');
   }
 
   const [owner, repository] = expected.repository.split('/');
-  const prefix = `/repos/${owner}/${repository}/branches/${expected.branch}/protection`;
-  const [protection, linearHistory, forcePushes, deletions] = await Promise.all([
-    getJson(prefix, token, fetchImpl),
-    getJson(`${prefix}/required_linear_history`, token, fetchImpl),
-    getJson(`${prefix}/allow_force_pushes`, token, fetchImpl),
-    getJson(`${prefix}/allow_deletions`, token, fetchImpl),
+  const prefix = `/repos/${owner}/${repository}`;
+  const [rules, environments] = await Promise.all([
+    getJson(`${prefix}/rules/branches/${expected.branch}`, token, fetchImpl),
+    Promise.all(Object.keys(expected.environments).map(async (name) => [
+      name,
+      environmentSettings(await getJson(`${prefix}/environments/${name}`, token, fetchImpl)),
+    ])),
   ]);
-  const environments = await Promise.all(Object.keys(expected.environments).map(async (name) => [
-    name,
-    environmentSettings(await getJson(`/repos/${owner}/${repository}/environments/${name}`, token, fetchImpl)),
-  ]));
 
   return {
     repository: expected.repository,
     branch: expected.branch,
-    requiredChecks: protection.required_status_checks?.contexts ?? [],
-    branchProtection: {
-      requireBranchesToBeUpToDate: protection.required_status_checks?.strict ?? false,
-      requireLinearHistory: linearHistory.enabled,
-      allowForcePushes: forcePushes.enabled,
-      allowDeletions: deletions.enabled,
-    },
+    ...branchProtectionSettings(rules),
     environments: Object.fromEntries(environments),
   };
 }

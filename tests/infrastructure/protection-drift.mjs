@@ -15,17 +15,23 @@ assert.deepEqual(detectDrift(observed, changed), ['branch protection allowForceP
 const current = await fetchCurrentProtection(observed, 'test-token', async (url) => {
   const path = new URL(url).pathname;
   const responses = {
-    '/repos/XIB1/software_construction/branches/master/protection': {
-      required_status_checks: { contexts: observed.requiredChecks, strict: true },
-    },
-    '/repos/XIB1/software_construction/branches/master/protection/required_linear_history': { enabled: true },
-    '/repos/XIB1/software_construction/branches/master/protection/allow_force_pushes': { enabled: false },
-    '/repos/XIB1/software_construction/branches/master/protection/allow_deletions': { enabled: false },
-    '/repos/XIB1/software_construction/environments/nonprod': {
+    '/repos/FSN-Private/software_construction/rules/branches/master': [
+      { type: 'deletion' },
+      { type: 'non_fast_forward' },
+      { type: 'required_linear_history' },
+      {
+        type: 'required_status_checks',
+        parameters: {
+          strict_required_status_checks_policy: true,
+          required_status_checks: observed.requiredChecks.map((context) => ({ context })),
+        },
+      },
+    ],
+    '/repos/FSN-Private/software_construction/environments/nonprod': {
       deployment_branch_policy: { protected_branches: true },
       protection_rules: [],
     },
-    '/repos/XIB1/software_construction/environments/production': {
+    '/repos/FSN-Private/software_construction/environments/production': {
       deployment_branch_policy: { protected_branches: true },
       protection_rules: [{ type: 'required_reviewers', reviewers: [{ type: 'User', id: 1 }] }],
     },
