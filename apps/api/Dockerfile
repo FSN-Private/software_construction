@@ -4,11 +4,16 @@ FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e633
 WORKDIR /src
 
 COPY global.json ./
+COPY packages/contracts/Platform.Contracts.csproj packages/contracts/
+COPY packages/storage/Platform.Storage.csproj packages/storage/
+COPY packages/storage/packages.lock.json packages/storage/
 COPY apps/api/Platform.Api.csproj apps/api/
 COPY apps/api/packages.lock.json apps/api/
 RUN dotnet restore apps/api/Platform.Api.csproj --locked-mode
 
 COPY apps/api/ apps/api/
+COPY packages/contracts/ packages/contracts/
+COPY packages/storage/ packages/storage/
 RUN dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output /out /p:UseAppHost=false
 
 # ASP.NET runtime 10.0 multi-platform manifest, resolved 2026-09-04.

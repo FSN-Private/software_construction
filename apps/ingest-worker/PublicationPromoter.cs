@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Platform.Storage;
 
 namespace Platform.Ingest.Worker;
@@ -15,4 +16,4 @@ public sealed class PublicationPromoter(S3ObjectStore storage)
     }
 }
 
-public sealed record PublicationPayload(Guid SessionId, string Sha256, long Length);
+public sealed record PublicationPayload([property: JsonPropertyName("sessionId")] Guid SessionId, [property: JsonPropertyName("sha256")] string Sha256, [property: JsonPropertyName("length")] long Length);
