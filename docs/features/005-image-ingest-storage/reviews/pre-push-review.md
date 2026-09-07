@@ -103,6 +103,21 @@ The reviewer reproduced the worker/API builds, focused unit executable, and whit
 
 **Final gate result: BLOCKED.** No push is authorized.
 
+### Round 4 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-terra | **Reviewed range**: `93ff52a..51b09ac`
+
+The reviewer reproduced the worker build, focused unit executable, and whitespace check. It confirmed the previous no-handler finding is superseded because the worker now invokes claim, promotion, and metadata activation. It found the following valid unresolved high findings:
+
+- A single payload promotion can activate every item attached to an intent; promotion must be per item or single-item intents must be enforced (T008, FR-009, AC-007).
+- Conditional create treats legitimate duplicate authoritative content as a worker failure; reuse must verify existing checksum/length (T006/T008, AC-002/007).
+- A malformed payload, S3 failure, checksum failure, or metadata conflict escapes the hosted loop and stops all publication; failures must be classified/persisted per intent (T008, AC-007, NFR-002/015).
+- Staged content is copied into an unbounded `MemoryStream`, which is unsafe for RAW content; promotion requires bounded streaming/disk/server-side copy (T006, NFR-001/002/015/016).
+
+The reviewer reconfirmed unresolved persisted transfer authorization, durable idempotency/lifecycle, telemetry/audit/health/alerts, digest-pinned integration images, and PostgreSQL/MinIO fault coverage. It confirmed that the migration-field omission cited in earlier rounds is materially addressed.
+
+**Final gate result: BLOCKED.** No push is authorized.
+
 ## Pre-push review — 2026-09-03
 
 **Status**: Follow-up required | **Reviewer**: gpt-5.4 | **Destination**: `origin/feature/005-image-ingest-storage` | **Range**: `origin/feature/005-image-ingest-storage..HEAD`
