@@ -27,7 +27,7 @@ The alternate reviewer confirmed quarantine-only unassociated XMP and complete r
 
 ## Current gate status — 2026-09-07
 
-The historical PASS immediately above applies only to the earlier documented range. The authoritative result for the current pending range `93ff52a..27fca41` is Round 5 above: **BLOCKED**. It has valid unresolved high- and medium-severity findings, and no push is authorized.
+The historical PASS immediately above applies only to the earlier documented range. Round 5 independently reviewed `93ff52a..27fca41` and is **BLOCKED** with valid unresolved high- and medium-severity findings. Commits `4efe5c4` and this review record were created after that independent review, so the current pending range `93ff52a..HEAD` also requires a fresh complete review after the blocking findings are resolved. No push is authorized.
 
 ## Pre-push review — 2026-09-07
 
