@@ -28,6 +28,13 @@ public sealed class IdempotencyStore(NpgsqlDataSource dataSource)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<bool> ReleaseStaleAsync(string ownerId, string key, CancellationToken cancellationToken)
+    {
+        await using var command = dataSource.CreateCommand("DELETE FROM idempotency_results WHERE owner_id = $1 AND idempotency_key = $2 AND status_code IS NULL AND created_at < now() - interval '15 minutes' RETURNING 1");
+        command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(key);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
     public async Task CompleteAsync(string ownerId, string key, int statusCode, string response, bool reissue, CancellationToken cancellationToken)
     {
         await using var command = dataSource.CreateCommand("UPDATE idempotency_results SET status_code = $3, response_body = $4, reissue_response = $5, completed_at = now() WHERE owner_id = $1 AND idempotency_key = $2");
