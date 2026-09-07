@@ -8,5 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../../apps/api/Platform.Api.csproj" />
+    <ProjectReference Include="../../../apps/ingest-worker/Platform.Ingest.Worker.csproj" />
+    <ProjectReference Include="../../../packages/storage/Platform.Storage.csproj" />
   </ItemGroup>
 </Project>

@@ -1,4 +1,6 @@
 using Platform.Api.Telemetry;
+using Platform.Api.Contracts;
+using Platform.Contracts;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using System.Security.Claims;
 
@@ -26,6 +28,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     await result.ExecuteAsync(context);
 }));
 app.UsePlatformTelemetry();
+app.UseMiddleware<IdempotencyMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -54,7 +57,7 @@ app.Run();
 
 static IResult RequireOwner(HttpContext context, ILogger logger, Func<IResult> success)
 {
-    if (context.User.Identity?.IsAuthenticated is true && context.User.Claims.Any(claim => claim.Type == "cognito:groups" && claim.Value == "owner")) return success();
+    if (OwnerAuthorization.TryGetOwner(context.User, out _)) return success();
     logger.LogWarning("Authorization denied {AuditEventType} {OperationId} {Actor} {Outcome} {ReasonCode}", "authorization.denied", OperationId(context), "anonymous", "denied", "unauthenticated");
     return Results.Problem(
             type: "https://example.invalid/problems/unauthenticated",
