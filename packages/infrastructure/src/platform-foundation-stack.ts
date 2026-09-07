@@ -76,6 +76,10 @@ export class PlatformFoundationStack extends Stack {
     const authenticationMetric = authenticationFailures.metric({ statistic: 'Sum', period: Duration.minutes(5) });
     const authenticationAlarm = new Alarm(this, 'AuthenticationAnomalyAlarm', { metric: authenticationMetric, threshold: 5, evaluationPeriods: 1, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
     authenticationAlarm.addAlarmAction(new SnsAction(alerts));
+    const ingestStorageFailures = new MetricFilter(this, 'IngestStorageFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.storage.failure" }'), metricNamespace: 'Platform/Ingest', metricName: 'StorageFailures', metricValue: '1' });
+    const ingestStorageMetric = ingestStorageFailures.metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const ingestStorageAlarm = new Alarm(this, 'IngestStorageFailureAlarm', { metric: ingestStorageMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
+    ingestStorageAlarm.addAlarmAction(new SnsAction(alerts));
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
       ['CiFailureAlarm', 'Platform/Delivery', 'CiFailures', 1],
@@ -87,6 +91,7 @@ export class PlatformFoundationStack extends Stack {
     new Dashboard(this, 'PlatformOperationsDashboard', { dashboardName: `platform-${props.environmentName}-operations`, widgets: [
       [new GraphWidget({ title: 'Service availability', left: [availability] })],
       [new GraphWidget({ title: 'Authentication failures', left: [authenticationMetric] })],
+      [new GraphWidget({ title: 'Ingest storage failures', left: [ingestStorageMetric] })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
       [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],
