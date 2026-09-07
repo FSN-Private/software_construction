@@ -3,6 +3,9 @@ using Platform.Api.Contracts;
 using Platform.Contracts;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using System.Security.Claims;
+using Npgsql;
+using Platform.Storage;
+using Amazon.S3;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +19,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.RequireHttpsMetadata = true;
 });
 builder.Services.AddAuthorization();
+builder.Services.AddSingleton(NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Ingest") ?? throw new InvalidOperationException("ConnectionStrings:Ingest is required.")));
+builder.Services.AddSingleton<TransferGrantIssuer>();
+builder.Services.AddSingleton<IdempotencyStore>();
+builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
+builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
 var app = builder.Build();
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
@@ -28,9 +36,9 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     await result.ExecuteAsync(context);
 }));
 app.UsePlatformTelemetry();
-app.UseMiddleware<IdempotencyMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<IdempotencyMiddleware>();
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", (HttpContext context, ILogger<Program> logger) => RequireOwner(context, logger, () => Results.Ok(new
@@ -52,6 +60,19 @@ app.MapGet("/v1/version", (HttpContext context, ILogger<Program> logger) => Requ
     manifestDigest = Environment.GetEnvironmentVariable("PLATFORM_MANIFEST_DIGEST") ?? $"sha256:{new string('0', 64)}",
     operationId = OperationId(context),
 })));
+app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, TransferGrantIssuer issuer, S3ObjectStore storage, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequireOwner(context, logger, () => Results.Empty);
+    if (!RequestContracts.TryGetLifecycleVersion(context, out var version)) return RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "lifecycle_version_required", "Lifecycle version required");
+    try
+    {
+        var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);
+        var transfer = storage.CreateStagingUploadUrl(grant, DateTime.UtcNow);
+        context.Items["platform.idempotency.reissue"] = true;
+        return Results.Ok(new { sessionId = grant.SessionId, expiresAt = grant.ExpiresAtUtc, url = transfer.Url, headers = transfer.RequiredHeaders });
+    }
+    catch (InvalidOperationException) { return RequestContracts.Problem(context, StatusCodes.Status403Forbidden, "upload_session_not_authorized", "Upload session is not available"); }
+});
 
 app.Run();
 

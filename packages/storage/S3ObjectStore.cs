@@ -23,7 +23,7 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
     public PresignedTransfer CreateStagingUploadUrl(TransferGrant grant, DateTime nowUtc)
     {
         grant.Validate(nowUtc);
-        var headers = new Dictionary<string, string> { ["x-amz-checksum-sha256"] = grant.ExpectedChecksumBase64, ["x-amz-server-side-encryption"] = "aws:kms", ["x-amz-server-side-encryption-aws-kms-key-id"] = kmsKeyId, ["x-amz-meta-owner"] = grant.OwnerId };
+        var headers = new Dictionary<string, string> { ["content-length"] = grant.ExpectedContent.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), ["x-amz-checksum-sha256"] = grant.ExpectedChecksumBase64, ["x-amz-server-side-encryption"] = "aws:kms", ["x-amz-server-side-encryption-aws-kms-key-id"] = kmsKeyId, ["x-amz-meta-owner"] = grant.OwnerId };
         var request = new GetPreSignedUrlRequest { BucketName = bucket, Key = StagingKey(grant.SessionId), Verb = HttpVerb.PUT, Expires = grant.ExpiresAtUtc };
         foreach (var header in headers) request.Headers[header.Key] = header.Value;
         return new(s3.GetPreSignedURL(request), headers);
@@ -33,14 +33,16 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
         if (!address.IsValid) throw new ArgumentException("Authoritative content must have a canonical address.", nameof(address));
         var staged = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = StagingKey(session), ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
         if (staged.ContentLength != address.Length || staged.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("checksum_mismatch");
+        if (string.IsNullOrWhiteSpace(staged.VersionId)) throw new InvalidDataException("staging_version_missing");
         try
         {
-            await s3.CopyObjectAsync(new CopyObjectRequest
+            var copied = await s3.CopyObjectAsync(new CopyObjectRequest
             {
-                SourceBucket = bucket, SourceKey = StagingKey(session), DestinationBucket = bucket, DestinationKey = address.AuthoritativeKey,
+                SourceBucket = bucket, SourceKey = StagingKey(session), SourceVersionId = staged.VersionId, DestinationBucket = bucket, DestinationKey = address.AuthoritativeKey,
                 IfNoneMatch = "*", ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS,
                 ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId, ChecksumAlgorithm = ChecksumAlgorithm.SHA256
             }, cancellationToken);
+            if (!string.IsNullOrEmpty(copied.ChecksumSHA256) && copied.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
         {
