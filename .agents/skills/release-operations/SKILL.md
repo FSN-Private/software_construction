@@ -22,7 +22,7 @@ Every step must have an observable result. Replace vague instructions such as â€
 
 ## Execute safely
 
-Verify that the intended commit passed required CI and the alternate-model pre-push review, artifacts are reproducible and attributable, required backups exist, and the rollback has been rehearsed proportionally to risk. Use least-privilege credentials and avoid exposing secrets in logs.
+Verify that the intended commit passed required CI and, when it is merged through a pull request, the alternate-model pre-merge review. Ensure artifacts are reproducible and attributable, required backups exist, and the rollback has been rehearsed proportionally to risk. Use least-privilege credentials and avoid exposing secrets in logs.
 
 Pause on failed gates or unexpected state. Do not improvise destructive recovery. Record actual timestamps, operators, evidence, deviations, and final outcome in the release plan.
 
