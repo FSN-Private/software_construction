@@ -25,6 +25,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection))
     builder.Services.AddSingleton(NpgsqlDataSource.Create(ingestConnection));
     builder.Services.AddSingleton<TransferGrantIssuer>();
     builder.Services.AddSingleton<IdempotencyStore>();
+    builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
@@ -94,10 +95,17 @@ app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContex
     {
         var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);
         var transfer = storage.CreateStagingUploadUrl(grant, DateTime.UtcNow);
+        var audit = services.GetService<IAuditWriter>();
+        if (audit is not null) await audit.WriteAsync(AuditEvent.Create(ownerId, OperationId(context), "upload.transfer_authorized", "accepted"), cancellationToken);
         context.Items["platform.idempotency.reissue"] = true;
         return Results.Ok(new { sessionId = grant.SessionId, expiresAt = grant.ExpiresAtUtc, url = transfer.Url, headers = transfer.RequiredHeaders });
     }
-    catch (InvalidOperationException) { return RequestContracts.Problem(context, StatusCodes.Status403Forbidden, "upload_session_not_authorized", "Upload session is not available"); }
+    catch (InvalidOperationException)
+    {
+        var audit = services.GetService<IAuditWriter>();
+        if (audit is not null) await audit.WriteAsync(AuditEvent.Create(ownerId, OperationId(context), "upload.transfer_authorized", "denied", "upload_session_not_authorized"), cancellationToken);
+        return RequestContracts.Problem(context, StatusCodes.Status403Forbidden, "upload_session_not_authorized", "Upload session is not available");
+    }
 });
 
 app.Run();
