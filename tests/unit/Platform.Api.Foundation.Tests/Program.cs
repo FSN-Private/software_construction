@@ -47,6 +47,8 @@ var owner = new ClaimsPrincipal(new ClaimsIdentity([
 Assert(OwnerAuthorization.TryGetOwner(owner, out var ownerId) && ownerId == "owner-1", "Owner authorization must require an authenticated owner subject.");
 Assert(!OwnerAuthorization.TryGetOwner(new ClaimsPrincipal(new ClaimsIdentity()), out _), "Anonymous callers must not be owners.");
 Assert(Audit.Redact("token=private&name=ok") == "[redacted]&name=ok", "Audit redaction must remove credentials.");
+var audit = AuditEvent.Create("owner-1", "op_test", "asset.moved", "accepted");
+Assert(audit.Id != Guid.Empty && audit.ReasonCode is null, "Audit records must use opaque identifiers and exclude payloads.");
 
 var missingKeyContext = new DefaultHttpContext();
 missingKeyContext.Request.Method = HttpMethods.Post;
