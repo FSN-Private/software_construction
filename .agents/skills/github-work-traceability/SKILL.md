@@ -28,4 +28,4 @@ Do not copy entire specifications into an issue or PR. Summarize and link them s
 
 Creating or editing issues, PRs, labels, comments, milestones, or projects is an external write and requires explicit user authorization for the exact operation. Drafting content locally is allowed. Never post secrets, private logs, credentials, or sensitive vulnerability details to public GitHub surfaces.
 
-When review comments need action, use `gh-address-comments`. It owns thread discovery and confirmation of which comments to address. Before pushing or opening the final PR, the repository's adversarial pre-push gate still applies.
+When review comments need action, use `gh-address-comments`. It owns thread discovery and confirmation of which comments to address. Before merging the PR, the repository's adversarial pre-merge gate applies; ordinary pushes and opening a PR do not require it.
