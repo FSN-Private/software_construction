@@ -16,3 +16,37 @@ Start the isolated services with `docker compose -f tests/integration/ingest/com
 Run `$env:INGEST_INTEGRATION='1'; dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj`. Each run creates a uniquely named schema and bucket so it cannot change pre-existing data. Without the environment variable, the test executable runs the offline foundation/corpus checks.
 
 Further acceptance, fault, capacity, and rollout evidence is recorded below as checks complete.
+
+## Acceptance and fault evidence
+
+- Mixed corpus: DNG, JPEG, PNG, TIFF, base XMP, and numbered XMP publish with distinct asset/edit identity and exact downloaded hashes. Repeated create/part/complete operations do not duplicate logical records or content versions.
+- Unsafe input: malformed, unsupported/unassociated, incorrect declared SHA-256, ambiguous/colliding, and atomic-batch failure fixtures remain non-active with stable corrective codes and private 30-day quarantine records.
+- Publication fault: a synthetic unavailable bucket after object creation leaves the session `verifying`; a later worker pass reuses the immutable version and completes metadata. No acknowledged orphan is produced.
+- HTTP contract: anonymous and other-owner requests fail closed; mutation idempotency fingerprints reject key reuse; lifecycle versions reject stale changes; transfer descriptors omit object keys and credentials.
+- Retrieval/path: source/storage/download hashes match. Unicode, Windows-invalid, case-insensitive collision, stale-version, and 10,000-move checks preserve stable assets, edit associations, and complete path history.
+- Lifecycle: ordinary delete hides active access and does not delete shared content. Restore succeeds at the exact stored day-90 deadline, fails after it, preserves edit/audit identity, and requires an explicit alternate path on collision. Active holds block deletion.
+- Reconstruction: canonical export detects missing/altered/extra bytes plus missing or altered asset/edit association, path history, hold, audit resource link, provenance, and handoff identifiers. Other owners cannot read a manifest.
+
+## Performance, scale, and cost evidence
+
+The local reference workload used PostgreSQL 18.1 and versioned SSE-KMS MinIO on the developer workstation. Transfer time is excluded from verification timing as specified. Evidence JSON is generated under ignored `artifacts/` by `INGEST_REFERENCE=1` and `INGEST_CAPACITY=1` runs.
+
+| Check | Result | Target |
+|---|---:|---:|
+| 1,000-item batch create plus first status | 170.7 ms | < 2 s |
+| 1,000-item verification completion p95 | 28.70 s | < 60 s |
+| Entire 1,000-item verification set | 30.52 s | deterministic outcomes |
+| Indexed list plus exact verified retrieval at capacity, p95 | 22.80 ms | no target violation |
+| Active assets / edit records | 100,000 / 1,000,000 | model capacity |
+| Moves with identity/association preserved | 10,000 | 10,000 |
+| Reference payload storage | 299 bytes / 1 unique object for 1,000 logical assets | deduplicated accounting |
+
+The capacity seed took 75.45 s and 10,000 serialized owner-safe moves took 260.85 s. These are validation setup/throughput observations, not interactive latency requirements. The owner lock is a deliberate simple ceiling; partition by asset only if measured multi-operation owner throughput requires it.
+
+## Migration, rollout, and rollback rehearsal
+
+The integration harness applies the original feature migration, inserts an old-shape asset, executes the workflow expansion inside a transaction and rolls it back, then applies it and proves the original ID/state/nullable content fields remain readable while new handoff metadata is populated. The rehearsal passes without reinterpreting content or identity.
+
+Roll out in this order: apply `005_ingest_storage.sql` where absent; apply `005_ingest_workflows.sql` transactionally; configure the private versioned bucket, KMS key, and least-privilege API/worker roles; deploy API readers/writers; deploy the worker; then enable owner UI access. Before traffic, require authenticated `/ready`, a one-item corpus import/download, a soft-delete/restore exercise, and a manifest export. Monitor storage failures, repairs, quarantine, integrity drift, batch age/rate, verification time, and verified bytes for 15 minutes.
+
+Abort on migration error, missing versioning/KMS authority, any integrity drift, sustained storage failure, or smoke-test mismatch. Because this is additive, application rollback may restore the prior API/worker while leaving new tables/columns intact. Do not drop schema, delete object versions, reverse published lifecycle state, or claim persistent-state rollback. Repair queued publication using the new worker before retrying rollout. External migration/deployment was not performed; it requires the separately approved release procedure and environment authority.

@@ -29,6 +29,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<TransferGrantIssuer>();
     builder.Services.AddSingleton<ImportService>();
     builder.Services.AddSingleton<AssetService>();
+    builder.Services.AddSingleton<Platform.Storage.Reconstruction.ManifestService>();
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
 }
@@ -51,6 +52,7 @@ app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 IngestEndpoints.Map(app);
 Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
+Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>
