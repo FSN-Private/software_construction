@@ -184,3 +184,32 @@ Initial independent review found stale/missing exact-range review evidence and i
 The alternate reviewer rechecked the pending push range `origin/feature/005-image-ingest-storage..HEAD` and confirmed the previously identified missing/stale exact-range evidence and reversed divergence wording are fixed. The review record now documents the exact pending range, the plan uses stable non-directional divergence language, and the added ADR/contract/data-model/plan/tasks artifacts remain consistent with the approved review dispositions. No valid unresolved finding remains on the provided evidence.
 
 **Final gate result: PASS**
+
+## Current pre-push review — 2026-09-09
+
+**Status**: blocked, remediation in progress | **Reviewer model**: GPT-5.5 | **Destination**: `origin/master` | **Base**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934` | **Reviewed head**: `85458e4bada6e2ae66ac414ef7911c21d8245c87` | **Reviewed range**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934..85458e4bada6e2ae66ac414ef7911c21d8245c87` | **Pending push scope**: prospective `origin/master...HEAD`, 0 behind / 39 ahead; no open PR for this head (earlier PR #10 is merged).
+
+### Round 1 — independent assessment
+
+The reviewer received the complete prospective range, approved Feature 005 artifacts, governing repository policy, relevant implementation/tests/configuration/migrations, historical review dispositions, and latest validation evidence. It was asked to disprove merge safety under the skill's significant-risk threshold and made no repository, container, or remote changes.
+
+| Finding | Classification | Severity | Affected IDs | Reviewer evidence and remediation | Implementer assessment |
+|---|---|---:|---|---|---|
+| Review policy contradicts the governing constitution | Blocking | Medium | Constitution V/Governance; repository push invariants | The range changes `AGENTS.md` and four project skills to waive review for ordinary pushes while the unchanged constitution mandates alternate-model review before every push and says the stricter rule governs. Restore pre-push wording or obtain a formal constitution amendment. | **Valid; T028 appended.** The constitution was not amended or explicitly approved for amendment. The smallest fix is to restore consistent pre-push semantics while retaining the execution-persistence improvements. |
+| Worker packaging is not first-class | Non-blocking | Low | NFR-011 | The worker builds through project references but has no dedicated package script/container/CI artifact. Consider adding it for the first deployment. | **Non-blocking note.** External deployment is explicitly outside Feature 005 implementation authority, and Release publication of the worker executable passes. Track with release preparation rather than delay this gate. |
+
+The reviewer found no other blocking issue in its runtime review of ingest integrity/publication, idempotency, transfer authorization, owner scoping, privacy/logging, lifecycle, exact retrieval, reconstruction, migrations, CI/test wiring, dependencies, secrets, and accessibility. It assessed the historical runtime findings as materially resolved at the reviewed head and returned **BLOCKED** solely for the policy/constitution conflict.
+
+### Implementer supplemental integrity finding
+
+Independent reproduction after Round 1 truncated the 29,195,592-byte licensed DNG fixture to 4,096 bytes. `ContentInspector.Inspect` returned `dng` because it checked TIFF directory structure but did not follow sub-IFDs or validate strip/tile payload offset and byte-count pairs. This is a blocking data-integrity defect under FR-007, AC-003, and NFR-015: an obviously incomplete RAW could enter active authoritative storage. T029 was appended for structural payload-range validation and regression coverage. The follow-up reviewer must assess both remediation dispositions and the complete revised range.
+
+**Round 1 gate result: BLOCKED.** T028 and T029 require implementation, validation, and independent follow-up review. No push is authorized.
+
+### Round 1 remediation disposition
+
+- **Policy/constitution conflict — valid and fixed (T028).** `AGENTS.md`, `adversarial-pre-push-review`, `github-work-traceability`, `plan-driven-implementation`, and `release-operations` again require a passing alternate-model review before any push. The later execution-persistence rules remain, and no constitution amendment or history rewrite was needed.
+- **Corrupt DNG acceptance — valid and fixed (T029).** `ContentInspector` now walks nested TIFF/DNG IFD pointers and validates matching strip, tile, and embedded-JPEG offset/length arrays against the complete stream. The executable corpus check rejects the 29,195,592-byte DNG truncated to 4,096 bytes while accepting the complete DNG and TIFF fixtures.
+- **Worker packaging — non-blocking note retained.** A release may add a dedicated worker package/container when deployment is authorized; current implementation validation publishes the worker executable successfully.
+
+Remediation validation passed: `dotnet format ... --verify-no-changes`; offline foundation/corpus executable; Release API and worker builds; Release worker publish; `npm test`; web typecheck/test/accessibility/build; contract and CI-contract checks; and the full `npm run test:ingest` PostgreSQL 18.1/versioned SSE-KMS MinIO suite. The first integration attempt after prior cleanup failed before feature execution because Docker was stopped; after starting Docker Desktop and healthy isolated services, the exact command passed. `git diff --check` remains required immediately before the remediation commit.
