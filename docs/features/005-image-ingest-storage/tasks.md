@@ -67,3 +67,7 @@ T001–T009 are required before stories. Deliver US1 (T010–T014), then US2 (T0
 
 - [x] T028 Align repository review policy with Constitution Principle V's mandatory pre-push gate across `AGENTS.md` and affected project skills (contradicts). — All affected instructions again require a passing independent review before any push while retaining persistent remediation behavior.
 - [x] T029 Reject TIFF/DNG files whose referenced image payload ranges are absent or truncated, with executable regression coverage per FR-007, AC-003, and NFR-015 (partial). — Nested IFD and strip/tile/JPEG range checks reject the 29 MB DNG fixture truncated to 4 KB in offline and PostgreSQL/MinIO suites.
+
+## Phase 9: Adversarial review follow-up
+
+- [x] T030 Convert every PNG/JPEG structural read to an exact read and prove sub-header truncations receive deterministic quarantine outcomes per FR-007/008/015, AC-003, and NFR-015 (partial). — Offline and PostgreSQL/MinIO worker checks quarantine a 9-byte PNG and four-byte JPEG as `unsupported_format`.

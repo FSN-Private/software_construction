@@ -24,9 +24,9 @@ Stop and ask the user only when a blocking finding needs a material product or d
 
 ## Blocking threshold
 
-Focus the review on significant issues that could make merging unsafe or materially violate approved requirements. A finding is blocking only when supported evidence shows a credible risk such as a security or privacy vulnerability, data loss or corruption, broken authorization, a material functional or compatibility regression, a failed required acceptance criterion, an unsafe migration or release path, or a failure that materially affects reliability, availability, or compliance.
+Focus the review on significant issues that could make pushing unsafe or materially violate approved requirements. A finding is blocking only when supported evidence shows a credible risk such as a security or privacy vulnerability, data loss or corruption, broken authorization, a material functional or compatibility regression, a failed required acceptance criterion, an unsafe migration or release path, or a failure that materially affects reliability, availability, or compliance.
 
-Do not block a merge for formatting, naming, stylistic preferences, minor documentation polish, speculative improvements, or narrow edge cases with negligible impact. Record these as non-blocking notes. They may be fixed voluntarily or planned later, but require neither remediation nor user waiver for `PASS`.
+Do not block a push for formatting, naming, stylistic preferences, minor documentation polish, speculative improvements, or narrow edge cases with negligible impact. Record these as non-blocking notes. They may be fixed voluntarily or planned later, but require neither remediation nor user waiver for `PASS`.
 
 Spend review effort first on the blocking threshold. Mention non-blocking observations concisely; do not expand them into exhaustive style or edge-case review.
 
@@ -72,7 +72,7 @@ Do not close a blocking finding merely because the agent disagrees. Blocking fin
 5. If the reviewer disputes a blocking disposition or reports a valid unresolved blocking finding, repeat from step 2. Record each round; do not replace earlier findings or evidence.
 6. Finish when the reviewer explicitly agrees that no valid unresolved blocking finding remains. Non-blocking notes may remain open.
 
-There is no arbitrary maximum number of review rounds for blocking findings. If the loop cannot converge because the reviewer is unavailable, evidence cannot be reproduced after reasonable in-scope investigation, or a blocking finding needs user authority, stop without merging and ask the user for direction. Otherwise, continue remediation and review; never stop solely because a blocking finding is unresolved.
+There is no arbitrary maximum number of review rounds for blocking findings. If the loop cannot converge because the reviewer is unavailable, evidence cannot be reproduced after reasonable in-scope investigation, or a blocking finding needs user authority, stop without pushing and ask the user for direction. Otherwise, continue remediation and review; never stop solely because a blocking finding is unresolved.
 
 ## Resolve and record
 
