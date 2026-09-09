@@ -1,7 +1,7 @@
 # Tasks: Image Ingest and Durable Storage
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: Complete — implementation, validation, documentation, and named milestone commits completed 2026-09-09; convergence pending final clean assessment.
+**Status**: Complete — implementation, validation, documentation, named milestone commits, and a clean convergence assessment completed 2026-09-09.
 
 ## Phase 1: Setup and shared foundations
 
