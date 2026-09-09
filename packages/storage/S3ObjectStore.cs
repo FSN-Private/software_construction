@@ -4,7 +4,7 @@ using System.Net;
 
 namespace Platform.Storage;
 
-public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
+public sealed partial class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
 {
     public async Task PutAuthoritativeAsync(ContentAddress address, Stream content, CancellationToken cancellationToken = default)
     {
