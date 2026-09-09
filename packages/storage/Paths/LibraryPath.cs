@@ -11,8 +11,9 @@ public static class LibraryPath
     };
     public static string Normalize(string value)
     {
+        if (string.IsNullOrWhiteSpace(value) || value.StartsWith('/') || value.StartsWith('\\') || value.Length > 1024) throw new ArgumentException("invalid_windows_path");
         var path = value.Replace('\\', '/').Normalize(NormalizationForm.FormC).Trim('/');
-        if (string.IsNullOrWhiteSpace(path) || path.Split('/').Any(p => p is "." or ".." || p.Length == 0 || p.IndexOfAny(Invalid) >= 0 || p.EndsWith(' ') || p.EndsWith('.') || Reserved.Contains(p.Split('.')[0]))) throw new ArgumentException("invalid_windows_path");
+        if (string.IsNullOrWhiteSpace(path) || path.Split('/').Any(p => p is "." or ".." || p.Length == 0 || p.Length > 255 || p.IndexOfAny(Invalid) >= 0 || p.EndsWith(' ') || p.EndsWith('.') || Reserved.Contains(p.Split('.')[0]) || System.Text.RegularExpressions.Regex.IsMatch(p, @"^(COM|LPT)[¹²³](\.|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))) throw new ArgumentException("invalid_windows_path");
         return path;
     }
     public static string CollisionKey(string value) => Normalize(value).ToUpperInvariant();

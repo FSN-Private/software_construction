@@ -5,7 +5,7 @@ namespace Platform.Storage;
 public sealed record ContentAddress(string Sha256, long Length)
 {
     public string AuthoritativeKey => $"sha256/{Sha256}";
-    public bool IsValid => Length >= 0 && Sha256.Length == 64 && Sha256.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    public bool IsValid => Length >= 0 && Sha256 is { Length: 64 } && Sha256.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     public static async Task<ContentAddress> FromAsync(Stream stream, CancellationToken cancellationToken = default)
     {
