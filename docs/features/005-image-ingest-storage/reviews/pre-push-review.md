@@ -187,7 +187,7 @@ The alternate reviewer rechecked the pending push range `origin/feature/005-imag
 
 ## Current pre-push review — 2026-09-09
 
-**Status**: blocked, remediation in progress | **Reviewer model**: GPT-5.5 | **Destination**: `origin/master` | **Base**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934` | **Reviewed head**: `85458e4bada6e2ae66ac414ef7911c21d8245c87` | **Reviewed range**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934..85458e4bada6e2ae66ac414ef7911c21d8245c87` | **Pending push scope**: prospective `origin/master...HEAD`, 0 behind / 39 ahead; no open PR for this head (earlier PR #10 is merged).
+**Status**: pass, pending final review-record commit | **Reviewer model**: GPT-5.5 | **Destination**: `origin/master` | **Base**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934` | **Final reviewed head**: `394c1a1eb88db9d9dd28c1a830f24426f0459be3` | **Final reviewed range**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934..394c1a1eb88db9d9dd28c1a830f24426f0459be3` | **Pending push scope**: prospective `origin/master...HEAD`, 0 behind / 41 ahead; no open PR for this head (earlier PR #10 is merged).
 
 ### Round 1 — independent assessment
 
@@ -232,3 +232,23 @@ The reviewer found one new **blocking Medium** defect affecting T012/T013/T014/T
 - **Stale merge wording — non-blocking note fixed.** The three generic threshold/loop references now say push, consistent with the skill's operative gate and the constitution.
 
 Validation passed sequentially after one harmless shared-output file-lock collision from initially launching the test and worker build in parallel: `npm run format`; `npm test`; contract and CI-contract checks; Release API/worker builds; Release worker publish; offline foundation/corpus checks; the complete `npm run test:ingest` suite against healthy PostgreSQL 18.1 and versioned SSE-KMS MinIO; web accessibility checks included by `npm test`; and `git diff --check`.
+
+### Round 3 — independent final implementation assessment
+
+**Reviewer model**: GPT-5.5 | **Reviewed head**: `394c1a1eb88db9d9dd28c1a830f24426f0459be3` | **Reviewed range**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934..394c1a1eb88db9d9dd28c1a830f24426f0459be3` | **Pending push scope**: prospective `origin/master...HEAD`, verified 0 behind / 41 ahead.
+
+The reviewer inspected the complete revised range and explicitly agreed:
+
+- T028 materially resolves the Round 1 governance contradiction; the constitution, `AGENTS.md`, and affected project skills consistently require the alternate-model gate before every push.
+- T029 materially resolves the reproduced TIFF/DNG truncation defect by validating nested IFD and image-payload ranges while retaining acceptance of the complete corpus.
+- T030 materially resolves the short PNG/JPEG exception path: exact reads become `InvalidDataException("unsupported_format")`, and offline plus PostgreSQL/MinIO coverage proves deterministic quarantine.
+- Historical storage-version binding, immutable reuse, publication/retry, transfer authorization, idempotency replay, readiness/observability, path validation, dependency pinning, and integration-coverage findings remain materially resolved.
+- Worker packaging remains a non-blocking Low release-preparation note. No other blocking issue was found across governance/constitution compliance, traceability, corrupt-input handling, storage integrity, atomicity/retry, authorization/privacy, lifecycle concurrency, retrieval, reconstruction, migrations/rollback, CI/supply chain, secrets/artifacts, accessibility, capacity, or runbooks.
+
+The reviewer ran read-only range/status/diff/source checks including `git diff --check` and made no repository, container, or remote changes.
+
+## Final agreement for the current pending push
+
+The independent GPT-5.5 reviewer explicitly states that no valid unresolved blocking finding remains in `5f47b1f723d1f1116a3a0e29297ff47c7244e934..394c1a1eb88db9d9dd28c1a830f24426f0459be3` and returns **PASS**. The worker packaging note does not delay the gate.
+
+**Final gate result: PASS.** No push or merge is authorized by this review.
