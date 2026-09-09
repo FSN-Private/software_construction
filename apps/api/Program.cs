@@ -6,6 +6,7 @@ using System.Security.Claims;
 using Npgsql;
 using Platform.Storage;
 using Amazon.S3;
+using Platform.Api.Features.Ingest;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,6 +45,7 @@ app.UsePlatformTelemetry();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
+IngestEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>
