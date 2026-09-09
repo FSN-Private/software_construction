@@ -70,6 +70,7 @@ export class PlatformFoundationStack extends Stack {
     alerts.addSubscription(new EmailSubscription(props.alertEmail));
     const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
     const runbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
+    const ingestRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/ingest-storage.md';
     const availabilityAlarm = new Alarm(this, 'ServiceAvailabilityAlarm', { metric: availability, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
     availabilityAlarm.addAlarmAction(new SnsAction(alerts));
     const authenticationFailures = new MetricFilter(this, 'AuthenticationFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "authorization.denied" }'), metricNamespace: 'Platform/Auth', metricName: 'AuthenticationFailures', metricValue: '1' });
@@ -78,8 +79,13 @@ export class PlatformFoundationStack extends Stack {
     authenticationAlarm.addAlarmAction(new SnsAction(alerts));
     const ingestStorageFailures = new MetricFilter(this, 'IngestStorageFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.storage.failure" }'), metricNamespace: 'Platform/Ingest', metricName: 'StorageFailures', metricValue: '1' });
     const ingestStorageMetric = ingestStorageFailures.metric({ statistic: 'Sum', period: Duration.minutes(5) });
-    const ingestStorageAlarm = new Alarm(this, 'IngestStorageFailureAlarm', { metric: ingestStorageMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
+    const ingestStorageAlarm = new Alarm(this, 'IngestStorageFailureAlarm', { metric: ingestStorageMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${ingestRunbook}` });
     ingestStorageAlarm.addAlarmAction(new SnsAction(alerts));
+    const ingestQuarantineMetric = new MetricFilter(this, 'IngestQuarantineMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.quarantined" }'), metricNamespace: 'Platform/Ingest', metricName: 'Quarantined', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const ingestRepairMetric = new MetricFilter(this, 'IngestRepairMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.repaired" }'), metricNamespace: 'Platform/Ingest', metricName: 'Repairs', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const integrityDriftMetric = new MetricFilter(this, 'IntegrityDriftMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.integrity.drift" }'), metricNamespace: 'Platform/Ingest', metricName: 'IntegrityDrift', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const integrityDriftAlarm = new Alarm(this, 'IntegrityDriftAlarm', { metric: integrityDriftMetric, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${ingestRunbook}` });
+    integrityDriftAlarm.addAlarmAction(new SnsAction(alerts));
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
       ['CiFailureAlarm', 'Platform/Delivery', 'CiFailures', 1],
@@ -92,6 +98,7 @@ export class PlatformFoundationStack extends Stack {
       [new GraphWidget({ title: 'Service availability', left: [availability] })],
       [new GraphWidget({ title: 'Authentication failures', left: [authenticationMetric] })],
       [new GraphWidget({ title: 'Ingest storage failures', left: [ingestStorageMetric] })],
+      [new GraphWidget({ title: 'Ingest quarantine, repair, and integrity', left: [ingestQuarantineMetric, ingestRepairMetric, integrityDriftMetric] })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
       [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],

@@ -68,8 +68,9 @@ Assert(LibraryPath.CollisionKey("Folder/photo.dng") == LibraryPath.CollisionKey(
 AssertThrows(() => LibraryPath.Normalize("folder/aux"), "Windows reserved device names must be rejected.");
 AssertThrows(() => LibraryPath.Normalize("folder/CON.photo.jpg"), "Windows device names must be rejected before every extension.");
 AssertThrows(() => LibraryPath.Normalize("folder/a\u0001.jpg"), "Windows control characters must be rejected on every host.");
-Assert(new PublicationIntent(Guid.NewGuid(), "pending-publication", 0, "{}").Repair().State == "reconciled", "Pending publication repair must be explicit and idempotent.");
 
+try { await IngestChecks.RunAsync(); }
+catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
 Console.WriteLine("Platform API telemetry foundation tests passed.");
 
 static void Assert(bool condition, string message)

@@ -9,6 +9,12 @@ public sealed partial class S3ObjectStore
     public const int PartSize = 8 * 1024 * 1024;
     public const long MaxObjectSize = 1024L * 1024 * 1024;
 
+    public async Task CheckReadyAsync(CancellationToken ct)
+    {
+        var versioning = await s3.GetBucketVersioningAsync(new GetBucketVersioningRequest { BucketName = bucket }, ct);
+        if (versioning.VersioningConfig.Status != VersionStatus.Enabled) throw new InvalidOperationException("storage_versioning_required");
+    }
+
     public async Task<string> StartUploadAsync(Guid session, CancellationToken ct)
     {
         var result = await s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
@@ -83,15 +89,30 @@ public sealed partial class S3ObjectStore
         return await VerifyAuthoritativeAsync(address, ct);
     }
 
-    public async Task QuarantineAsync(Guid session, string version, CancellationToken ct)
+    public async Task<string> QuarantineAsync(Guid session, string version, CancellationToken ct)
     {
-        await s3.CopyObjectAsync(new CopyObjectRequest
+        var result = await s3.CopyObjectAsync(new CopyObjectRequest
         {
             SourceBucket = bucket, SourceKey = StagingKey(session), SourceVersionId = version,
             DestinationBucket = bucket, DestinationKey = QuarantineKey(session),
             ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS,
             ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId
         }, ct);
+        return result.VersionId ?? throw new InvalidDataException("quarantine_version_missing");
+    }
+
+    public async Task DeleteVersionAsync(string key, string version, CancellationToken ct) =>
+        _ = await s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key, VersionId = version }, ct);
+
+    public async Task DeleteStagingAsync(Guid session, string? uploadId, CancellationToken ct)
+    {
+        if (uploadId is not null) await AbortUploadAsync(session, uploadId, ct);
+        try
+        {
+            var metadata = await s3.GetObjectMetadataAsync(bucket, StagingKey(session), ct);
+            if (metadata.VersionId is not null) await DeleteVersionAsync(StagingKey(session), metadata.VersionId, ct);
+        }
+        catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound) { }
     }
 
     public async Task<IReadOnlyList<string>> InventoryAsync(CancellationToken ct)

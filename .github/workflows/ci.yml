@@ -29,9 +29,16 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci --ignore-scripts
+      - run: dotnet restore tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --locked-mode
       - run: dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore
       - run: npm run lint
       - run: npm run test:backend
+      - name: Start isolated ingest dependencies
+        run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
+      - run: npm run test:ingest
+      - name: Stop isolated ingest dependencies
+        if: always()
+        run: docker compose -f tests/integration/ingest/compose.yml -p feature005 down
       - run: npm run test:contract
       - run: npm run package:api
 

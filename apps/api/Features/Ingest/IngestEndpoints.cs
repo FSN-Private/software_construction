@@ -1,5 +1,5 @@
-using Npgsql;
 using Platform.Contracts;
+using Platform.Storage;
 
 namespace Platform.Api.Features.Ingest;
 
@@ -7,39 +7,65 @@ public static class IngestEndpoints
 {
     public static void Map(WebApplication app)
     {
-        app.MapPost("/v1/import-batches", CreateAsync);
-        app.MapGet("/v1/import-batches/{id:guid}", StatusAsync);
-    }
-
-    private static async Task<IResult> CreateAsync(ImportBatchRequest request, HttpContext context, NpgsqlDataSource? dataSource, IAuditWriter? audit, CancellationToken cancellationToken)
-    {
-        if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequestContracts.Problem(context, 401, "unauthenticated", "Authentication required");
-        if (dataSource is null || request.Items.Count is 0 || request.Items.Count > 1000) return RequestContracts.Problem(context, 400, "invalid_batch", "Batch must contain 1 to 1000 items");
-        if (request.Items.Any(item => !new Platform.Storage.ContentAddress(item.Sha256, item.Length).IsValid)) return RequestContracts.Problem(context, 400, "checksum_mismatch", "Item checksum is invalid");
-        var batchId = Guid.NewGuid(); var idempotencyKey = context.Request.Headers[RequestContracts.IdempotencyHeader].FirstOrDefault() ?? throw new InvalidOperationException("idempotency_key_required");
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        foreach (var item in request.Items)
+        var group = app.MapGroup("/v1").AddEndpointFilter<IngestGuard>();
+        group.MapPost("/import-batches", async (ImportRequest request, HttpContext context, IServiceProvider services, CancellationToken ct) =>
         {
-            var sessionId = Guid.NewGuid();
-            await using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = "INSERT INTO import_batches (id, owner_id, idempotency_key, atomic, state) VALUES ($1,$2,$3,$4,'created') ON CONFLICT (owner_id,idempotency_key) DO NOTHING; INSERT INTO upload_sessions (id,batch_id,owner_id,target_key,expected_sha256,expected_length,expires_at) VALUES ($5,$1,$2,$6,$7,$8,now()+interval '1 hour'); INSERT INTO import_batch_items (id,batch_id,upload_session_id,state) VALUES ($9,$1,$5,'uploading');";
-            command.Parameters.AddWithValue(batchId); command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(idempotencyKey); command.Parameters.AddWithValue(request.Atomic); command.Parameters.AddWithValue(sessionId); command.Parameters.AddWithValue($"staging/{sessionId:N}"); command.Parameters.AddWithValue(item.Sha256); command.Parameters.AddWithValue(item.Length); command.Parameters.AddWithValue(Guid.NewGuid());
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        await transaction.CommitAsync(cancellationToken);
-        if (audit is not null) await audit.WriteAsync(AuditEvent.Create(ownerId, context.Items["platform.operation_id"]?.ToString() ?? "op_unavailable", "import.batch_created", "accepted"), cancellationToken);
-        return Results.Created($"/v1/import-batches/{batchId}", new { id = batchId, state = "created" });
+            var result = await Service(services).CreateAsync(Owner(context), context.Request.Headers[RequestContracts.IdempotencyHeader].ToString(), Operation(context), request, ct);
+            return Results.Created($"/v1/import-batches/{result.Id}", result);
+        });
+        group.MapGet("/import-batches/{id:guid}", async (Guid id, HttpContext context, IServiceProvider services, CancellationToken ct) => Results.Ok(await Service(services).StatusAsync(Owner(context), id, ct)));
+        group.MapPut("/upload-sessions/{id:guid}/parts/{number:int}", async (Guid id, int number, HttpContext context, IServiceProvider services, CancellationToken ct) =>
+        {
+            var version = Version(context);
+            if (context.Request.ContentLength is null or < 1 or > S3ObjectStore.PartSize) throw new IngestException("invalid_part", 400);
+            var buffer = new byte[(int)context.Request.ContentLength.Value];
+            await context.Request.Body.ReadExactlyAsync(buffer, ct);
+            return Results.Ok(await Service(services).PutPartAsync(Owner(context), id, version, number, buffer, context.Request.Headers["X-Content-SHA256"].ToString(), Operation(context), ct));
+        });
+        group.MapPost("/upload-sessions/{id:guid}/complete", async (Guid id, HttpContext context, IServiceProvider services, CancellationToken ct) => Results.Ok(await Service(services).CompleteAsync(Owner(context), id, Version(context), Operation(context), ct)));
+        group.MapDelete("/upload-sessions/{id:guid}", async (Guid id, HttpContext context, IServiceProvider services, CancellationToken ct) =>
+        {
+            await Service(services).CancelAsync(Owner(context), id, Version(context), Operation(context), ct);
+            return Results.Ok(new { id, state = "cancelled" });
+        });
+        group.MapPost("/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, IServiceProvider services, CancellationToken ct) =>
+        {
+            var issuer = services.GetService<TransferGrantIssuer>() ?? throw new IngestException("ingest_unavailable", 503);
+            var grant = await issuer.IssueAsync(id, Owner(context), Version(context), DateTime.UtcNow, ct);
+            await services.GetRequiredService<IAuditWriter>().WriteAsync(AuditEvent.Create(Owner(context), Operation(context), "upload.transfer_authorized", "accepted"), ct);
+            context.Items["platform.idempotency.reissue"] = true;
+            return Results.Ok(new { sessionId = id, expiresAt = grant.ExpiresAtUtc, partSize = S3ObjectStore.PartSize, partUrl = $"/v1/upload-sessions/{id}/parts/{{number}}" });
+        });
     }
 
-    private static async Task<IResult> StatusAsync(Guid id, HttpContext context, NpgsqlDataSource? dataSource, CancellationToken cancellationToken)
-    {
-        if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequestContracts.Problem(context, 401, "unauthenticated", "Authentication required");
-        if (dataSource is null) return RequestContracts.Problem(context, 503, "ingest_unavailable", "Ingest is not configured");
-        await using var command = dataSource.CreateCommand("SELECT state FROM import_batches WHERE id=$1 AND owner_id=$2"); command.Parameters.AddWithValue(id); command.Parameters.AddWithValue(ownerId);
-        var state = await command.ExecuteScalarAsync(cancellationToken) as string; return state is null ? Results.NotFound() : Results.Ok(new { id, state });
-    }
+    private static ImportService Service(IServiceProvider services) => services.GetService<ImportService>() ?? throw new IngestException("ingest_unavailable", 503);
+    public static string Owner(HttpContext context) => OwnerAuthorization.TryGetOwner(context.User, out var owner) ? owner : throw new IngestException("unauthenticated", 401);
+    public static string Operation(HttpContext context) => context.Items["platform.operation_id"]?.ToString() ?? "op_unavailable";
+    public static long Version(HttpContext context) => RequestContracts.TryGetLifecycleVersion(context, out var version) ? version : throw new IngestException("lifecycle_version_required", 400);
 }
 
-public sealed record ImportBatchRequest(bool Atomic, IReadOnlyList<ImportBatchItem> Items);
-public sealed record ImportBatchItem(string Sha256, long Length);
+public sealed class IngestGuard(ILogger<IngestGuard> logger) : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+    {
+        var context = invocation.HttpContext;
+        try
+        {
+            _ = IngestEndpoints.Owner(context);
+            if (context.Request.Method is "POST" or "PUT" or "PATCH" or "DELETE" && !RequestContracts.HasIdempotencyKey(context)) throw new IngestException("idempotency_key_required", 400);
+            return await next(invocation);
+        }
+        catch (IngestException e)
+        {
+            if (OwnerAuthorization.TryGetOwner(context.User, out var owner) && context.RequestServices.GetService<IAuditWriter>() is { } audit)
+                await audit.WriteAsync(AuditEvent.Create(owner, IngestEndpoints.Operation(context), "request.rejected", "denied", e.Code), context.RequestAborted);
+            if (e.Code == "integrity_error") logger.LogError("Stored content failed verification {AuditEventType} {OperationId}", "ingest.integrity.drift", IngestEndpoints.Operation(context));
+            return RequestContracts.Problem(context, e.Status, e.Code, e.Code.Replace('_', ' '));
+        }
+        catch (ArgumentException e) { var code = e.Message.StartsWith("invalid_windows_path", StringComparison.Ordinal) ? "invalid_windows_path" : "invalid_request"; return RequestContracts.Problem(context, 400, code, "Invalid request"); }
+        catch (InvalidDataException) { return RequestContracts.Problem(context, 422, "checksum_mismatch", "Content verification failed"); }
+        catch (Npgsql.PostgresException e) when (e.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation) { return RequestContracts.Problem(context, 409, "path_collision", "Destination is already in use"); }
+        catch (Exception e) when (e is Npgsql.NpgsqlException or Amazon.S3.AmazonS3Exception or IOException) { return RequestContracts.Problem(context, 503, "storage_retryable", "Storage unavailable; retry with the same request"); }
+        catch (InvalidOperationException e) when (e.Message == "upload_session_not_authorized") { return RequestContracts.Problem(context, 403, e.Message, "Upload session is not available"); }
+    }
+}

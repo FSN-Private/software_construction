@@ -1,13 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
-const workflow = readFileSync('.github/workflows/ci.yml', 'utf8');
+const workflow = readFileSync('.github/workflows/ci.yml', 'utf8').replace(/\r\n/g, '\n');
 const fixture = JSON.parse(readFileSync('tests/infrastructure/ci-contract/expected-checks.json', 'utf8'));
 
 for (const check of fixture.checks) {
   assert.ok(workflow.includes(`name: ${check}`), `Missing stable check name: ${check}`);
 }
 assert.ok(workflow.includes('pull_request:'), 'CI must validate pull requests.');
+assert.ok(workflow.includes('npm run test:ingest') && workflow.includes('compose.yml -p feature005 up -d --wait'), 'Backend CI must run the real ingest dependency suite.');
 assert.ok(workflow.includes('branches:\n      - master'), 'CI must validate protected-branch changes.');
 assert.ok(!workflow.includes('pull_request_target'), 'CI must not use pull_request_target.');
 assert.ok(!workflow.includes('id-token: write'), 'CI must not grant OIDC identity to pull-request jobs.');
