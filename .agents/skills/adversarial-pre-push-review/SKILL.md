@@ -1,17 +1,17 @@
 ---
 name: adversarial-pre-push-review
-description: Gate a proposed pull-request merge through a focused independent alternate-model review for significant blocking issues. Use when a pull request is ready to merge, not for ordinary pushes.
+description: Gate a proposed push through a focused independent alternate-model review for significant blocking issues.
 ---
 
-# Adversarial Pre-merge Review
+# Adversarial Pre-push Review
 
-Do not merge a pull request until this gate reports `PASS` with no unresolved blocking findings. This includes feature, maintenance, documentation, policy, agent-instruction, skill, CI, and configuration changes. Ordinary pushes do not require this review. The reviewer must use a genuinely different available LLM model from the implementing model. A fresh prompt, context, or agent using the same underlying model does not qualify unless the user explicitly accepts that limitation.
+Do not push local commits until this gate reports `PASS` with no unresolved blocking findings. This includes feature, maintenance, documentation, policy, agent-instruction, skill, CI, and configuration changes. The reviewer must use a genuinely different available LLM model from the implementing model. A fresh prompt, context, or agent using the same underlying model does not qualify unless the user explicitly accepts that limitation.
 
-The reviewer pass is read-only. It does not authorize a merge, push, remote mutation, history rewrite, or unrelated change. The implementing agent may remediate supported, in-scope blocking findings after assessing them. If an alternate model is unavailable, stop before merging and ask the user how to proceed; never self-certify the gate.
+The reviewer pass is read-only. It does not authorize a push, merge, remote mutation, history rewrite, or unrelated change. The implementing agent may remediate supported, in-scope blocking findings after assessing them. If an alternate model is unavailable, stop before pushing and ask the user how to proceed; never self-certify the gate.
 
 ## Do not confuse a blocked gate with a stopped feature
 
-`BLOCKED` means the proposed merge cannot proceed in its current state. It is not a terminal result for an active request to complete the feature or prepare it for merge. For each valid, in-scope blocking finding in that situation, the implementing agent must:
+`BLOCKED` means the proposed push cannot proceed in its current state. It is not a terminal result for an active request to complete the feature or prepare it for push. For each valid, in-scope blocking finding in that situation, the implementing agent must:
 
 1. map the finding to its existing numbered task, or append a traceable remediation task when the approved plan has a genuine gap;
 2. implement the smallest supported remediation, update required documentation and task state, and run relevant validation;
@@ -59,7 +59,7 @@ The implementing agent must not implement feedback merely to satisfy the reviewe
 - `valid and fixed`: a blocking claim is supported, the fix is identified, and validation proves the fix;
 - `invalid with evidence`: a blocking claim is unsupported or inapplicable, with concise evidence that the reviewer can evaluate;
 - `needs user decision`: a blocking claim exposes an unresolved product, risk, or authority choice;
-- `non-blocking note`: the finding is recorded for optional follow-up and does not affect the merge gate.
+- `non-blocking note`: the finding is recorded for optional follow-up and does not affect the push gate.
 
 Do not close a blocking finding merely because the agent disagrees. Blocking findings must be fixed or shown invalid with evidence; they cannot be waived. Do not require fixes, a task ID, or a waiver for non-blocking notes. Update specifications and the numbered plan if a blocking finding exposes a scope or design gap.
 
@@ -76,15 +76,15 @@ There is no arbitrary maximum number of review rounds for blocking findings. If 
 
 ## Resolve and record
 
-Save a feature review to `docs/features/<NNN>-<feature-slug>/reviews/pre-merge-review.md`. For a pull request without a feature slug, save it to `docs/reviews/<date>-<change-slug>-pre-merge.md`. Preserve every review round and include:
+Save a feature review to `docs/features/<NNN>-<feature-slug>/reviews/pre-push-review.md`. For a push without a feature slug, save it to `docs/reviews/<date>-<change-slug>-pre-push.md`. Preserve every review round and include:
 
-- alternate model identifier, review date, pull request, merge target, base, reviewed commit range, and exact pending merge scope;
+- alternate model identifier, review date, remote and destination ref, base, reviewed commit range, and exact pending push scope;
 - reviewer prompt scope, feedback, severity, evidence, affected requirement/task IDs, impact, and suggested remediation for each finding;
 - the implementing agent's validity assessment, disposition, and supporting evidence for each finding;
 - fixes, plan or specification updates, non-blocking notes, and validation commands with results;
 - the reviewer's explicit assessment of each disposition in each follow-up round;
 - the final explicit reviewer agreement and final gate result (`PASS` or `BLOCKED`).
 
-Commit review fixes and the final review record as a dedicated milestone. The reviewer must inspect the pending review record before final agreement; after that agreement, commit it unchanged. Before merging, verify the working tree is clean, the recorded commit range matches the pull request, required checks pass, and the final review says `PASS` with no unresolved blocking findings.
+Commit review fixes and the final review record as a dedicated milestone. The reviewer must inspect the pending review record before final agreement; after that agreement, commit it unchanged. Before pushing, verify the working tree is clean, the recorded commit range matches the proposed push, required checks pass, and the final review says `PASS` with no unresolved blocking findings.
 
-Merge only with explicit user authorization.
+Push only with explicit user authorization. Merge only with separate explicit user authorization.

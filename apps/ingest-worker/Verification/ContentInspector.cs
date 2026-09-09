@@ -107,25 +107,70 @@ public static partial class ContentInspector
         var signature = r.ReadBytes(2);
         var little = signature.SequenceEqual("II"u8.ToArray());
         if (!little && !signature.SequenceEqual("MM"u8.ToArray())) throw new InvalidDataException("unsupported_format");
-        ushort U16() { var bytes = r.ReadBytes(2); return little ? BinaryPrimitives.ReadUInt16LittleEndian(bytes) : BinaryPrimitives.ReadUInt16BigEndian(bytes); }
-        uint U32() { var bytes = r.ReadBytes(4); return little ? BinaryPrimitives.ReadUInt32LittleEndian(bytes) : BinaryPrimitives.ReadUInt32BigEndian(bytes); }
-        if (U16() != 42) throw new InvalidDataException("unsupported_format");
-        var offset = U32(); var visited = new HashSet<uint>(); var dng = false;
-        while (offset != 0)
+        byte[] Bytes(int count) { var bytes = r.ReadBytes(count); return bytes.Length == count ? bytes : throw new EndOfStreamException(); }
+        ushort FromU16(ReadOnlySpan<byte> bytes) => little ? BinaryPrimitives.ReadUInt16LittleEndian(bytes) : BinaryPrimitives.ReadUInt16BigEndian(bytes);
+        uint FromU32(ReadOnlySpan<byte> bytes) => little ? BinaryPrimitives.ReadUInt32LittleEndian(bytes) : BinaryPrimitives.ReadUInt32BigEndian(bytes);
+        ushort U16() => FromU16(Bytes(2));
+        uint U32() => FromU32(Bytes(4));
+        ulong[] Values(ushort type, uint count, uint offset, byte[] inline)
         {
+            var width = type switch { 1 => 1, 3 => 2, 4 or 13 => 4, _ => throw new InvalidDataException("unsupported_format") };
+            if (count > 1_000_000) throw new InvalidDataException("unsupported_format");
+            var length = checked((int)(count * (uint)width));
+            byte[] data;
+            if (length <= 4) data = inline;
+            else
+            {
+                var position = r.BaseStream.Position;
+                r.BaseStream.Position = offset;
+                data = Bytes(length);
+                r.BaseStream.Position = position;
+            }
+            var values = new ulong[count];
+            for (var i = 0; i < count; i++) values[i] = type switch
+            {
+                1 => data[i],
+                3 => FromU16(data.AsSpan(i * 2, 2)),
+                _ => FromU32(data.AsSpan(i * 4, 4))
+            };
+            return values;
+        }
+        if (U16() != 42) throw new InvalidDataException("unsupported_format");
+        var pending = new Queue<uint>(); pending.Enqueue(U32());
+        var visited = new HashSet<uint>(); var dng = false; var payload = false;
+        while (pending.TryDequeue(out var offset))
+        {
+            if (offset == 0) continue;
             if (!visited.Add(offset) || visited.Count > 256 || offset > r.BaseStream.Length - 2) throw new InvalidDataException("unsupported_format");
             r.BaseStream.Position = offset; var count = U16();
             if (count == 0 || r.BaseStream.Position + count * 12L + 4 > r.BaseStream.Length) throw new InvalidDataException("unsupported_format");
+            var values = new Dictionary<ushort, ulong[]>();
             for (var i = 0; i < count; i++)
             {
-                var tag = U16(); var type = U16(); var n = U32(); var value = U32();
+                var tag = U16(); var type = U16(); var n = U32(); var inline = Bytes(4); var value = FromU32(inline);
                 var size = type switch { 1 or 2 or 6 or 7 => 1, 3 or 8 => 2, 4 or 9 or 11 or 13 => 4, 5 or 10 or 12 => 8, _ => 0 };
                 if (size == 0 || n == 0 || ((long)n * size > 4 && value + (long)n * size > r.BaseStream.Length)) throw new InvalidDataException("unsupported_format");
                 dng |= tag == 50706 && type == 1 && n == 4;
+                if (tag is 273 or 279 or 324 or 325 or 330 or 513 or 514 or 34665 or 34853 or 40965)
+                    values[tag] = Values(type, n, value, inline);
             }
-            offset = U32();
+            pending.Enqueue(U32());
+            foreach (var tag in new ushort[] { 330, 34665, 34853, 40965 })
+                if (values.TryGetValue(tag, out var offsets)) foreach (var child in offsets) pending.Enqueue(checked((uint)child));
+            ValidatePayload(273, 279); ValidatePayload(324, 325); ValidatePayload(513, 514);
+
+            void ValidatePayload(ushort offsetsTag, ushort lengthsTag)
+            {
+                var hasOffsets = values.TryGetValue(offsetsTag, out var offsets);
+                var hasLengths = values.TryGetValue(lengthsTag, out var lengths);
+                if (!hasOffsets && !hasLengths) return;
+                if (!hasOffsets || !hasLengths || offsets!.Length != lengths!.Length) throw new InvalidDataException("unsupported_format");
+                for (var i = 0; i < offsets.Length; i++)
+                    if (lengths[i] == 0 || offsets[i] > (ulong)r.BaseStream.Length || lengths[i] > (ulong)r.BaseStream.Length - offsets[i]) throw new InvalidDataException("unsupported_format");
+                payload = true;
+            }
         }
-        if (visited.Count == 0) throw new InvalidDataException("unsupported_format");
+        if (visited.Count == 0 || !payload) throw new InvalidDataException("unsupported_format");
         return dng;
     }
 }

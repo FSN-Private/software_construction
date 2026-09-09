@@ -62,3 +62,8 @@ T001–T009 are required before stories. Deliver US1 (T010–T014), then US2 (T0
 ## Phase 7: Convergence
 
 - [x] T027 Measure and record an executable association/path correction workflow that completes within two minutes per SC-004 (partial). — PostgreSQL/MinIO exercises completed association correction in 133.1 ms and path-collision correction in 21.2 ms.
+
+## Phase 8: Adversarial review remediation
+
+- [x] T028 Align repository review policy with Constitution Principle V's mandatory pre-push gate across `AGENTS.md` and affected project skills (contradicts). — All affected instructions again require a passing independent review before any push while retaining persistent remediation behavior.
+- [x] T029 Reject TIFF/DNG files whose referenced image payload ranges are absent or truncated, with executable regression coverage per FR-007, AC-003, and NFR-015 (partial). — Nested IFD and strip/tile/JPEG range checks reject the 29 MB DNG fixture truncated to 4 KB in offline and PostgreSQL/MinIO suites.

@@ -21,6 +21,9 @@ internal static class IngestChecks
         }
         using (var malformed = File.OpenRead("tests/fixtures/ingest/malformed.xmp"))
             await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(malformed, "bad.xmp")));
+        var dng = File.ReadAllBytes("tests/fixtures/ingest/sample.dng");
+        using (var truncated = new MemoryStream(dng[..4096], writable: false))
+            await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(truncated, "truncated.dng")));
         Check(ContentInspector.SourceCandidates("folder/sample_01.dng.xmp").Contains(("folder/sample.dng", 1)), "Numbered darktable naming");
         if (Environment.GetEnvironmentVariable("INGEST_INTEGRATION") != "1") { Console.WriteLine("Ingest corpus checks passed; set INGEST_INTEGRATION=1 for local PostgreSQL/MinIO tests."); return; }
 
@@ -91,6 +94,7 @@ internal static class IngestChecks
     {
         const string owner = "test-owner";
         var png = File.ReadAllBytes("tests/fixtures/ingest/sample.png");
+        var dng = File.ReadAllBytes("tests/fixtures/ingest/sample.dng");
         var invalid = "<bad"u8.ToArray();
         async Task<BatchStatus> Upload(bool atomic, params (string Path, byte[] Bytes, string? Hash)[] files)
         {
@@ -136,7 +140,6 @@ internal static class IngestChecks
         var unassociated = await Upload(false, ("missing.dng.xmp", File.ReadAllBytes("tests/fixtures/ingest/sample.dng.xmp"), null));
         await processor.ProcessNextAsync(default);
         Check((await imports.StatusAsync(owner, unassociated.Id, default)).Items[0].Code == "unassociated_xmp", "Unknown source never becomes authoritative XMP");
-        var dng = File.ReadAllBytes("tests/fixtures/ingest/sample.dng");
         var duplicateSource = await Upload(false, ("sample_01.dng", dng, null));
         await processor.ProcessNextAsync(default);
         Check((await imports.StatusAsync(owner, duplicateSource.Id, default)).State == "completed", "Second logical asset may reuse immutable bytes");
