@@ -76,7 +76,9 @@ internal static class IngestChecks
             Check(downloaded.Length == bytes.Length, "Download is byte exact");
         }
         await FaultChecksAsync(db, s3, bucket, imports, processor, storage, grants);
+        await RetrievalPathChecks.RunAsync(db, storage);
         await HttpIngestChecks.RunAsync(db, storage);
+        await CapacityChecks.RunAsync(db, storage);
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);
         Console.WriteLine($"Ingest PostgreSQL/MinIO checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
     }

@@ -34,9 +34,9 @@
 
 **Independent test**: download exact bytes, move/case-rename 10,000 assets, and associate numbered sidecars without changing identity.
 
-- [ ] T015 [P] [US2] Implement authorized exact-byte original/XMP retrieval with checksum/provenance response in `apps/api/Features/Retrieval/` (FR-010, AC-001, NFR-003/004).
-- [ ] T016 [P] [US2] Implement move/rename with optimistic lifecycle version, path history, collision checks, and audit in `apps/api/Features/Paths/` (FR-004/011/014, AC-005, NFR-010/015).
-- [ ] T017 [US2] Add retrieval, duplicate-sidecar, path history, Windows-name, and 10,000-asset collision/load tests in `tests/integration/storage/` (FR-006/010/011, AC-004/005, NFR-009/016).
+- [x] T015 [P] [US2] Implement authorized exact-byte original/XMP retrieval with checksum/provenance response in `apps/api/Features/Lifecycle/` and `packages/storage/AssetService.cs` (FR-010, AC-001, NFR-003/004). — Every response rehashes version-pinned bytes and returns digest/handoff provenance without storage keys.
+- [x] T016 [P] [US2] Implement move/rename with optimistic lifecycle version, path history, collision checks, and audit in `apps/api/Features/Lifecycle/` and `packages/storage/AssetService.cs` (FR-004/011/014, AC-005, NFR-010/015).
+- [x] T017 [US2] Add retrieval, duplicate-sidecar, path history, Windows-name, and 10,000-asset collision/load checks in the executable .NET integration/capacity harness (FR-006/010/011, AC-004/005, NFR-009/016). — Real PostgreSQL/MinIO validation covers 100k assets, 1m edit records, and 10k moves.
 
 ## Phase 5: User Story 3 — Delete and restore safely (P3)
 
