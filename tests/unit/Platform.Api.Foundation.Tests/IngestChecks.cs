@@ -24,6 +24,12 @@ internal static class IngestChecks
         var dng = File.ReadAllBytes("tests/fixtures/ingest/sample.dng");
         using (var truncated = new MemoryStream(dng[..4096], writable: false))
             await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(truncated, "truncated.dng")));
+        var png = File.ReadAllBytes("tests/fixtures/ingest/sample.png");
+        using (var truncated = new MemoryStream(png[..9], writable: false))
+            await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(truncated, "truncated.png")));
+        var jpeg = File.ReadAllBytes("tests/fixtures/ingest/sample.jpg");
+        using (var truncated = new MemoryStream(jpeg[..4], writable: false))
+            await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(truncated, "truncated.jpg")));
         Check(ContentInspector.SourceCandidates("folder/sample_01.dng.xmp").Contains(("folder/sample.dng", 1)), "Numbered darktable naming");
         if (Environment.GetEnvironmentVariable("INGEST_INTEGRATION") != "1") { Console.WriteLine("Ingest corpus checks passed; set INGEST_INTEGRATION=1 for local PostgreSQL/MinIO tests."); return; }
 
@@ -95,6 +101,7 @@ internal static class IngestChecks
         const string owner = "test-owner";
         var png = File.ReadAllBytes("tests/fixtures/ingest/sample.png");
         var dng = File.ReadAllBytes("tests/fixtures/ingest/sample.dng");
+        var jpeg = File.ReadAllBytes("tests/fixtures/ingest/sample.jpg");
         var invalid = "<bad"u8.ToArray();
         async Task<BatchStatus> Upload(bool atomic, params (string Path, byte[] Bytes, string? Hash)[] files)
         {
@@ -153,7 +160,7 @@ internal static class IngestChecks
         var associationCorrection = Stopwatch.GetElapsedTime(associationCorrectionStarted);
         Check(associationCorrection < TimeSpan.FromMinutes(2), "Reported association errors must be correctable within two minutes");
         Console.WriteLine($"Association correction exercise: {associationCorrection.TotalMilliseconds:F1} ms.");
-        var corrupt = await Upload(false, ("truncated.png", png[..20], null), ("unknown.bmp", "not an image"u8.ToArray(), null));
+        var corrupt = await Upload(false, ("truncated.png", png[..20], null), ("tiny.png", png[..9], null), ("tiny.jpg", jpeg[..4], null), ("unknown.bmp", "not an image"u8.ToArray(), null));
         await processor.ProcessNextAsync(default);
         Check((await imports.StatusAsync(owner, corrupt.Id, default)).Items.All(i => i.Code == "unsupported_format"), "Corrupt and unsupported content remain non-active");
         await RejectAsync<IngestException>(() => new ImportService(db, storage, 1).CreateAsync(owner, Guid.NewGuid().ToString("N"), "op_quota", new(false, [new("quota.png", Hash(png), png.Length)]), default));

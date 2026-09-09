@@ -54,18 +54,18 @@ public static partial class ContentInspector
 
     private static void CheckPng(BinaryReader r)
     {
-        if (!r.ReadBytes(8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) throw new InvalidDataException("unsupported_format");
+        if (!Exact(r, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) throw new InvalidDataException("unsupported_format");
         var first = true; var data = false;
         while (r.BaseStream.Position < r.BaseStream.Length)
         {
-            var length = BinaryPrimitives.ReadUInt32BigEndian(r.ReadBytes(4));
+            var length = BinaryPrimitives.ReadUInt32BigEndian(Exact(r, 4));
             if (length > r.BaseStream.Length - r.BaseStream.Position - 8) throw new InvalidDataException("unsupported_format");
-            var type = r.ReadBytes(4); var name = System.Text.Encoding.ASCII.GetString(type);
+            var type = Exact(r, 4); var name = System.Text.Encoding.ASCII.GetString(type);
             if (first && (name != "IHDR" || length != 13)) throw new InvalidDataException("unsupported_format");
             uint crc = 0xffffffff;
             foreach (var b in type) crc = Crc(crc, b);
             for (uint i = 0; i < length; i++) crc = Crc(crc, r.ReadByte());
-            if (~crc != BinaryPrimitives.ReadUInt32BigEndian(r.ReadBytes(4))) throw new InvalidDataException("unsupported_format");
+            if (~crc != BinaryPrimitives.ReadUInt32BigEndian(Exact(r, 4))) throw new InvalidDataException("unsupported_format");
             first = false; data |= name == "IDAT";
             if (name == "IEND")
             {
@@ -93,13 +93,19 @@ public static partial class ContentInspector
             byte marker; do { marker = r.ReadByte(); } while (marker == 0xff);
             if (scan && (marker == 0 || marker is >= 0xd0 and <= 0xd7)) continue;
             if (marker == 0xd9 && frame && scan) return;
-            var length = BinaryPrimitives.ReadUInt16BigEndian(r.ReadBytes(2));
+            var length = BinaryPrimitives.ReadUInt16BigEndian(Exact(r, 2));
             if (length < 2 || r.BaseStream.Position + length - 2 > r.BaseStream.Length) throw new InvalidDataException("unsupported_format");
             frame |= marker is 0xc0 or 0xc1 or 0xc2;
             scan |= marker == 0xda;
             r.BaseStream.Position += length - 2;
         }
         throw new InvalidDataException("unsupported_format");
+    }
+
+    private static byte[] Exact(BinaryReader reader, int count)
+    {
+        var bytes = reader.ReadBytes(count);
+        return bytes.Length == count ? bytes : throw new EndOfStreamException();
     }
 
     private static bool CheckTiff(BinaryReader r)

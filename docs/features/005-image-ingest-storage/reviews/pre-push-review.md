@@ -213,3 +213,22 @@ Independent reproduction after Round 1 truncated the 29,195,592-byte licensed DN
 - **Worker packaging — non-blocking note retained.** A release may add a dedicated worker package/container when deployment is authorized; current implementation validation publishes the worker executable successfully.
 
 Remediation validation passed: `dotnet format ... --verify-no-changes`; offline foundation/corpus executable; Release API and worker builds; Release worker publish; `npm test`; web typecheck/test/accessibility/build; contract and CI-contract checks; and the full `npm run test:ingest` PostgreSQL 18.1/versioned SSE-KMS MinIO suite. The first integration attempt after prior cleanup failed before feature execution because Docker was stopped; after starting Docker Desktop and healthy isolated services, the exact command passed. `git diff --check` remains required immediately before the remediation commit.
+
+### Round 2 — independent follow-up assessment
+
+**Reviewer model**: GPT-5.5 | **Reviewed head**: `73c17f01f3c9621f0be2457aefa4f7eefe4a8ac8` | **Reviewed range**: `5f47b1f723d1f1116a3a0e29297ff47c7244e934..73c17f01f3c9621f0be2457aefa4f7eefe4a8ac8` | **Pending push scope**: prospective `origin/master...HEAD`, 0 behind / 40 ahead.
+
+The reviewer explicitly agreed that the Round 1 governance blocker is valid and fixed and that the supplemental DNG/TIFF truncation blocker is valid and fixed for the reproduced failure mode. It retained worker packaging as a non-blocking release note and recorded three stale generic uses of “merge” in the review skill as non-blocking wording polish.
+
+The reviewer found one new **blocking Medium** defect affecting T012/T013/T014/T029, FR-007/008/015, AC-003, and NFR-015: PNG chunk and JPEG segment header reads passed potentially short arrays directly to `BinaryPrimitives`. A 9-byte PNG or four-byte JPEG can therefore throw `ArgumentOutOfRangeException`, bypass the worker's deterministic content-failure handler, and remain in infrastructure retry instead of quarantine. The reviewer required exact reads plus offline and PostgreSQL/MinIO quarantine regressions.
+
+**Implementer assessment: valid; T030 appended.** The exception path is reproducible from the source and materially violates deterministic corrupt-input handling. All PNG/JPEG structural reads will use a common exact-read helper. Both sub-header truncations will be covered before and through the worker. The non-blocking wording note will be cleaned while preserving the operative pre-push gate.
+
+**Round 2 gate result: BLOCKED.** T030 requires implementation, validation, and independent follow-up review. No push is authorized.
+
+### Round 2 remediation disposition
+
+- **Short PNG/JPEG parser exception — valid and fixed (T030).** PNG signature/chunk/CRC and JPEG segment-length reads now use a shared exact-read helper whose short read raises `EndOfStreamException`; the existing inspector boundary converts that to `InvalidDataException("unsupported_format")`, which the worker quarantines. Offline regressions reject a 9-byte PNG and four-byte JPEG. The PostgreSQL/MinIO fault batch proves both items reach quarantine with stable `unsupported_format` outcomes.
+- **Stale merge wording — non-blocking note fixed.** The three generic threshold/loop references now say push, consistent with the skill's operative gate and the constitution.
+
+Validation passed sequentially after one harmless shared-output file-lock collision from initially launching the test and worker build in parallel: `npm run format`; `npm test`; contract and CI-contract checks; Release API/worker builds; Release worker publish; offline foundation/corpus checks; the complete `npm run test:ingest` suite against healthy PostgreSQL 18.1 and versioned SSE-KMS MinIO; web accessibility checks included by `npm test`; and `git diff --check`.
