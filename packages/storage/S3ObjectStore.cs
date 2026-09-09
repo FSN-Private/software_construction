@@ -28,6 +28,13 @@ public sealed class S3ObjectStore(IAmazonS3 s3, string bucket, string kmsKeyId)
         foreach (var header in headers) request.Headers[header.Key] = header.Value;
         return new(s3.GetPreSignedURL(request), headers);
     }
+
+    public PresignedTransfer CreateAuthoritativeDownloadUrl(ContentAddress address, DateTime expiresAtUtc, DateTime nowUtc)
+    {
+        if (!address.IsValid || expiresAtUtc <= nowUtc || expiresAtUtc > nowUtc.AddMinutes(15)) throw new ArgumentException("invalid_download_grant");
+        var request = new GetPreSignedUrlRequest { BucketName = bucket, Key = address.AuthoritativeKey, Verb = HttpVerb.GET, Expires = expiresAtUtc };
+        return new(s3.GetPreSignedURL(request), new Dictionary<string, string> { ["x-amz-checksum-sha256"] = Convert.ToBase64String(Convert.FromHexString(address.Sha256)) });
+    }
     public async Task<string> PromoteStagedAsync(Guid session, ContentAddress address, CancellationToken cancellationToken = default)
     {
         if (!address.IsValid) throw new ArgumentException("Authoritative content must have a canonical address.", nameof(address));
