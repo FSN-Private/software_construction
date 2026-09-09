@@ -58,3 +58,7 @@
 ## Dependencies and traceability
 
 T001–T009 are required before stories. Deliver US1 (T010–T014), then US2 (T015–T017), then US3 (T018–T020); recovery closure follows. FR-001–009: T004–T014; FR-010–011: T007/T015–T017; FR-012: T018–T020; FR-013: T018/T020; FR-014–015: T004/T009/T018–T020; FR-016: T005/T021–T022. AC-001–004: T010–T014; AC-005: T007/T016–T017; AC-006: T018–T020; AC-007: T008/T013–T014; AC-008: T021–T022; AC-009: T012–T014; AC-010: T021–T022. NFR-001–010: T002–T025; NFR-011: T005/T024; NFR-012: T009/T023; NFR-013: T006/T025; NFR-014: T002/T003/T018/T023; NFR-015: T006/T008/T014/T020/T022/T024; NFR-016: T003/T005/T017/T025. Milestone commits: integrity foundation; import MVP; retrieval/path; lifecycle; reconstruction readiness.
+
+## Phase 7: Convergence
+
+- [x] T027 Measure and record an executable association/path correction workflow that completes within two minutes per SC-004 (partial). — PostgreSQL/MinIO exercises completed association correction in 133.1 ms and path-collision correction in 21.2 ms.

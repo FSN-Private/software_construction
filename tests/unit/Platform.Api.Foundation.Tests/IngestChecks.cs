@@ -5,6 +5,7 @@ using Npgsql;
 using Platform.Ingest.Worker;
 using Platform.Ingest.Worker.Verification;
 using Platform.Storage;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using static Platform.Storage.IngestDb;
 
@@ -141,7 +142,14 @@ internal static class IngestChecks
         Check((await imports.StatusAsync(owner, duplicateSource.Id, default)).State == "completed", "Second logical asset may reuse immutable bytes");
         var ambiguous = await Upload(false, ("sample_01.dng.xmp", File.ReadAllBytes("tests/fixtures/ingest/sample_01.dng.xmp"), null));
         await processor.ProcessNextAsync(default);
-        Check((await imports.StatusAsync(owner, ambiguous.Id, default)).Items[0].Code == "ambiguous_association", "Two deterministic source candidates require owner correction");
+        var associationCorrectionStarted = Stopwatch.GetTimestamp();
+        Check((await imports.StatusAsync(owner, ambiguous.Id, default)).Items[0].Code == "ambiguous_association", "Two deterministic source candidates report a stable owner-corrective state");
+        var correctedAssociation = await Upload(false, ("copy.png.xmp", File.ReadAllBytes("tests/fixtures/ingest/sample_01.dng.xmp"), null));
+        await processor.ProcessNextAsync(default);
+        Check((await imports.StatusAsync(owner, correctedAssociation.Id, default)).State == "completed", "A corrected deterministic sidecar name publishes successfully");
+        var associationCorrection = Stopwatch.GetElapsedTime(associationCorrectionStarted);
+        Check(associationCorrection < TimeSpan.FromMinutes(2), "Reported association errors must be correctable within two minutes");
+        Console.WriteLine($"Association correction exercise: {associationCorrection.TotalMilliseconds:F1} ms.");
         var corrupt = await Upload(false, ("truncated.png", png[..20], null), ("unknown.bmp", "not an image"u8.ToArray(), null));
         await processor.ProcessNextAsync(default);
         Check((await imports.StatusAsync(owner, corrupt.Id, default)).Items.All(i => i.Code == "unsupported_format"), "Corrupt and unsupported content remain non-active");
