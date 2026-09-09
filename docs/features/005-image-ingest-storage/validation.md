@@ -21,6 +21,7 @@ Further acceptance, fault, capacity, and rollout evidence is recorded below as c
 
 - Mixed corpus: DNG, JPEG, PNG, TIFF, base XMP, and numbered XMP publish with distinct asset/edit identity and exact downloaded hashes. Repeated create/part/complete operations do not duplicate logical records or content versions.
 - Unsafe input: malformed, unsupported/unassociated, incorrect declared SHA-256, ambiguous/colliding, and atomic-batch failure fixtures remain non-active with stable corrective codes and private 30-day quarantine records.
+- Owner correction: the executable workflow reads the stable `ambiguous_association` result, retries the sidecar with a deterministic source name, and reaches active state in 133.1 ms. A restore collision followed by an explicit alternate path completes in 21.2 ms; both are below SC-004's two-minute target.
 - Publication fault: a synthetic unavailable bucket after object creation leaves the session `verifying`; a later worker pass reuses the immutable version and completes metadata. No acknowledged orphan is produced.
 - HTTP contract: anonymous and other-owner requests fail closed; mutation idempotency fingerprints reject key reuse; lifecycle versions reject stale changes; transfer descriptors omit object keys and credentials.
 - Retrieval/path: source/storage/download hashes match. Unicode, Windows-invalid, case-insensitive collision, stale-version, and 10,000-move checks preserve stable assets, edit associations, and complete path history.
