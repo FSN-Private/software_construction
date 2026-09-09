@@ -3,6 +3,7 @@ namespace Platform.Ingest.Worker.Observability;
 public static class IngestTelemetry
 {
     public static readonly Meter Meter = new("Platform.Ingest", "1.0.0");
+    public static readonly Counter<long> Batches = Meter.CreateCounter<long>("ingest.batches");
     public static readonly Counter<long> Quarantined = Meter.CreateCounter<long>("ingest.quarantined");
     public static readonly Counter<long> Repairs = Meter.CreateCounter<long>("ingest.repaired");
     public static readonly Counter<long> StorageFailures = Meter.CreateCounter<long>("ingest.storage.failures");

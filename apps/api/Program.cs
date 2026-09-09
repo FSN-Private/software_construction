@@ -12,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
+// Request URLs, model-binding values, and exception detail may contain private paths.
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.None);
 builder.Services.AddSingleton<OperationIdFactory>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
@@ -21,10 +23,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 });
 builder.Services.AddAuthorization();
 var ingestConnection = builder.Configuration.GetConnectionString("Ingest");
-if (!string.IsNullOrWhiteSpace(ingestConnection))
+if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:Bucket"]) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:KmsKeyId"]))
 {
     builder.Services.AddSingleton(NpgsqlDataSource.Create(ingestConnection));
     builder.Services.AddSingleton<TransferGrantIssuer>();
+    builder.Services.AddSingleton<ImportService>();
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
 }
@@ -58,6 +61,7 @@ app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServi
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(2));
         await using var connection = await services.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(timeout.Token);
+        await services.GetRequiredService<S3ObjectStore>().CheckReadyAsync(timeout.Token);
         return Results.Ok(new
         {
             status = "ready",
@@ -65,7 +69,7 @@ app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServi
             releaseId = ReleaseId(),
         });
     }
-    catch (Exception exception) when (exception is NpgsqlException or OperationCanceledException)
+    catch (Exception exception) when (exception is NpgsqlException or OperationCanceledException or AmazonS3Exception or InvalidOperationException)
     {
         logger.LogWarning("Readiness dependency check failed {OperationId}", OperationId(context));
         return Results.Problem(type: "https://example.invalid/problems/ingest_unavailable", title: "Ingest is unavailable", statusCode: StatusCodes.Status503ServiceUnavailable, extensions: ProblemExtensions(context, "ingest_unavailable"));
@@ -84,32 +88,6 @@ app.MapGet("/v1/version", (HttpContext context, ILogger<Program> logger) => Requ
     manifestDigest = Environment.GetEnvironmentVariable("PLATFORM_MANIFEST_DIGEST") ?? $"sha256:{new string('0', 64)}",
     operationId = OperationId(context),
 })));
-app.MapPost("/v1/upload-sessions/{id:guid}/transfer", async (Guid id, HttpContext context, IServiceProvider services, ILogger<Program> logger, CancellationToken cancellationToken) =>
-{
-    if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) return RequireOwner(context, logger, () => Results.Empty);
-    if (!RequestContracts.TryGetLifecycleVersion(context, out var version)) return RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "lifecycle_version_required", "Lifecycle version required");
-    var issuer = services.GetService<TransferGrantIssuer>();
-    if (issuer is null) return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured");
-    S3ObjectStore storage;
-    try { storage = services.GetRequiredService<S3ObjectStore>(); }
-    catch (InvalidOperationException) { return RequestContracts.Problem(context, StatusCodes.Status503ServiceUnavailable, "ingest_unavailable", "Ingest is not configured"); }
-    try
-    {
-        var grant = await issuer.IssueAsync(id, ownerId, version, DateTime.UtcNow, cancellationToken);
-        var transfer = storage.CreateStagingUploadUrl(grant, DateTime.UtcNow);
-        var audit = services.GetService<IAuditWriter>();
-        if (audit is not null) await audit.WriteAsync(AuditEvent.Create(ownerId, OperationId(context), "upload.transfer_authorized", "accepted"), cancellationToken);
-        context.Items["platform.idempotency.reissue"] = true;
-        return Results.Ok(new { sessionId = grant.SessionId, expiresAt = grant.ExpiresAtUtc, url = transfer.Url, headers = transfer.RequiredHeaders });
-    }
-    catch (InvalidOperationException)
-    {
-        var audit = services.GetService<IAuditWriter>();
-        if (audit is not null) await audit.WriteAsync(AuditEvent.Create(ownerId, OperationId(context), "upload.transfer_authorized", "denied", "upload_session_not_authorized"), cancellationToken);
-        return RequestContracts.Problem(context, StatusCodes.Status403Forbidden, "upload_session_not_authorized", "Upload session is not available");
-    }
-});
-
 app.Run();
 
 static IResult RequireOwner(HttpContext context, ILogger logger, Func<IResult> success)

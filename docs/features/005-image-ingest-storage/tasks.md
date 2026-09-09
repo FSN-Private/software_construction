@@ -1,22 +1,22 @@
 # Tasks: Image Ingest and Durable Storage
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: In progress — specification/ADR approval recorded by T026; foundational review remediation continues.
+**Status**: In progress — import milestone complete; retrieval, lifecycle, and reconstruction milestone commits remain.
 
 ## Phase 1: Setup and shared foundations
 
 - [x] T001 Create ingest API, worker, storage, corpus, contract, and integration-test layout in `apps/api/`, `apps/ingest-worker/`, `packages/storage/`, and `tests/` (FR-001, NFR-008/009).
 - [x] T002 [P] Add locked, reviewed S3, PostgreSQL, multipart-transfer, XML, and format-detection dependencies to repository manifests and `docs/dependency-inventory.md` (NFR-003/006/014). — .NET provides SHA-256 and XML; AWS SDK provides multipart transfer; API/worker use locked AWS/Npgsql packages; PostgreSQL and MinIO integration images are reviewed digest pins.
 - [x] T003 [P] Build legally usable RAW/JPEG/PNG/TIFF/XMP and corruption/ambiguity corpus fixtures in `tests/fixtures/ingest/` (NFR-006/014/016).
-- [ ] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004). — IN PROGRESS: durable fingerprint/reservation/replay now uses fenced reservation tokens and preserves response content type; lifecycle-version enforcement and durable audit emission remain.
+- [x] T004 Implement shared owner authorization, operation ID, idempotency, versioned errors, audit, and redaction adapters in `packages/contracts/` and `apps/api/` (FR-014/015, NFR-003/004). — Durable fenced reservations release retryable failures; owner/version enforcement and payload-free PostgreSQL audit events are covered by HTTP/integration checks.
 
 ## Phase 2: Foundational data and publication controls
 
 - [x] T005 Create PostgreSQL migrations for batches, upload sessions, content objects, assets, edit identities, paths, holds, publication intents, and reconstruction manifests in `apps/api/Database/Migrations/` (FR-004/016, NFR-008/011/016). — Includes session/content/asset publication binding and durable idempotency records; backward-compatible migration rehearsal remains T024.
-- [ ] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015). — IN PROGRESS: server-side checksum-verified conditional promotion/reuse is implemented; persisted owner/session constraints and S3 fault coverage remain.
+- [x] T006 [P] Implement immutable SHA-256/length object addressing, private staging/authoritative/quarantine locations, SSE-KMS, and scoped transfer authorization in `packages/storage/` (FR-002/003/008, NFR-003/013/015). — Whole-stream SHA-256, SSE-KMS, versioning, conditional reuse, 15-minute persisted grants, and expiry cleanup pass PostgreSQL/MinIO fault tests.
 - [x] T007 [P] Implement normalized display/collision paths and Windows-invalid/case-collision validation in `packages/storage/Paths/` (FR-004/011, AC-005, NFR-010). — Explicit Windows control-character and device-name-before-extension cases are validated on every host.
-- [ ] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015). — IN PROGRESS: worker failures are isolated and retained for retry; PostgreSQL/MinIO fault coverage and atomic multi-item publication remain.
-- [ ] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012). — IN PROGRESS: readiness validates required storage configuration and bounded PostgreSQL availability; outcome instrumentation, durable audit writer, and alert path remain.
+- [x] T008 Implement publication-intent outbox, atomic metadata transition, and idempotent orphan reconciliation in `apps/ingest-worker/` (FR-007/009, AC-002/007, NFR-002/015). — Durable batch outbox, per-item savepoints, atomic rollback, dependency retry, and immutable orphan reuse pass injected-fault tests.
+- [x] T009 Implement metrics, redacted audit events, alerts, and health checks for ingest, quarantine, repair, storage failure, and integrity drift in `apps/ingest-worker/Observability/` (FR-014/015, NFR-004/007/012). — Payload-free metrics/audits, PostgreSQL/S3 readiness, 15-minute storage alarm, immediate drift alarm, dashboard filters, and outage checks pass.
 
 **Checkpoint**: verified content can be safely published or repaired before user-story work begins.
 
@@ -24,11 +24,11 @@
 
 **Independent test**: import the representative mixed batch; every item is deterministic, supported objects are checksummed/active, and unsafe inputs are private quarantine.
 
-- [ ] T010 [P] [US1] Implement import-batch and resumable upload-session endpoints from `contracts/ingest-storage-v1.md` in `apps/api/Features/Ingest/` (FR-001/009/015, AC-002).
-- [ ] T011 [P] [US1] Implement streaming size/SHA-256 verification, content reuse, and immutable source/XMP persistence in `apps/ingest-worker/Verification/` (FR-002/003/005, AC-001/002, NFR-015).
-- [ ] T012 [P] [US1] Implement corpus-backed format detection, XMP well-formedness, darktable base/numbered naming, and conservative association in `apps/ingest-worker/Association/` (FR-005/006/007, AC-003/004/009, NFR-006/008).
-- [ ] T013 [US1] Implement quarantine, item state/progress, safe corrective errors, atomic-batch preparation, and durable outcomes in `apps/api/Features/Ingest/` (FR-007/008/009/015, AC-003/007, NFR-001/005).
-- [ ] T014 [US1] Add resumable/retry/corruption/duplicate/atomic-publication/association contract and fault tests in `tests/integration/ingest/` (FR-001–009, AC-001–004/007/009, NFR-001/009/015).
+- [x] T010 [P] [US1] Implement import-batch and resumable upload-session endpoints from `contracts/ingest-storage-v1.md` in `apps/api/Features/Ingest/` (FR-001/009/015, AC-002).
+- [x] T011 [P] [US1] Implement streaming size/SHA-256 verification, content reuse, and immutable source/XMP persistence in `apps/ingest-worker/Verification/` (FR-002/003/005, AC-001/002, NFR-015).
+- [x] T012 [P] [US1] Implement corpus-backed format detection, XMP well-formedness, darktable base/numbered naming, and conservative association in `apps/ingest-worker/Verification/` (FR-005/006/007, AC-003/004/009, NFR-006/008). — Standard-library bounded XML and structural image parsers require no new dependency.
+- [x] T013 [US1] Implement quarantine, item state/progress, safe corrective errors, atomic-batch preparation, and durable outcomes in `apps/api/Features/Ingest/` (FR-007/008/009/015, AC-003/007, NFR-001/005).
+- [x] T014 [US1] Add resumable/retry/corruption/duplicate/atomic-publication/association contract and fault tests in `tests/integration/ingest/` and the executable .NET harness (FR-001–009, AC-001–004/007/009, NFR-001/009/015). — Real PostgreSQL/MinIO and HTTP checks run through `npm run test:ingest`.
 
 ## Phase 4: User Story 2 — Retrieve and organize stored assets (P2)
 

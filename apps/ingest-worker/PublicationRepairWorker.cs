@@ -1,16 +1,26 @@
-using Microsoft.Extensions.Hosting;
 using Platform.Ingest.Worker.Observability;
 
 namespace Platform.Ingest.Worker;
 
-public sealed class PublicationRepairWorker(PublicationOutbox outbox, PublicationPromoter promoter, ILogger<PublicationRepairWorker> logger) : BackgroundService
+public sealed class PublicationRepairWorker(BatchProcessor batches, ILogger<PublicationRepairWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         do
         {
-            try { await ProcessAvailableAsync(stoppingToken); }
+            try
+            {
+                var expired = await batches.ExpireAsync(stoppingToken);
+                if (expired > 0) logger.LogInformation("Expired {ExpiredSessions} unfinished upload sessions", expired);
+                while (await batches.ProcessNextAsync(stoppingToken))
+                {
+                    IngestTelemetry.Batches.Add(1);
+                    IngestTelemetry.Repairs.Add(1);
+                    logger.LogInformation("Ingest publication pass completed {AuditEventType}", "ingest.batch.processed");
+                    logger.LogInformation("Ingest publication state reconciled {AuditEventType}", "ingest.repaired");
+                }
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
             catch
             {
@@ -19,29 +29,5 @@ public sealed class PublicationRepairWorker(PublicationOutbox outbox, Publicatio
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
         } while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-
-    private async Task ProcessAvailableAsync(CancellationToken cancellationToken)
-    {
-        var repaired = await outbox.ReconcileAsync(cancellationToken);
-        if (repaired > 0) { IngestTelemetry.Repairs.Add(repaired); logger.LogWarning("Requeued {RepairedIntentCount} stale publication intents", repaired); }
-        while (await outbox.ClaimAsync(cancellationToken) is { } intent)
-        {
-            try
-            {
-                var promoted = await promoter.PromoteAsync(intent, cancellationToken);
-                await outbox.MarkPromotedAsync(intent.Id, promoted, cancellationToken);
-                if (!await outbox.MarkPublishedAsync(intent.Id, cancellationToken)) throw new InvalidOperationException("publication_metadata_not_ready");
-                IngestTelemetry.VerifiedBytes.Add(promoted.Address.Length);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                IngestTelemetry.StorageFailures.Add(1);
-                try { await outbox.MarkFailedAsync(intent.Id, exception is InvalidDataException ? "checksum_mismatch" : "publication_failed", cancellationToken); }
-                catch { logger.LogError("Publication failure could not be persisted {AuditEventType}", "ingest.storage.failure"); return; }
-                logger.LogWarning("Publication intent {PublicationIntentId} failed and was retained for repair", intent.Id);
-            }
-        }
     }
 }

@@ -8,7 +8,7 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
 {
     public async Task InvokeAsync(HttpContext context)
     {
-        if (!HttpMethods.IsPost(context.Request.Method) && !HttpMethods.IsPatch(context.Request.Method) && !HttpMethods.IsDelete(context.Request.Method)) { await next(context); return; }
+        if (!HttpMethods.IsPost(context.Request.Method) && !HttpMethods.IsPut(context.Request.Method) && !HttpMethods.IsPatch(context.Request.Method) && !HttpMethods.IsDelete(context.Request.Method)) { await next(context); return; }
         if (!RequestContracts.HasIdempotencyKey(context)) { await RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "idempotency_key_required", "Idempotency key required").ExecuteAsync(context); return; }
         if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) { await next(context); return; }
         if (store is null) { await next(context); return; }
@@ -38,19 +38,22 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
             response.Position = 0;
             var text = await new StreamReader(response, Encoding.UTF8, leaveOpen: true).ReadToEndAsync(context.RequestAborted);
             var reissue = context.Items.ContainsKey("platform.idempotency.reissue");
-            await store.CompleteAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, context.Response.StatusCode, reissue ? "{}" : text, context.Response.ContentType ?? "application/json", reissue, context.RequestAborted);
+            if (context.Response.StatusCode >= 500)
+                await store.ReleaseAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, CancellationToken.None);
+            else
+                await store.CompleteAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, context.Response.StatusCode, reissue ? "{}" : text, context.Response.ContentType ?? "application/json", reissue, context.RequestAborted);
         }
         catch
         {
-            await store.ReleaseAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, context.RequestAborted);
+            await store.ReleaseAsync(ownerId, key, (Guid)context.Items["platform.idempotency.reservation"]!, CancellationToken.None);
             throw;
         }
         finally
         {
-            response.Position = 0;
-            await response.CopyToAsync(originalBody, context.RequestAborted);
             context.Response.Body = originalBody;
         }
+        response.Position = 0;
+        await response.CopyToAsync(originalBody, context.RequestAborted);
     }
 
     private static async Task<string> FingerprintAsync(HttpContext context)

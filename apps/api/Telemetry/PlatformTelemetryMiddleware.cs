@@ -16,7 +16,7 @@ public sealed class PlatformTelemetryMiddleware(
         using var activity = PlatformTelemetry.ActivitySource.StartActivity("http.request", ActivityKind.Server);
         activity?.SetTag("platform.operation_id", operationId);
         activity?.SetTag("http.request.method", context.Request.Method);
-        activity?.SetTag("url.path", context.Request.Path.Value);
+        activity?.SetTag("http.route", (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText);
 
         var started = Stopwatch.GetTimestamp();
         using (logger.BeginScope(new Dictionary<string, object?> { ["operationId"] = operationId }))
