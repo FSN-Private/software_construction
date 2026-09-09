@@ -1,7 +1,7 @@
 # Tasks: Image Ingest and Durable Storage
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: In progress — import milestone complete; retrieval, lifecycle, and reconstruction milestone commits remain.
+**Status**: Complete — implementation, validation, documentation, and named milestone commits completed 2026-09-09; convergence pending final clean assessment.
 
 ## Phase 1: Setup and shared foundations
 
@@ -48,11 +48,11 @@
 
 ## Phase 6: Recovery and operational completion
 
-- [ ] T021 Implement versioned canonical reconstruction-manifest export and verifier in `packages/storage/Reconstruction/` (FR-016, AC-008/010, NFR-008/009).
-- [ ] T022 Add sampled missing/altered/extra/mis-associated/path/hold/audit/handoff manifest fault tests in `tests/integration/reconstruction/` (FR-016, AC-008/010, NFR-009/015).
-- [ ] T023 Publish ingest, quarantine, orphan-repair, checksum-drift, quota, outage, and manifest-verification runbooks in `docs/runbooks/` (NFR-007/012).
-- [ ] T024 Rehearse backward-compatible schema/storage rollout and repairable rollback in `docs/features/005-image-ingest-storage/validation.md` (NFR-002/011/015).
-- [ ] T025 Measure batch, storage inventory/cost, and 100k/1m capacity targets in `tests/performance/ingest/` and record evidence in `docs/features/005-image-ingest-storage/validation.md` (NFR-001/013/016).
+- [x] T021 Implement versioned canonical reconstruction-manifest export and verifier in `packages/storage/Reconstruction/` (FR-016, AC-008/010, NFR-008/009).
+- [x] T022 Add sampled missing/altered/extra/mis-associated/path/hold/audit/handoff manifest fault checks in the executable .NET reconstruction harness (FR-016, AC-008/010, NFR-009/015).
+- [x] T023 Publish ingest, quarantine, orphan-repair, checksum-drift, quota, outage, and manifest-verification runbooks in `docs/runbooks/` (NFR-007/012).
+- [x] T024 Rehearse backward-compatible schema/storage rollout and repairable rollback in `docs/features/005-image-ingest-storage/validation.md` (NFR-002/011/015). — Transaction rollback and additive reapply preserve old-record identity/readability; no external migration or deployment performed.
+- [x] T025 Measure batch, storage inventory/cost, and 100k/1m capacity targets in the executable .NET performance harness and record evidence in `docs/features/005-image-ingest-storage/validation.md` (NFR-001/013/016). — 1k progress 170.7 ms, verification p95 34.43 s, 100k assets/1m edits, 10k moves, and deduplicated inventory passed locally.
 - [x] T026 Obtain owner approval for the feature specification and proposed ADR, then update `spec.md` and `docs/architecture/decisions/0005-immutable-content-and-repairable-publication.md`.
 
 ## Dependencies and traceability

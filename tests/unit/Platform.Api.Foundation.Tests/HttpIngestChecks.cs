@@ -9,9 +9,11 @@ using Npgsql;
 using Platform.Api.Contracts;
 using Platform.Api.Features.Ingest;
 using Platform.Api.Features.Lifecycle;
+using Platform.Api.Features.Reconstruction;
 using Platform.Api.Telemetry;
 using Platform.Contracts;
 using Platform.Storage;
+using Platform.Storage.Reconstruction;
 using static IngestChecks;
 
 internal static class HttpIngestChecks
@@ -22,7 +24,7 @@ internal static class HttpIngestChecks
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(db); builder.Services.AddSingleton(storage);
-        builder.Services.AddSingleton<ImportService>(); builder.Services.AddSingleton<AssetService>();
+        builder.Services.AddSingleton<ImportService>(); builder.Services.AddSingleton<AssetService>(); builder.Services.AddSingleton<ManifestService>();
         builder.Services.AddSingleton<TransferGrantIssuer>(); builder.Services.AddSingleton<IdempotencyStore>();
         builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>(); builder.Services.AddSingleton<OperationIdFactory>();
         await using var app = builder.Build();
@@ -35,7 +37,7 @@ internal static class HttpIngestChecks
             await next(context);
         });
         app.UseMiddleware<IdempotencyMiddleware>();
-        IngestEndpoints.Map(app); AssetEndpoints.Map(app);
+        IngestEndpoints.Map(app); AssetEndpoints.Map(app); ManifestEndpoints.Map(app);
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         var anonymous = await client.GetAsync($"/v1/import-batches/{Guid.NewGuid()}");

@@ -31,7 +31,8 @@ internal static class ReferenceBatchChecks
         listener.InstrumentPublished = (instrument, meter) => { if (instrument.Name == "ingest.verification.duration") meter.EnableMeasurementEvents(instrument); };
         listener.SetMeasurementEventCallback<double>((_, _, _, _) => elapsed.Add(timer.Elapsed.TotalSeconds));
         listener.Start(); timer.Start();
-        await new BatchProcessor(db, storage).ProcessNextAsync(default);
+        var processor = new BatchProcessor(db, storage);
+        while (await processor.ProcessNextAsync(default)) { }
         var outcome = await imports.StatusAsync("reference-owner", batch.Id, default);
         Check(outcome.Items.Count == 1000 && outcome.Items.All(i => i.State == "active"), "1000-item reference batch has no silent failures");
         var p95 = elapsed.Order().ElementAt(949);
