@@ -14,6 +14,10 @@ public static class AssetEndpoints
         group.MapGet("/assets/{id:guid}/content", (Guid id, HttpContext c, IServiceProvider s, CancellationToken ct) => Download(id, false, c, s, ct));
         group.MapGet("/edits/{id:guid}/content", (Guid id, HttpContext c, IServiceProvider s, CancellationToken ct) => Download(id, true, c, s, ct));
         group.MapPatch("/assets/{id:guid}/path", (Guid id, PathRequest request, HttpContext c, IServiceProvider s, CancellationToken ct) => Change(id, false, "move", request.Path, c, s, ct));
+        group.MapDelete("/assets/{id:guid}", (Guid id, HttpContext c, IServiceProvider s, CancellationToken ct) => Change(id, false, "delete", null, c, s, ct));
+        group.MapDelete("/edits/{id:guid}", (Guid id, HttpContext c, IServiceProvider s, CancellationToken ct) => Change(id, true, "delete", null, c, s, ct));
+        group.MapPost("/assets/{id:guid}/restore", (Guid id, RestoreRequest request, HttpContext c, IServiceProvider s, CancellationToken ct) => Change(id, false, "restore", request.Path, c, s, ct));
+        group.MapPost("/edits/{id:guid}/restore", (Guid id, HttpContext c, IServiceProvider s, CancellationToken ct) => Change(id, true, "restore", null, c, s, ct));
     }
 
     private static AssetService Service(IServiceProvider services) => services.GetService<AssetService>() ?? throw new IngestException("ingest_unavailable", 503);

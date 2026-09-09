@@ -77,6 +77,7 @@ internal static class IngestChecks
         }
         await FaultChecksAsync(db, s3, bucket, imports, processor, storage, grants);
         await RetrievalPathChecks.RunAsync(db, storage);
+        await LifecycleChecks.RunAsync(db, storage);
         await HttpIngestChecks.RunAsync(db, storage);
         await CapacityChecks.RunAsync(db, storage);
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { idToken, platformConfig } from './platform-config';
+import { Library } from './Library';
 
 type Status = {
   ready?: string;
@@ -10,6 +11,7 @@ type Status = {
 
 export function App() {
   const config = platformConfig();
+  const [token] = useState(idToken);
   const [status, setStatus] = useState<Status>({
     message: config
       ? 'Sign in to check the private service status.'
@@ -17,7 +19,6 @@ export function App() {
   });
 
   useEffect(() => {
-    const token = idToken();
     if (!config || !token) return;
     window.history.replaceState({}, document.title, window.location.pathname);
     const headers = {
@@ -54,7 +55,7 @@ export function App() {
               : 'Authenticated service status could not be verified.',
         }),
       );
-  }, [config]);
+  }, [config, token]);
 
   function signIn() {
     if (!config) return;
@@ -102,6 +103,9 @@ export function App() {
           </dd>
         </dl>
       </section>
+      {config && token && status.ready && (
+        <Library baseUrl={config.apiBaseUrl} token={token} />
+      )}
     </main>
   );
 }

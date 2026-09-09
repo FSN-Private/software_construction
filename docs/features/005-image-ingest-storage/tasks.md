@@ -42,9 +42,9 @@
 
 **Independent test**: soft-delete, verify active exclusion and deadline, restore at day 90, and prove a hold/destination conflict protects bytes and identity.
 
-- [ ] T018 [P] [US3] Implement lifecycle state transitions, 90-day deadline, active-list exclusion, and hold/reference evaluation in `apps/api/Features/Lifecycle/` (FR-012/013/015, AC-006, NFR-014/015).
-- [ ] T019 [US3] Implement restore with identity/association/path-history preservation and explicit alternate-path resolution in `apps/api/Features/Lifecycle/` (FR-011/012/014, AC-006, NFR-005/010).
-- [ ] T020 [US3] Add day-90, protected-reference, concurrent-operation, and audit/redaction tests in `tests/integration/lifecycle/` (FR-012–015, AC-006, NFR-004/009/015).
+- [x] T018 [P] [US3] Implement lifecycle state transitions, 90-day deadline, active-list exclusion, and hold/reference evaluation in `apps/api/Features/Lifecycle/` (FR-012/013/015, AC-006, NFR-014/015).
+- [x] T019 [US3] Implement restore with identity/association/path-history preservation and explicit alternate-path resolution in `apps/api/Features/Lifecycle/` (FR-011/012/014, AC-006, NFR-005/010).
+- [x] T020 [US3] Add day-90, protected-reference, concurrent-operation, and audit/redaction checks in the executable .NET integration harness plus accessible owner controls in `apps/web/` (FR-012–015, AC-006, NFR-004/005/009/015). — Tests cover the inclusive stored deadline, expiry, stale versions, holds, shared content, destination conflicts, and edit gating.
 
 ## Phase 6: Recovery and operational completion
 
