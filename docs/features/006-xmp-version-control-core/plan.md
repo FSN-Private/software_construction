@@ -1,7 +1,7 @@
 # Implementation Plan: XMP Version-Control Core
 
 **Branch**: `feature/006-xmp-version-control-core` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
-**Status**: Proposed — pending approval
+**Status**: Approved — 2026-09-10
 
 ## Summary
 
@@ -24,9 +24,9 @@ The format/invariants are in proposed [ADR-0006](../../architecture/decisions/00
 ## Constitution Check
 
 - **PASS**: core contracts only; sync, semantic merge, rendering, and UI remain later features.
-- **PASS**: current branch is correct, diverges from `master`, and no reconciliation occurs.
+- **PASS**: current branch is correct; the owner authorized merging the freshly fetched `origin/master` on 2026-09-10 so feature-004/005 dependencies are present without rewriting history.
 - **PASS**: immutable manifests, CAS, idempotency, audit/redaction, and lifecycle holds protect history.
-- **GATE**: implementation requires feature-004/005 contracts. No migration/deployment is authorized.
+- **PASS**: feature-004/005 contracts are present. Production migration/deployment remains outside this implementation request.
 
 ## Design
 

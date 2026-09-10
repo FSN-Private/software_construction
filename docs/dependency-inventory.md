@@ -26,3 +26,7 @@ Review date: 2026-09-06. Owner: platform maintainer. Scope: Feature 004 deployab
 | Feature 005 integration images | Docker Official Image `postgres:18.1-alpine@sha256:aa6eb304ddb6dd26df23d05db4e5cb05af8951cda3e0dc57731b771e0ef4ab29` and official `minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; digests were verified against Docker Hub before pinning. They are test-only, require no credentials beyond the explicit test values, and must be re-reviewed for CVEs before an image upgrade. |
 
 No unresolved high/critical finding is accepted for the npm/NuGet inputs covered by recorded audits. Before deployment, revalidate action provenance/maintenance, package advisories and patches, image advisories/digests, licenses, and SBOM/provenance. Remove unused inputs and review every upgrade narrowly.
+
+## Feature 006 graph and manifest implementation
+
+Feature 006 adds no executable dependency. Canonical JSON uses the .NET 10 `System.Text.Json` runtime library, commit identities use `System.Security.Cryptography.SHA256`, graph traversal uses generic collections, and persistence reuses the already locked and reviewed Npgsql 10.0.3 package. This avoids a second serializer or graph library, keeps manifest encoding under direct compatibility fixtures, and adds no license, advisory, install-script, or transitive-package exposure (NFR-003, NFR-014). Reconsider only if measured graph workloads cannot meet NFR-001/NFR-016 with the PostgreSQL indexes and bounded traversal implementation.

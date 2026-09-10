@@ -7,6 +7,8 @@ using Npgsql;
 using Platform.Storage;
 using Amazon.S3;
 using Platform.Api.Features.Ingest;
+using Platform.Api.Features.VersionControl;
+using Platform.Api.Features.VersionControl.Integrity;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +34,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Storage.Reconstruction.ManifestService>();
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
+    builder.Services.AddSingleton<IntegrityService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
@@ -53,6 +56,7 @@ app.UseMiddleware<IdempotencyMiddleware>();
 IngestEndpoints.Map(app);
 Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
+VersionControlEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>

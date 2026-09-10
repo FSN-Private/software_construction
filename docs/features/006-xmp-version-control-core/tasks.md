@@ -1,16 +1,16 @@
 # Tasks: XMP Version-Control Core
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/)
-**Status**: Proposed — execute after approval and feature-004/005 contract availability.
+**Status**: Approved — implementation authorized 2026-09-10; feature-004/005 contracts available.
 
 ## Phase 1: Foundations
 
-- [ ] T001 Create version-control domain, persistence, API, projection, and graph-test layout in `apps/api/Features/VersionControl/` and `tests/version-control/` (FR-020, NFR-008/009).
-- [ ] T002 [P] Define canonical manifest encoding/digest fixtures and compatible reader/writer versions in `packages/contracts/version-control/` (FR-004/020, NFR-006/011).
-- [ ] T003 [P] Add locked graph/serialization dependencies and audit source/license/advisory evidence in `docs/dependency-inventory.md` (NFR-003/014).
-- [ ] T004 Create migrations for working changes, staging, commits/entries, refs/tags, reflogs, visibility, projections, divergence, and idempotency in `apps/api/Database/Migrations/` (FR-002–020, NFR-011/016).
-- [ ] T005 Implement feature-005 authoritative-content/identity/hold adapter and feature-004 error/audit/redaction adapter in `apps/api/Features/VersionControl/Adapters/` (FR-001/019/022, NFR-003/004).
-- [ ] T006 Implement DAG integrity, parent/scope/cycle checks, manifest verification, and ref quarantine in `apps/api/Features/VersionControl/Integrity/` (FR-018, AC-008, NFR-007/015).
+- [x] T001 Create version-control domain, persistence, API, projection, and graph-test layout in `apps/api/Features/VersionControl/` and `tests/version-control/` (FR-020, NFR-008/009). — Domain/contracts, PostgreSQL persistence schema, integrity API, and executable graph-test layout build cleanly.
+- [x] T002 [P] Define canonical manifest encoding/digest fixtures and compatible reader/writer versions in `packages/contracts/version-control/` (FR-004/020, NFR-006/011). — Version 1 uses fixed-order UTF-8 JSON and a locked digest fixture; unknown readers fail explicitly.
+- [x] T003 [P] Add locked graph/serialization dependencies and audit source/license/advisory evidence in `docs/dependency-inventory.md` (NFR-003/014). — No package added: .NET JSON/SHA-256/collections and the already-reviewed Npgsql package cover the work.
+- [x] T004 Create migrations for working changes, staging, commits/entries, refs/tags, reflogs, visibility, projections, divergence, and idempotency in `apps/api/Database/Migrations/` (FR-002–020, NFR-011/016). — Expand-only migration is embedded in the existing checksum-verified migrator.
+- [x] T005 Implement feature-005 authoritative-content/identity/hold adapter and feature-004 error/audit/redaction adapter in `apps/api/Features/VersionControl/Adapters/` (FR-001/019/022, NFR-003/004). — Adapter validates owner-scoped authoritative identities and publishes payload-free holds/audits.
+- [x] T006 Implement DAG integrity, parent/scope/cycle checks, manifest verification, and ref quarantine in `apps/api/Features/VersionControl/Integrity/` (FR-018, AC-008, NFR-007/015). — Integrity endpoint detects digest/manifest/parent/scope/cycle faults, records a redacted metric, and quarantines affected library refs.
 
 ## Phase 2: User Story 1 — Stage and commit coherent XMP changes (P1)
 
@@ -45,7 +45,7 @@
 - [ ] T020 Add graph corruption, rebuild, latency, million-entry capacity, locale, authorization, and redaction tests in `tests/version-control/verification/` (FR-018–020, AC-008, NFR-001/003/004/009/010/016).
 - [ ] T021 Publish stale-ref, divergence, corruption, rebuild, reflog expiry/recovery, protected-ref, and cost runbooks in `docs/runbooks/` (NFR-007/012/013/014).
 - [ ] T022 Rehearse manifest/schema compatibility migration and rollback/forward-recovery constraints in `docs/features/006-xmp-version-control-core/validation.md` (NFR-011/015).
-- [ ] T023 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0006-content-addressed-xmp-commit-dag.md`.
+- [x] T023 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0006-content-addressed-xmp-commit-dag.md`. — Approved by the owner on 2026-09-10 with authorization to run the feature through completion.
 
 ## Traceability
 
