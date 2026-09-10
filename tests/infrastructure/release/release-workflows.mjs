@@ -60,7 +60,7 @@ assert.ok(!workflows['rollback.yml'].includes('"${{ inputs.'), 'Workflow-dispatc
 function assertServiceTask(actual, expected) {
   return spawnSync(
     bash,
-    ['-c', 'aws() { printf "%s\\n" "$MOCK_ACTUAL_TASK"; }; export -f aws; bash scripts/assert-ecs-service-task.sh cluster service "$MOCK_EXPECTED_TASK"'],
+    ['-c', 'set -Ee; rollback() { printf "paired rollback activated\\n"; }; trap rollback ERR; aws() { printf "%s\\n" "$MOCK_ACTUAL_TASK"; }; export -f aws; bash scripts/assert-ecs-service-task.sh cluster service "$MOCK_EXPECTED_TASK"'],
     { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, MOCK_ACTUAL_TASK: actual, MOCK_EXPECTED_TASK: expected } }
   );
 }
@@ -70,4 +70,5 @@ assert.equal(assertServiceTask(candidateTask, candidateTask).status, 0, 'The exa
 const circuitBreakerReversion = assertServiceTask('arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:7', candidateTask);
 assert.notEqual(circuitBreakerReversion.status, 0, 'A service stabilized on the prior task definition must fail closed.');
 assert.match(circuitBreakerReversion.stderr, /unexpected task definition/, 'A circuit-breaker reversion must report the binding failure.');
+assert.match(circuitBreakerReversion.stdout, /paired rollback activated/, 'A post-stability binding failure must activate the parent rollback trap.');
 console.log('Release workflow contract tests passed.');
