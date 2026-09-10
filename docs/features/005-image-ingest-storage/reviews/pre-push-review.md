@@ -327,3 +327,43 @@ No valid unresolved blocking finding was identified. No evidence path can report
 The reviewer explicitly agrees that no valid unresolved blocking finding remains in `0749a52c575d7571473f159f089c0ce1bdcbb6b1..e03c3c4eafe6c35d2e14de4cc442eadb48a84d34`.
 
 **Final gate result: PASS.** This review authorizes no push, merge, deployment, migration, or other remote mutation.
+
+## Release evidence plan-compatibility review — 2026-09-10
+
+**Status**: blocked after Round 1; T040 remediation awaiting final follow-up review
+
+**Reviewer model**: gpt-5.6-sol | **Destination**: `origin/master` | **Base**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64` | **Initial reviewed head**: `c8116c9807f0bbe30c5231c7b91df003acef3400` | **Initial range**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..c8116c9807f0bbe30c5231c7b91df003acef3400`
+
+### Round 1 — independent assessment
+
+The reviewer received failed GitHub Actions run `34477947247`, the exact one-commit fix, relevant Feature 004/005 requirements and tasks, workflow/scripts/tests/documentation, the private-plan constraint, and local validation. It made no repository or remote changes.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| The local provenance statement claimed GitHub's published workflow build type without implementing that schema, and repository identity was only self-consistent. | Blocking / Medium | Feature 004 FR-005, AC-003/008, NFR-016, T017; Feature 005 T040, NFR-011/014/016 | The generator used `https://actions.github.io/buildtypes/workflow/v1` with project-specific external parameters; the verifier did not require the build type or receive a trusted expected repository. A recomputed manifest could substitute a consistent repository identity and still pass local verification. | **Valid and fixed in `5d05173`.** The statement now uses the documented project-owned build type in `docs/contracts/release-provenance-v1.md`. Current-evidence verification requires `GITHUB_REPOSITORY`, checks the exact build-type URI, and compares external parameters, dependency URI, builder ID, and invocation ID against that trusted value. Recomputed-checksum tests reject build-type and consistent repository substitution. |
+
+The reviewer found no blocking issue in removal of hosted attestation and write/OIDC permissions, five-artifact/worker enforcement, exact source/release-run checks, artifact-subject matching, read-only evidence permissions, genuine four-artifact rollback compatibility, or the requirement for a fresh protected-default remote run. It recorded the weaker assurance of an unsigned local statement as non-blocking under the explicit plan constraint because documentation does not claim GitHub/Sigstore certification.
+
+**Round 1 gate result: BLOCKED.** The valid build-type and trusted-repository finding required remediation and follow-up.
+
+### Round 2 — pending final follow-up
+
+**Proposed reviewer model**: gpt-5.6-sol | **Base**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64` | **Head**: `5d051739ba6d42dc2516ed6ec591b39176b81870` | **Complete revised range**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..5d051739ba6d42dc2516ed6ec591b39176b81870` | **Pending push scope**: two local commits, 0 behind / 2 ahead of `origin/master`
+
+Latest validation passed: `npm run test:release-evidence`, `npm run test:reliability`, `npm run test:ci-contract`, `npm run test:package-definitions`, workflow YAML parsing, `npm run test:backend`, `npm run validate:security`, and `git diff --check`. The initial sandboxed backend attempt failed only because NuGet advisory lookup had no network; the normal-network retry passed.
+
+**Round 2 gate result: pending independent agreement.**
+
+### Round 2 — independent final assessment
+
+**Reviewer model**: gpt-5.6-sol | **Review date**: 2026-09-10 | **Destination**: `origin/master` | **Base**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64` | **Reviewed head**: `5d051739ba6d42dc2516ed6ec591b39176b81870` | **Complete reviewed range**: `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..5d051739ba6d42dc2516ed6ec591b39176b81870` | **Pending push scope**: two local commits, 0 behind / 2 ahead of `origin/master`
+
+The independent reviewer inspected the complete revised range and the pending Round 2 record without changing files, commits, containers, or remotes.
+
+The reviewer accepts the Round 1 blocking disposition as valid and fixed. The generated statement now identifies the documented project-owned build type at `docs/contracts/release-provenance-v1.md` rather than claiming GitHub's incompatible workflow build type. Current-evidence verification requires the repository supplied by trusted GitHub workflow context and checks the exact build-type URI, external repository, dependency URI, builder identity, invocation identity, source revision, triggering CI run, release run when supplied, validation statement, and every artifact subject. Non-production and production pass the trusted repository and selected release run; rollback passes the trusted repository. Recomputed-checksum regressions reject both build-type substitution and a consistent repository/builder/dependency/invocation substitution.
+
+No valid unresolved blocking finding was identified. No blocking issue was found in removal of the unavailable hosted-attestation action and its write/OIDC permissions, five-artifact worker enforcement, genuine four-artifact legacy verification compatibility, workflow source/run binding, read-only evidence permissions, documentation claims, or test wiring. The locally generated statement remains weaker than a GitHub-hosted signed Sigstore attestation, but this remains non-blocking under the explicit private-plan constraint and is accurately documented without a certification claim. A fresh protected-default workflow run remains the required remote confirmation and does not block this proposed push.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..5d051739ba6d42dc2516ed6ec591b39176b81870`.
+
+**Final gate result: PASS.** This review authorizes no push, merge, deployment, migration, or other remote mutation.
