@@ -296,3 +296,34 @@ The reviewer accepted the Round 1 remediation for paired production promotion/ro
 | The review record described only the prior three-commit range. | Blocking / Medium | Pre-push policy | Round 1 ended at `f53b2dc`, while the revised range contained `6eeb1e1`. | **Valid; fixed by this preserved round.** Round 1 remains intact and this section records the exact four-commit Round 2 range and all dispositions. |
 
 **Round 2 gate result: BLOCKED.** T038/T039 remediation and this pending record require validation and independent review of the complete revised range before PASS.
+
+### Round 3 — pending final follow-up
+
+**Proposed reviewer model**: gpt-5.6-sol | **Base**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1` | **Head**: `e03c3c4eafe6c35d2e14de4cc442eadb48a84d34` | **Complete revised range**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1..e03c3c4eafe6c35d2e14de4cc442eadb48a84d34` | **Pending push scope**: six local commits, 0 behind / 6 ahead of `origin/master`; no push, deployment, migration, or other remote mutation
+
+The final reviewer is asked to inspect this pending record and the complete revised range, explicitly reassess every Round 1 and Round 2 blocking disposition, and identify any new significant blocking issue. In particular, it must verify that T038 detects ECS circuit-breaker reversion in deployment and standalone rollback before smoke/evidence success, and that T039's inner deadlines activate recovery with adequate job time remaining.
+
+Latest remediation validation passed: `npm run test:release-evidence`, `npm run test:reliability`, `npm run test:package-definitions`, `npm run test:ingest-smoke-script`, Bash syntax checks for all three release scripts, YAML parsing for all four release workflows, and `git diff --check`. The release-preparation API/worker builds, worker publish, backend suite, Windows packaging/lock stability, and security validation remain passing from the preceding commits; T038/T039 do not change application or package source. Docker/PostgreSQL runtime validation remains assigned to remote CI because those local services are unavailable.
+
+**Round 3 gate result: pending independent agreement.**
+
+### Round 3 — independent final assessment
+
+**Reviewer model**: gpt-5.6-sol | **Review date**: 2026-09-10 | **Destination**: `origin/master` | **Base**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1` | **Reviewed head**: `e03c3c4eafe6c35d2e14de4cc442eadb48a84d34` | **Complete reviewed range**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1..e03c3c4eafe6c35d2e14de4cc442eadb48a84d34` | **Pending push scope**: six local commits, 0 behind / 6 ahead of `origin/master`
+
+The independent reviewer inspected the complete revised range and the pending Round 3 review record without changing files, commits, containers, or remotes.
+
+The reviewer explicitly accepts every prior disposition:
+
+- The Round 1 API-only production finding is fixed. Non-production and production require worker evidence and use the same migration, paired API/worker deployment, health, smoke, and rollback path.
+- The Round 1 partial-rollout finding is fixed. Paired rollback is active before the first service mutation, ambiguous update failures fail closed, and T039 enforces deployment and standalone-rollback deadlines inside larger job windows with at least 20 minutes reserved for recovery. Signal handling converts termination to failure and invokes the active recovery trap.
+- The Round 1 exact-range record finding is fixed. All rounds are preserved and this final assessment covers the exact six-commit range through `e03c3c4`.
+- The non-blocking smoke note is fixed. The smoke proves deletion denies download, restored bytes retain their checksum, and the reconstruction manifest contains the smoke asset without relying on a paginated asset listing.
+- Both Round 2 false-success findings are fixed. After ECS reports stability, deployment requires the API and worker services to name the exact candidate task-definition ARNs before health, smoke, or evidence completion. Standalone rollback similarly requires both exact requested task definitions before it can report success. The mocked circuit-breaker regression proves a prior-task response fails and activates the parent rollback trap.
+- The Round 2 recovery-reserve finding is fixed. Deployment is capped at 2,100 seconds inside a 60-minute job; standalone rollback is capped at 1,200 seconds inside a 40-minute job. Contract checks enforce both budgets.
+
+No valid unresolved blocking finding was identified. No evidence path can report successful deployment or rollback after the inspected ECS task-definition mismatch, health failure, smoke failure, or inner deadline failure. No blocking issue was found in Windows lock stability, worker container provenance and non-root execution, transactional/checksum-pinned migration behavior, workflow syntax/source binding/permissions, paired artifact and promotion evidence, secret handling, strengthened smoke behavior, documentation, or test wiring. Docker/PostgreSQL runtime execution remains a required remote CI check and does not itself block this proposed push.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `0749a52c575d7571473f159f089c0ce1bdcbb6b1..e03c3c4eafe6c35d2e14de4cc442eadb48a84d34`.
+
+**Final gate result: PASS.** This review authorizes no push, merge, deployment, migration, or other remote mutation.
