@@ -25,16 +25,16 @@
 
 **Independent test**: divergent branches/tags/compare/revert work; stale heads preserve both sides and default rewrite fails.
 
-- [ ] T011 [P] [US2] Implement normalized branch/tag CRUD, protection, exact resolution, and audit in `apps/api/Features/VersionControl/Refs/` (FR-008/009/013/019, AC-005). — IN PROGRESS
-- [ ] T012 [P] [US2] Implement compare, divergence, image projection, and whole-library traversal APIs in `apps/api/Features/VersionControl/Query/` (FR-007/010/011/020, AC-004/009, NFR-001/016). — IN PROGRESS
-- [ ] T013 [US2] Implement restore/revert as new reachable commit and dirty-checkout block/preserve/discard contract in `apps/api/Features/VersionControl/Operations/` (FR-012/021, AC-010). — IN PROGRESS
+- [x] T011 [P] [US2] Implement normalized branch/tag CRUD, protection, exact resolution, and audit in `apps/api/Features/VersionControl/Refs/` (FR-008/009/013/019, AC-005). — Locale-invariant refs support protected branches, immutable tags, versioned mutation, exact resolution, reflog evidence, and redacted audit.
+- [x] T012 [P] [US2] Implement compare, divergence, image projection, and whole-library traversal APIs in `apps/api/Features/VersionControl/Query/` (FR-007/010/011/020, AC-004/009, NFR-001/016). — Batched graph loading exposes exact base/ours/theirs state and paged whole-library or image-connected lineage.
+- [x] T013 [US2] Implement restore/revert as new reachable commit and dirty-checkout block/preserve/discard contract in `apps/api/Features/VersionControl/Operations/` (FR-012/021, AC-010). — Restore/revert publishes new commits; checkout uses client-scoped CAS and requires block, stash, or confirmed discard.
 - [ ] T014 [US2] Add concurrent CAS, tag/ref naming, protected-default, compare/divergence, checkout, and projection tests in `tests/version-control/refs/` (FR-007–013/021, AC-002/004/005/009/010). — IN PROGRESS
 
 ## Phase 4: User Story 3 — Clean and recover history presentation (P3)
 
 **Independent test**: a confirmed non-default rewrite moves one ref, preserves hashes, supports day-90 recovery, and hide/unhide changes only presentation.
 
-- [ ] T015 [P] [US3] Implement rewrite impact preview, confirmation, ref-only move, immutable reflog, and recovery references in `apps/api/Features/VersionControl/Rewrite/` (FR-014–016/019/022, AC-005/006). — IN PROGRESS
+- [x] T015 [P] [US3] Implement rewrite impact preview, confirmation, ref-only move, immutable reflog, and recovery references in `apps/api/Features/VersionControl/Rewrite/` (FR-014–016/019/022, AC-005/006). — Preview-bound non-default rewrites move one ref, replace its projection, retain displaced ancestry, and create exact 90-day recovery evidence.
 - [ ] T016 [P] [US3] Implement reversible visibility metadata and show-hidden projections in `apps/api/Features/VersionControl/Visibility/` (FR-017/020/022, AC-007). — IN PROGRESS
 - [ ] T017 [US3] Implement resolver-supplied two-parent merge publication with expected-target CAS in `apps/api/Features/VersionControl/MergePublishing/` (FR-023, AC-012). — IN PROGRESS
 - [ ] T018 [US3] Add rewrite/recovery/hold expiry, hide/unhide, reachable-ref, and resolved-merge atomicity tests in `tests/version-control/recovery/` (FR-014–017/022/023, AC-005–007/011/012). — IN PROGRESS
