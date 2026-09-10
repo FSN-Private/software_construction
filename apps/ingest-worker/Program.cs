@@ -10,6 +10,15 @@ if (args is ["--verify-manifest", var trusted, var recovered, var objects])
     return;
 }
 
+if (args is ["--migrate"])
+{
+    var migrationBuilder = Host.CreateApplicationBuilder(args);
+    var migrationConnection = migrationBuilder.Configuration.GetConnectionString("Ingest") ?? throw new InvalidOperationException("ConnectionStrings:Ingest is required.");
+    await using var migrationDataSource = NpgsqlDataSource.Create(migrationConnection);
+    await DatabaseMigrator.ApplyAsync(migrationDataSource, CancellationToken.None);
+    return;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();

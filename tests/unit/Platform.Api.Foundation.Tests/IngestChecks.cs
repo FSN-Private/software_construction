@@ -36,6 +36,15 @@ internal static class IngestChecks
         var schema = "ingest_test_" + Guid.NewGuid().ToString("N");
         const string connectionString = "Host=127.0.0.1;Port=54329;Username=ingest;Password=ingest-test-only;Database=ingest;Include Error Detail=false";
         await using var admin = NpgsqlDataSource.Create(connectionString);
+        var commandSchema = "ingest_migration_" + Guid.NewGuid().ToString("N");
+        await using (var create = admin.CreateCommand($"CREATE SCHEMA {commandSchema}")) await create.ExecuteNonQueryAsync();
+        await using (var migrationDb = NpgsqlDataSource.Create(connectionString + ";Search Path=" + commandSchema))
+        {
+            await DatabaseMigrator.ApplyAsync(migrationDb, default);
+            await DatabaseMigrator.ApplyAsync(migrationDb, default);
+            await using var count = migrationDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
+            Check((long)(await count.ExecuteScalarAsync())! == 2, "Migration command applies each embedded release migration exactly once");
+        }
         await using (var create = admin.CreateCommand($"CREATE SCHEMA {schema}")) await create.ExecuteNonQueryAsync();
         await using var db = NpgsqlDataSource.Create(connectionString + ";Search Path=" + schema);
         await MigrationChecks.ApplyAsync(db);
