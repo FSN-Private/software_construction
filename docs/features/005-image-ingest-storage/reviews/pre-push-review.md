@@ -255,7 +255,7 @@ The independent GPT-5.5 reviewer explicitly states that no valid unresolved bloc
 
 ## Release follow-up pre-push review — 2026-09-10
 
-**Status**: blocked after Round 1; remediation awaiting follow-up review
+**Status**: blocked after Round 2; T038/T039 remediation awaiting final follow-up review
 
 **Reviewer model**: gpt-5.6-sol
 
@@ -281,3 +281,18 @@ The independent GPT-5.5 reviewer explicitly states that no valid unresolved bloc
 **No blocking issue found**: the reviewer found the exact initial commit scope clean; the Windows lock target stable; worker base/action pins and non-root runtime sound; clean-database migration transaction, advisory lock, and checksum behavior sound; workflow source binding and token permissions sound; legacy evidence verification compatible; and smoke output private. Docker/PostgreSQL runtime proof remains assigned to required remote CI and did not itself block the proposed push.
 
 **Round 1 gate result: BLOCKED.** The revised exact range, validation, dispositions, and pending record require independent follow-up.
+
+### Round 2 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-sol | **Reviewed base**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1` | **Reviewed head**: `6eeb1e115fa91b97fa83a13c60872a4ac790bf5f` | **Reviewed range**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1..6eeb1e115fa91b97fa83a13c60872a4ac790bf5f` (`a189b1f`, `ba7f2ee`, `f53b2dc`, `6eeb1e1`)
+
+The reviewer accepted the Round 1 remediation for paired production promotion/rollback, rollback activation before the first service update, and the stronger lifecycle/manifest smoke. It found no blocking issue in Windows lock stability, worker provenance and non-root packaging, transactional/checksum-pinned migration behavior, workflow identity and permissions, evidence compatibility, secret handling, or the unavailable local Docker/PostgreSQL checks assigned to remote CI.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| Deployment evidence was not bound to the task definitions actually running after ECS stability. | Blocking / High | T036/T037; NFR-002/011/012/015 | ECS circuit-breaker rollback could stabilize both services on a prior healthy release, pass smoke there, and produce evidence claiming the candidate pair ran. | **Valid; fixed by T038.** Both services are re-read after the stability waiter and must exactly match the candidate API/worker task-definition ARNs before health, smoke, or evidence completion. A mocked prior-task response fails closed. |
+| Standalone rollback had the same false-success path. | Blocking / High | T036; NFR-002/011/012/015 | A failed target rollback could revert to the current release, pass health there, and be recorded as successful. | **Valid; fixed by T038.** The standalone path now uses a dedicated script and verifies both requested task-definition ARNs after stability before smoke or evidence generation. |
+| The workflow timeout did not guarantee enough time for recovery. | Blocking / Medium | T037; NFR-002/012/015 | Pre-mutation image and AWS operations could consume the job window; a later runner timeout could terminate the paired restore waiter. | **Valid; fixed by T039.** Deployment is capped at 35 minutes inside a 60-minute job; standalone rollback is capped at 20 minutes inside a 40-minute job. `TERM` reaches the active script trap, leaving at least 20 raw runner minutes beyond each inner deadline. Contract checks enforce the budgets. |
+| The review record described only the prior three-commit range. | Blocking / Medium | Pre-push policy | Round 1 ended at `f53b2dc`, while the revised range contained `6eeb1e1`. | **Valid; fixed by this preserved round.** Round 1 remains intact and this section records the exact four-commit Round 2 range and all dispositions. |
+
+**Round 2 gate result: BLOCKED.** T038/T039 remediation and this pending record require validation and independent review of the complete revised range before PASS.

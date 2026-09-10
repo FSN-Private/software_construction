@@ -5,6 +5,8 @@ const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
 const deploy = readFileSync('.github/workflows/deploy-nonprod.yml', 'utf8');
 const release = readFileSync('.github/workflows/release.yml', 'utf8');
 const rollback = readFileSync('.github/workflows/rollback.yml', 'utf8');
+const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 
 function concurrencyGroup(workflow) {
   return workflow.match(/concurrency:\r?\n\s+group:\s+([^\r\n]+)/)?.[1].trim();
@@ -53,10 +55,14 @@ assert.equal(
   concurrencyGroup(rollback),
   'Promotion and rollback must share one production concurrency group.'
 );
-assert.match(readFileSync('scripts/deploy-ecs-release.sh', 'utf8'), /PREVIOUS_API_TASK/, 'Promotion must preserve paired rollback targets.');
+assert.match(deployScript, /PREVIOUS_API_TASK/, 'Promotion must preserve paired rollback targets.');
+assert.match(deployScript, /assert-ecs-service-task\.sh "\$ECS_CLUSTER" "\$ECS_SERVICE" "\$API_TASK_ARN"/, 'Promotion must reject ECS circuit-breaker reversion of the API.');
+assert.match(deployScript, /assert-ecs-service-task\.sh "\$ECS_CLUSTER" "\$WORKER_SERVICE" "\$WORKER_TASK_ARN"/, 'Promotion must reject ECS circuit-breaker reversion of the worker.');
 assert.match(release, /compatibility\.rollbackAllowed/, 'Promotion must refuse incompatible rollback state.');
 assert.match(rollback, /production-promotion-evidence/, 'Rollback must bind to retained promotion evidence.');
 assert.doesNotMatch(rollback, /docker build/, 'Rollback must not rebuild an artifact.');
+assert.match(rollbackScript, /assert-ecs-service-task\.sh "\$ECS_CLUSTER" "\$ECS_SERVICE" "\$COMPATIBLE_TASK_DEFINITION"/, 'Rollback must reject ECS reversion of the API target.');
+assert.match(rollbackScript, /assert-ecs-service-task\.sh "\$ECS_CLUSTER" "\$WORKER_SERVICE" "\$COMPATIBLE_WORKER_TASK_DEFINITION"/, 'Rollback must reject ECS reversion of the worker target.');
 
 const ciRuns = [];
 scheduleWorkflow(ciRuns, {
@@ -90,7 +96,13 @@ assert.equal(
 );
 
 const worstDeliveryTimeout = Math.max(...timeoutMinutes(deploy), ...timeoutMinutes(release), ...timeoutMinutes(rollback));
-assert.ok(worstDeliveryTimeout <= 45, 'Coordinated delivery must retain a bounded runner-loss window with rollback margin.');
+assert.ok(worstDeliveryTimeout <= 60, 'Coordinated delivery must retain a bounded runner-loss window.');
+assert.match(deploy, /timeout --foreground 2100 bash scripts\/deploy-ecs-release\.sh/, 'Non-production must terminate deployment with recovery time left.');
+assert.match(release, /timeout --foreground 2100 bash scripts\/deploy-ecs-release\.sh/, 'Production promotion must terminate deployment with recovery time left.');
+assert.match(rollback, /timeout --foreground 1200 bash scripts\/rollback-ecs-release\.sh/, 'Standalone rollback must terminate its target attempt with restore time left.');
+assert.ok(Math.max(...timeoutMinutes(deploy)) * 60 - 2100 >= 1200, 'Non-production must reserve at least 20 runner minutes beyond its deployment deadline.');
+assert.ok(Math.max(...timeoutMinutes(release)) * 60 - 2100 >= 1200, 'Production must reserve at least 20 runner minutes beyond its deployment deadline.');
+assert.ok(Math.max(...timeoutMinutes(rollback)) * 60 - 1200 >= 1200, 'Standalone rollback must reserve at least 20 runner minutes to restore the captured pair.');
 
 const manifest = {
   sourceRevision: '0123456789abcdef0123456789abcdef01234567',

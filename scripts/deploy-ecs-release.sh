@@ -47,7 +47,8 @@ jq -n --arg tag "${RELEASE_TAG:-}" --arg source "$SOURCE_REVISION" --arg release
 ROLLBACK_REQUIRED=0
 rollback() {
   STATUS=$?
-  trap - ERR TERM
+  test "$STATUS" -ne 0 || STATUS=1
+  trap - ERR INT TERM
   if test "$ROLLBACK_REQUIRED" = 1; then
     set +e
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK" --force-new-deployment >/dev/null
@@ -62,6 +63,8 @@ ROLLBACK_REQUIRED=1
 aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$WORKER_TASK_ARN" --force-new-deployment --query service.taskDefinition --output text
 aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$API_TASK_ARN" --force-new-deployment --query service.taskDefinition --output text
 timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
+bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$ECS_SERVICE" "$API_TASK_ARN"
+bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$WORKER_SERVICE" "$WORKER_TASK_ARN"
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" >/dev/null
 ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
 test -n "$ID_TOKEN" && test "$ID_TOKEN" != None

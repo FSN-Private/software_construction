@@ -36,7 +36,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
@@ -77,36 +77,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: production-rollback-${{ github.run_id }}
       - name: Restore the exact compatible API and worker task definitions
-        run: |
-          set -Eeuo pipefail
-          for VALUE in "$AWS_REGION" "$AWS_ROLE_ARN" "$ECS_CLUSTER" "$ECS_SERVICE" "$WORKER_SERVICE" "$HEALTH_URL" "$COGNITO_CLIENT_ID" "$COGNITO_OWNER_USERNAME" "$COGNITO_OWNER_PASSWORD"; do test -n "$VALUE"; done
-          CURRENT_API_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
-          CURRENT_WORKER_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].taskDefinition' --output text)"
-          RESTORE_CURRENT=0
-          restore_current() {
-            STATUS=$?
-            trap - ERR TERM
-            if test "$RESTORE_CURRENT" = 1; then
-              set +e
-              aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$CURRENT_API_TASK" --force-new-deployment >/dev/null
-              aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$CURRENT_WORKER_TASK" --force-new-deployment >/dev/null
-              timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
-            fi
-            exit "$STATUS"
-          }
-          trap restore_current ERR INT TERM
-          RESTORE_CURRENT=1
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$COMPATIBLE_WORKER_TASK_DEFINITION" --force-new-deployment --query service.taskDefinition --output text
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$COMPATIBLE_TASK_DEFINITION" --force-new-deployment --query service.taskDefinition --output text
-          timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" >/dev/null
-          ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
-          test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
-          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
-          timeout 120 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/smoke-ingest.mjs "$HEALTH_URL" > rollback-smoke.json
-          jq -n --arg reason "$ROLLBACK_REASON" --arg api "$COMPATIBLE_TASK_DEFINITION" --arg worker "$COMPATIBLE_WORKER_TASK_DEFINITION" --slurpfile smoke rollback-smoke.json '{reason:$reason,restoredTaskDefinition:$api,restoredWorkerTaskDefinition:$worker,smoke:$smoke[0]}' > rollback-record.json
-          RESTORE_CURRENT=0
-          trap - ERR INT TERM
+        run: timeout --foreground 1200 bash scripts/rollback-ecs-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rollback-evidence

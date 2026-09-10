@@ -59,7 +59,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       RELEASE_RUN_ID: ${{ needs.preflight.outputs.release_run_id }}
       RELEASE_TAG: ${{ github.ref_name }}
@@ -106,7 +106,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: production-release-${{ github.run_id }}
       - name: Migrate and promote the verified API and worker release
-        run: bash scripts/deploy-ecs-release.sh
+        run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: production-promotion-evidence
