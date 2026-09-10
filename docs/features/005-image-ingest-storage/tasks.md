@@ -84,3 +84,8 @@ T001–T009 are required before stories. Deliver US1 (T010–T014), then US2 (T0
 
 - [x] T036 Promote and roll back the API, worker, migration, and smoke evidence as one production release unit per NFR-002/011/015 (partial). — Production verifies the paired non-production evidence, uses the shared deployment path, and binds later rollback to both exact retained task definitions and artifact digests.
 - [x] T037 Install paired rollback handling before the first ECS service mutation and bound delivery operations with rollback margin per NFR-002/011/012/015 (partial). — The shared script traps errors and termination before either service update, restores both captured tasks, and bounds migration, stability, smoke, deployment, and standalone rollback windows.
+
+## Phase 12: Release review follow-up
+
+- [x] T038 Bind deployment and rollback success to the exact API and worker task-definition ARNs running after ECS stabilization per NFR-002/011/012/015 (partial). — Both paths fail closed on circuit-breaker reversion before health, smoke, or evidence completion; the failure path is covered with a mocked ECS response.
+- [x] T039 Enforce inner deployment and rollback execution budgets that reserve enough runner time for paired recovery per NFR-002/012/015 (partial). — Deployment has a 35-minute inner budget inside a 60-minute job, and standalone rollback has a 20-minute inner budget inside a 40-minute job.

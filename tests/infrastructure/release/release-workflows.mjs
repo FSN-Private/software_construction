@@ -1,8 +1,12 @@
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
+const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
 
 for (const [name, workflow] of Object.entries(workflows)) {
@@ -27,6 +31,8 @@ assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish t
 assert.ok(deployScript.includes('command:["--migrate"]'), 'Deployment must run the release migration command before services update.');
 assert.ok(deployScript.includes('previousWorkerTaskDefinition'), 'Deployment must retain the prior worker rollback target.');
 assert.ok(deployScript.includes('trap rollback ERR INT TERM'), 'Deployment must establish rollback handling before either service update.');
+assert.ok(deployScript.includes('"$API_TASK_ARN"'), 'Deployment must verify the API service stabilized on the candidate task definition.');
+assert.ok(deployScript.includes('"$WORKER_TASK_ARN"'), 'Deployment must verify the worker service stabilized on the candidate task definition.');
 assert.ok(deployScript.includes('scripts/smoke-ingest.mjs'), 'Deployment must exercise Feature 005 end to end.');
 assert.ok(deployScript.includes('curl --fail'), 'Deployment must fail when its health checks fail.');
 assert.ok(workflows['release.yml'].includes('environment: production'), 'Production promotion must require the protected production environment.');
@@ -41,10 +47,27 @@ assert.ok(workflows['release.yml'].includes('scripts/deploy-ecs-release.sh'), 'P
 assert.ok(workflows['rollback.yml'].includes('compatibility.rollbackAllowed'), 'Rollback must require explicit compatibility evidence.');
 assert.ok(workflows['rollback.yml'].includes('compatible_task_definition'), 'Rollback must restore a named task definition without rebuilding.');
 assert.ok(workflows['rollback.yml'].includes('compatible_worker_task_definition'), 'Rollback must restore the worker paired with the API release.');
-assert.ok(workflows['rollback.yml'].includes('restoredWorkerTaskDefinition'), 'Rollback evidence must identify the restored worker task definition.');
+assert.ok(rollbackScript.includes('restoredWorkerTaskDefinition'), 'Rollback evidence must identify the restored worker task definition.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion-evidence'), 'Rollback must be bound to retained healthy promotion evidence.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion.json'), 'Rollback must verify the requested task definition was previously promoted.');
 assert.ok(!workflows['rollback.yml'].includes('docker build'), 'Rollback must never rebuild artifacts.');
-assert.ok(workflows['rollback.yml'].includes('curl --fail'), 'Rollback must fail when the restored release is unhealthy.');
+assert.ok(workflows['rollback.yml'].includes('scripts/rollback-ecs-release.sh'), 'Rollback must use the bounded paired restoration path.');
+assert.ok(rollbackScript.includes('"$COMPATIBLE_TASK_DEFINITION"'), 'Rollback must verify the API service stabilized on the requested task definition.');
+assert.ok(rollbackScript.includes('"$COMPATIBLE_WORKER_TASK_DEFINITION"'), 'Rollback must verify the worker service stabilized on the requested task definition.');
+assert.ok(rollbackScript.includes('curl --fail'), 'Rollback must fail when the restored release is unhealthy.');
 assert.ok(!workflows['rollback.yml'].includes('"${{ inputs.'), 'Workflow-dispatch inputs must not be interpolated into shell commands.');
+
+function assertServiceTask(actual, expected) {
+  return spawnSync(
+    bash,
+    ['-c', 'aws() { printf "%s\\n" "$MOCK_ACTUAL_TASK"; }; export -f aws; bash scripts/assert-ecs-service-task.sh cluster service "$MOCK_EXPECTED_TASK"'],
+    { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, MOCK_ACTUAL_TASK: actual, MOCK_EXPECTED_TASK: expected } }
+  );
+}
+
+const candidateTask = 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:8';
+assert.equal(assertServiceTask(candidateTask, candidateTask).status, 0, 'The exact candidate task definition must pass.');
+const circuitBreakerReversion = assertServiceTask('arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:7', candidateTask);
+assert.notEqual(circuitBreakerReversion.status, 0, 'A service stabilized on the prior task definition must fail closed.');
+assert.match(circuitBreakerReversion.stderr, /unexpected task definition/, 'A circuit-breaker reversion must report the binding failure.');
 console.log('Release workflow contract tests passed.');
