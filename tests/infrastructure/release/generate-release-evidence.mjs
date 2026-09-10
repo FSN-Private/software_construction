@@ -11,7 +11,7 @@ for (const artifact of ['api.tar', 'ingest-worker.tar', 'web.tar', 'infrastructu
 }
 const revision = '0123456789abcdef0123456789abcdef01234567';
 execFileSync(process.execPath, ['scripts/generate-release-evidence.mjs', revision, directory, '12345', '67890', 'FSN-Private/software_construction'], { stdio: 'inherit' });
-execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', '67890'], { stdio: 'inherit' });
+execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', 'FSN-Private/software_construction', '67890'], { stdio: 'inherit' });
 
 const manifest = JSON.parse(readFileSync(join(directory, 'release-manifest.json'), 'utf8'));
 const sbom = JSON.parse(readFileSync(join(directory, 'sbom.spdx.json'), 'utf8'));
@@ -23,9 +23,11 @@ assert.equal(manifest.evidence.length, 3);
 assert.equal(sbom.files.length, 5);
 assert.equal(provenance.predicate.buildDefinition.externalParameters.sourceRevision, revision);
 assert.equal(provenance.predicate.buildDefinition.externalParameters.ciRunId, '12345');
+assert.equal(provenance.predicate.buildDefinition.externalParameters.repository, 'FSN-Private/software_construction');
+assert.equal(provenance.predicate.buildDefinition.buildType, 'https://github.com/FSN-Private/software_construction/blob/master/docs/contracts/release-provenance-v1.md');
 assert.equal(provenance.predicate.runDetails.metadata.invocationId, 'https://github.com/FSN-Private/software_construction/actions/runs/67890');
 assert.deepEqual(provenance.subject.map(({ name }) => name).sort(), manifest.artifacts.map(({ name }) => name).sort());
-assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', '67891'], { stdio: 'pipe' }), /Provenance release workflow run does not match/);
+assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', 'FSN-Private/software_construction', '67891'], { stdio: 'pipe' }), /Provenance release workflow run does not match/);
 const legacy = structuredClone(manifest);
 legacy.artifacts = legacy.artifacts.filter(({ name }) => name !== 'ingest-worker.tar');
 writeFileSync(join(directory, 'provenance.json'), JSON.stringify({ predicateType: 'https://slsa.dev/provenance/v1', buildDefinition: { externalParameters: { sourceRevision: revision } } }));
@@ -48,9 +50,21 @@ writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({
 }));
 execFileSync(process.execPath, ['scripts/verify-promotion-evidence.mjs', join(directory, 'release-manifest.json'), join(directory, 'nonprod-deployment.json'), revision, '12345'], { stdio: 'inherit' });
 assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), 'fedcba9876543210fedcba9876543210fedcba98'], { stdio: 'pipe' }));
-provenance.predicate.buildDefinition.externalParameters.sourceRevision = 'fedcba9876543210fedcba9876543210fedcba98';
-writeFileSync(join(directory, 'provenance.json'), JSON.stringify(provenance));
-manifest.evidence.find(({ kind }) => kind === 'provenance').digest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'provenance.json'))).digest('hex')}`;
-writeFileSync(join(directory, 'release-manifest.json'), JSON.stringify(manifest));
-assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision], { stdio: 'pipe' }), /Provenance source or CI run binding is invalid/);
+function verifyTampered(mutator, message) {
+  const changedProvenance = structuredClone(provenance);
+  const changedManifest = structuredClone(manifest);
+  mutator(changedProvenance);
+  writeFileSync(join(directory, 'provenance.json'), JSON.stringify(changedProvenance));
+  changedManifest.evidence.find(({ kind }) => kind === 'provenance').digest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'provenance.json'))).digest('hex')}`;
+  writeFileSync(join(directory, 'release-manifest.json'), JSON.stringify(changedManifest));
+  assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', 'FSN-Private/software_construction', '67890'], { stdio: 'pipe' }), message);
+}
+verifyTampered((changed) => { changed.predicate.buildDefinition.externalParameters.sourceRevision = 'fedcba9876543210fedcba9876543210fedcba98'; }, /Provenance source or CI run binding is invalid/);
+verifyTampered((changed) => { changed.predicate.buildDefinition.buildType = 'https://actions.github.io/buildtypes/workflow/v1'; }, /Provenance build type is invalid/);
+verifyTampered((changed) => {
+  changed.predicate.buildDefinition.externalParameters.repository = 'attacker/software_construction';
+  changed.predicate.buildDefinition.resolvedDependencies[0].uri = 'git+https://github.com/attacker/software_construction@refs/heads/master';
+  changed.predicate.runDetails.builder.id = 'https://github.com/attacker/software_construction/.github/workflows/build-release.yml@refs/heads/master';
+  changed.predicate.runDetails.metadata.invocationId = 'https://github.com/attacker/software_construction/actions/runs/67890';
+}, /Provenance source or CI run binding is invalid/);
 console.log('Release evidence generation tests passed.');
