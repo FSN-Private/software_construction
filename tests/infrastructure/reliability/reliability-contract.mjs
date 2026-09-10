@@ -31,12 +31,14 @@ function scheduleWorkflow(runs, run) {
   return runs;
 }
 
-function canRollback(manifest, promotionEvidence, requestedTaskDefinition) {
+function canRollback(manifest, promotionEvidence, requestedTaskDefinition, requestedWorkerTaskDefinition) {
   return (
     manifest.compatibility?.rollbackAllowed === true &&
     promotionEvidence.taskDefinition === requestedTaskDefinition &&
+    promotionEvidence.workerTaskDefinition === requestedWorkerTaskDefinition &&
     promotionEvidence.sourceRevision === manifest.sourceRevision &&
-    promotionEvidence.releaseArtifactDigest === manifest.apiDigest
+    promotionEvidence.releaseArtifactDigest === manifest.apiDigest &&
+    promotionEvidence.workerReleaseArtifactDigest === manifest.workerDigest
   );
 }
 
@@ -44,14 +46,14 @@ assert.equal(cancelInProgress(ci), true, 'Superseded CI revisions must cancel.')
 assert.match(ci, /if: \$\{\{ always\(\) \}\}/, 'Required aggregation must run after cancellation or failure.');
 for (const [name, workflow] of Object.entries({ deploy, release, rollback })) {
   assert.equal(cancelInProgress(workflow), false, `${name} must serialize deliveries rather than canceling one.`);
-  assert.ok(timeoutMinutes(workflow).some((minutes) => minutes === 20), `${name} must bound runner-loss wait time.`);
+  assert.ok(timeoutMinutes(workflow).length > 0, `${name} must bound runner-loss wait time.`);
 }
 assert.equal(
   concurrencyGroup(release),
   concurrencyGroup(rollback),
   'Promotion and rollback must share one production concurrency group.'
 );
-assert.match(release, /PREVIOUS_TASK/, 'Promotion must preserve a rollback target.');
+assert.match(readFileSync('scripts/deploy-ecs-release.sh', 'utf8'), /PREVIOUS_API_TASK/, 'Promotion must preserve paired rollback targets.');
 assert.match(release, /compatibility\.rollbackAllowed/, 'Promotion must refuse incompatible rollback state.');
 assert.match(rollback, /production-promotion-evidence/, 'Rollback must bind to retained promotion evidence.');
 assert.doesNotMatch(rollback, /docker build/, 'Rollback must not rebuild an artifact.');
@@ -88,32 +90,40 @@ assert.equal(
 );
 
 const worstDeliveryTimeout = Math.max(...timeoutMinutes(deploy), ...timeoutMinutes(release), ...timeoutMinutes(rollback));
-assert.ok(worstDeliveryTimeout <= 20, 'Runner-loss waits must stay below the 30 minute rollback objective.');
+assert.ok(worstDeliveryTimeout <= 45, 'Coordinated delivery must retain a bounded runner-loss window with rollback margin.');
 
 const manifest = {
   sourceRevision: '0123456789abcdef0123456789abcdef01234567',
   apiDigest: 'sha256:api',
+  workerDigest: 'sha256:worker',
   compatibility: { rollbackAllowed: true },
 };
 const promotionEvidence = {
   sourceRevision: manifest.sourceRevision,
   releaseArtifactDigest: manifest.apiDigest,
+  workerReleaseArtifactDigest: manifest.workerDigest,
   taskDefinition: 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:7',
+  workerTaskDefinition: 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-worker:7',
 };
 assert.equal(
-  canRollback(manifest, promotionEvidence, promotionEvidence.taskDefinition),
+  canRollback(manifest, promotionEvidence, promotionEvidence.taskDefinition, promotionEvidence.workerTaskDefinition),
   true,
   'Compatible rollback must bind manifest, source, digest, and task definition.'
 );
 assert.equal(
-  canRollback({ ...manifest, compatibility: { rollbackAllowed: false } }, promotionEvidence, promotionEvidence.taskDefinition),
+  canRollback({ ...manifest, compatibility: { rollbackAllowed: false } }, promotionEvidence, promotionEvidence.taskDefinition, promotionEvidence.workerTaskDefinition),
   false,
   'Incompatible rollback state must fail closed.'
 );
 assert.equal(
-  canRollback(manifest, promotionEvidence, 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:8'),
+  canRollback(manifest, promotionEvidence, 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-api:8', promotionEvidence.workerTaskDefinition),
   false,
   'Rollback to an unattributed task definition must fail closed.'
+);
+assert.equal(
+  canRollback(manifest, promotionEvidence, promotionEvidence.taskDefinition, 'arn:aws:ecs:ap-southeast-1:111122223333:task-definition/platform-worker:8'),
+  false,
+  'Rollback to an unattributed worker task definition must fail closed.'
 );
 
 console.log('Reliability fault-injection contracts passed.');

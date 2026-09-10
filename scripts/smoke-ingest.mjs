@@ -41,13 +41,15 @@ if (!active?.assetId) throw new Error('Timed out waiting for the worker to publi
 const downloaded = new Uint8Array(await (await request(`/v1/assets/${active.assetId}/content`, { headers: headers() })).arrayBuffer());
 if (createHash('sha256').update(downloaded).digest('hex') !== sha256) throw new Error('Downloaded smoke asset checksum differs from the upload.');
 
-const assets = await (await request('/v1/assets', { headers: headers() })).json();
-const asset = assets.find(({ id }) => id === active.assetId);
-if (!asset) throw new Error('Published smoke asset is absent from the active listing.');
-const deleted = await (await request(`/v1/assets/${active.assetId}`, { method: 'DELETE', headers: headers({ 'Idempotency-Key': key(), 'If-Match': `"${asset.lifecycleVersion}"` }) })).json();
+const deleted = await (await request(`/v1/assets/${active.assetId}`, { method: 'DELETE', headers: headers({ 'Idempotency-Key': key(), 'If-Match': '"1"' }) })).json();
+const deletedDownload = await fetch(new URL(`/v1/assets/${active.assetId}/content`, baseUrl), { headers: headers(), signal: AbortSignal.timeout(15000) });
+if (deletedDownload.status !== 404) throw new Error(`Deleted smoke asset remained downloadable with HTTP ${deletedDownload.status}.`);
 const restored = await (await request(`/v1/assets/${active.assetId}/restore`, { method: 'POST', headers: headers({ 'Content-Type': 'application/json', 'Idempotency-Key': key(), 'If-Match': `"${deleted.lifecycleVersion}"` }), body: JSON.stringify({ path: null }) })).json();
 if (restored.state !== 'restored') throw new Error('Smoke asset did not return to restored state.');
+const restoredBytes = new Uint8Array(await (await request(`/v1/assets/${active.assetId}/content`, { headers: headers() })).arrayBuffer());
+if (createHash('sha256').update(restoredBytes).digest('hex') !== sha256) throw new Error('Restored smoke asset checksum differs from the upload.');
 
 const manifest = await (await request('/v1/reconstruction-manifests', { method: 'POST', headers: headers({ 'Idempotency-Key': key() }) })).json();
-await request(`/v1/reconstruction-manifests/${manifest.id}`, { headers: headers() });
+const exported = await (await request(`/v1/reconstruction-manifests/${manifest.id}`, { headers: headers() })).json();
+if (!exported.inventory?.assets?.some(({ id }) => id === active.assetId)) throw new Error('Reconstruction manifest omits the smoke asset.');
 console.log(JSON.stringify({ batchId: batch.id, assetId: active.assetId, manifestId: manifest.id, sha256 }));
