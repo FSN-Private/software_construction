@@ -117,6 +117,7 @@ public static class VersionControlManifestCodec
         if (manifest.PolicyVersion < 1 || manifest.Entries.Count == 0 || manifest.Parents.Count > 2) throw new ArgumentException("Manifest policy, entries, or parents are invalid.");
         if (manifest.Parents.Any(value => !IsDigest(value))) throw new ArgumentException("Parent commit identities must be lowercase SHA-256 values.");
         if (manifest.Parents.Distinct(StringComparer.Ordinal).Count() != manifest.Parents.Count) throw new ArgumentException("Commit parents must be distinct.");
+        if (manifest.Entries.Select(entry => (entry.AssetId, entry.EditId)).Distinct().Count() != manifest.Entries.Count) throw new ArgumentException("A commit may change each image/edit identity only once.");
         foreach (var entry in manifest.Entries)
         {
             if (entry.Change is not ("added" or "modified" or "deleted" or "conflicted")) throw new ArgumentException("Unsupported change state.");

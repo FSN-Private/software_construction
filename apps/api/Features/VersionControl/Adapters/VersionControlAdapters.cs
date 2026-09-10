@@ -20,7 +20,7 @@ public static class VersionControlAdapters
 
             foreach (var digest in new[] { entry.BaseContentSha256, entry.ContentSha256 }.Where(value => value is not null).Distinct(StringComparer.Ordinal))
             {
-                await using var content = Command(connection, "SELECT 1 FROM content_objects WHERE sha256=$1 AND integrity_state='authoritative'", digest);
+                await using var content = Command(connection, "SELECT 1 FROM content_objects WHERE sha256=$1 AND category='xmp' AND integrity_state='authoritative'", digest);
                 if (await content.ExecuteScalarAsync(cancellationToken) is null) throw new VersionControlProblem("content_not_authoritative");
             }
         }

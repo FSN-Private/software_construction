@@ -16,35 +16,35 @@
 
 **Independent test**: a 100-image staged set either publishes all entries and one head advance or publishes neither under every injected failure.
 
-- [ ] T007 [P] [US1] Implement working-state and stage/unstage APIs with base/current identity review in `apps/api/Features/VersionControl/Working/` (FR-002/003/020, AC-001).
-- [ ] T008 [P] [US1] Implement canonical immutable commit/entry/manifest creation in `apps/api/Features/VersionControl/Commits/` (FR-001/004, AC-001, NFR-006/015).
-- [ ] T009 [US1] Implement serializable expected-head commit/ref/reflog/hold transaction and idempotency outcome in `apps/api/Features/VersionControl/Publishing/` (FR-005/006/015/022, AC-001–003, NFR-001/015).
-- [ ] T010 [US1] Add staged-set, single-step failure, retry, and 100-replay property/integration tests in `tests/version-control/commits/` (FR-002–006, AC-001–003, NFR-009/015).
+- [x] T007 [P] [US1] Implement working-state and stage/unstage APIs with base/current identity review in `apps/api/Features/VersionControl/Working/` (FR-002/003/020, AC-001). — Owner/client/branch-scoped working rows and version-pinned staging preserve base/current identities and reject drift.
+- [x] T008 [P] [US1] Implement canonical immutable commit/entry/manifest creation in `apps/api/Features/VersionControl/Commits/` (FR-001/004, AC-001, NFR-006/015). — Canonical manifests, ordered unique entries, parents, and immutable normalized rows share one content digest.
+- [x] T009 [US1] Implement serializable expected-head commit/ref/reflog/hold transaction and idempotency outcome in `apps/api/Features/VersionControl/Publishing/` (FR-005/006/015/022, AC-001–003, NFR-001/015). — Publication uses serializable branch locking, CAS, transactional holds/projection/reflog/audit/idempotency, and bounded serialization retry.
+- [ ] T010 [US1] Add staged-set, single-step failure, retry, and 100-replay property/integration tests in `tests/version-control/commits/` (FR-002–006, AC-001–003, NFR-009/015). — IN PROGRESS
 
 ## Phase 3: User Story 2 — Branch and compare safely (P2)
 
 **Independent test**: divergent branches/tags/compare/revert work; stale heads preserve both sides and default rewrite fails.
 
-- [ ] T011 [P] [US2] Implement normalized branch/tag CRUD, protection, exact resolution, and audit in `apps/api/Features/VersionControl/Refs/` (FR-008/009/013/019, AC-005).
-- [ ] T012 [P] [US2] Implement compare, divergence, image projection, and whole-library traversal APIs in `apps/api/Features/VersionControl/Query/` (FR-007/010/011/020, AC-004/009, NFR-001/016).
-- [ ] T013 [US2] Implement restore/revert as new reachable commit and dirty-checkout block/preserve/discard contract in `apps/api/Features/VersionControl/Operations/` (FR-012/021, AC-010).
-- [ ] T014 [US2] Add concurrent CAS, tag/ref naming, protected-default, compare/divergence, checkout, and projection tests in `tests/version-control/refs/` (FR-007–013/021, AC-002/004/005/009/010).
+- [ ] T011 [P] [US2] Implement normalized branch/tag CRUD, protection, exact resolution, and audit in `apps/api/Features/VersionControl/Refs/` (FR-008/009/013/019, AC-005). — IN PROGRESS
+- [ ] T012 [P] [US2] Implement compare, divergence, image projection, and whole-library traversal APIs in `apps/api/Features/VersionControl/Query/` (FR-007/010/011/020, AC-004/009, NFR-001/016). — IN PROGRESS
+- [ ] T013 [US2] Implement restore/revert as new reachable commit and dirty-checkout block/preserve/discard contract in `apps/api/Features/VersionControl/Operations/` (FR-012/021, AC-010). — IN PROGRESS
+- [ ] T014 [US2] Add concurrent CAS, tag/ref naming, protected-default, compare/divergence, checkout, and projection tests in `tests/version-control/refs/` (FR-007–013/021, AC-002/004/005/009/010). — IN PROGRESS
 
 ## Phase 4: User Story 3 — Clean and recover history presentation (P3)
 
 **Independent test**: a confirmed non-default rewrite moves one ref, preserves hashes, supports day-90 recovery, and hide/unhide changes only presentation.
 
-- [ ] T015 [P] [US3] Implement rewrite impact preview, confirmation, ref-only move, immutable reflog, and recovery references in `apps/api/Features/VersionControl/Rewrite/` (FR-014–016/019/022, AC-005/006).
-- [ ] T016 [P] [US3] Implement reversible visibility metadata and show-hidden projections in `apps/api/Features/VersionControl/Visibility/` (FR-017/020/022, AC-007).
-- [ ] T017 [US3] Implement resolver-supplied two-parent merge publication with expected-target CAS in `apps/api/Features/VersionControl/MergePublishing/` (FR-023, AC-012).
-- [ ] T018 [US3] Add rewrite/recovery/hold expiry, hide/unhide, reachable-ref, and resolved-merge atomicity tests in `tests/version-control/recovery/` (FR-014–017/022/023, AC-005–007/011/012).
+- [ ] T015 [P] [US3] Implement rewrite impact preview, confirmation, ref-only move, immutable reflog, and recovery references in `apps/api/Features/VersionControl/Rewrite/` (FR-014–016/019/022, AC-005/006). — IN PROGRESS
+- [ ] T016 [P] [US3] Implement reversible visibility metadata and show-hidden projections in `apps/api/Features/VersionControl/Visibility/` (FR-017/020/022, AC-007). — IN PROGRESS
+- [ ] T017 [US3] Implement resolver-supplied two-parent merge publication with expected-target CAS in `apps/api/Features/VersionControl/MergePublishing/` (FR-023, AC-012). — IN PROGRESS
+- [ ] T018 [US3] Add rewrite/recovery/hold expiry, hide/unhide, reachable-ref, and resolved-merge atomicity tests in `tests/version-control/recovery/` (FR-014–017/022/023, AC-005–007/011/012). — IN PROGRESS
 
 ## Phase 5: Reliability, operations, and readiness
 
-- [ ] T019 Rebuild materialized state/image projections solely from immutable graph evidence in `apps/api/Features/VersionControl/Projection/` (FR-007/018, AC-004/008, NFR-008/015).
-- [ ] T020 Add graph corruption, rebuild, latency, million-entry capacity, locale, authorization, and redaction tests in `tests/version-control/verification/` (FR-018–020, AC-008, NFR-001/003/004/009/010/016).
-- [ ] T021 Publish stale-ref, divergence, corruption, rebuild, reflog expiry/recovery, protected-ref, and cost runbooks in `docs/runbooks/` (NFR-007/012/013/014).
-- [ ] T022 Rehearse manifest/schema compatibility migration and rollback/forward-recovery constraints in `docs/features/006-xmp-version-control-core/validation.md` (NFR-011/015).
+- [ ] T019 Rebuild materialized state/image projections solely from immutable graph evidence in `apps/api/Features/VersionControl/Projection/` (FR-007/018, AC-004/008, NFR-008/015). — IN PROGRESS
+- [ ] T020 Add graph corruption, rebuild, latency, million-entry capacity, locale, authorization, and redaction tests in `tests/version-control/verification/` (FR-018–020, AC-008, NFR-001/003/004/009/010/016). — IN PROGRESS
+- [ ] T021 Publish stale-ref, divergence, corruption, rebuild, reflog expiry/recovery, protected-ref, and cost runbooks in `docs/runbooks/` (NFR-007/012/013/014). — IN PROGRESS
+- [ ] T022 Rehearse manifest/schema compatibility migration and rollback/forward-recovery constraints in `docs/features/006-xmp-version-control-core/validation.md` (NFR-011/015). — IN PROGRESS
 - [x] T023 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0006-content-addressed-xmp-commit-dag.md`. — Approved by the owner on 2026-09-10 with authorization to run the feature through completion.
 
 ## Traceability
