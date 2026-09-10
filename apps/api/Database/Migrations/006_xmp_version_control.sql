@@ -151,6 +151,7 @@ CREATE TABLE vc_divergence (
     base_commit_id char(64),
     ours_commit_id char(64) NOT NULL,
     theirs_commit_id char(64) NOT NULL,
+    resolved_commit_id char(64) REFERENCES vc_commits(id),
     state text NOT NULL CHECK (state IN ('unresolved','resolved')),
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -194,6 +195,17 @@ CREATE TABLE vc_stashes (
     created_at timestamptz NOT NULL
 );
 
+CREATE TABLE vc_recovery_expirations (
+    reflog_id uuid PRIMARY KEY REFERENCES vc_reflog(id),
+    expired_at timestamptz NOT NULL
+);
+
+ALTER TABLE vc_working_changes ADD CONSTRAINT vc_working_base_commit FOREIGN KEY(base_commit_id) REFERENCES vc_commits(id);
+ALTER TABLE vc_staging_sets ADD CONSTRAINT vc_staging_expected_head FOREIGN KEY(expected_head) REFERENCES vc_commits(id);
+ALTER TABLE vc_divergence ADD CONSTRAINT vc_divergence_base FOREIGN KEY(base_commit_id) REFERENCES vc_commits(id);
+ALTER TABLE vc_divergence ADD CONSTRAINT vc_divergence_ours FOREIGN KEY(ours_commit_id) REFERENCES vc_commits(id);
+ALTER TABLE vc_divergence ADD CONSTRAINT vc_divergence_theirs FOREIGN KEY(theirs_commit_id) REFERENCES vc_commits(id);
+
 CREATE INDEX vc_working_scope ON vc_working_changes(owner_id, library_id, client_id, branch_name);
 CREATE INDEX vc_commit_library_time ON vc_commits(owner_id, library_id, received_at DESC, id);
 CREATE INDEX vc_entry_asset ON vc_commit_entries(asset_id, edit_id, commit_id);
@@ -201,3 +213,14 @@ CREATE INDEX vc_parent_ancestry ON vc_commit_parents(parent_id, commit_id);
 CREATE INDEX vc_reflog_recovery ON vc_reflog(owner_id, library_id, recovery_expires_at) WHERE recovery_expires_at IS NOT NULL;
 CREATE INDEX vc_projection_ref ON vc_materialized_state(owner_id, library_id, normalized_ref, asset_id);
 CREATE INDEX vc_divergence_open ON vc_divergence(owner_id, library_id, normalized_ref) WHERE state='unresolved';
+
+CREATE FUNCTION vc_reject_immutable_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'immutable version-control evidence cannot be changed' USING ERRCODE='55000';
+END $$;
+CREATE TRIGGER vc_commits_immutable BEFORE UPDATE OR DELETE ON vc_commits FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+CREATE TRIGGER vc_commit_parents_immutable BEFORE UPDATE OR DELETE ON vc_commit_parents FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+CREATE TRIGGER vc_commit_entries_immutable BEFORE UPDATE OR DELETE ON vc_commit_entries FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+CREATE TRIGGER vc_reflog_immutable BEFORE UPDATE OR DELETE ON vc_reflog FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+CREATE TRIGGER vc_divergence_immutable BEFORE UPDATE OR DELETE ON vc_divergence FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+CREATE TRIGGER vc_recovery_expirations_immutable BEFORE UPDATE OR DELETE ON vc_recovery_expirations FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();

@@ -35,8 +35,8 @@
 **Independent test**: a confirmed non-default rewrite moves one ref, preserves hashes, supports day-90 recovery, and hide/unhide changes only presentation.
 
 - [x] T015 [P] [US3] Implement rewrite impact preview, confirmation, ref-only move, immutable reflog, and recovery references in `apps/api/Features/VersionControl/Rewrite/` (FR-014–016/019/022, AC-005/006). — Preview-bound non-default rewrites move one ref, replace its projection, retain displaced ancestry, and create exact 90-day recovery evidence.
-- [ ] T016 [P] [US3] Implement reversible visibility metadata and show-hidden projections in `apps/api/Features/VersionControl/Visibility/` (FR-017/020/022, AC-007). — IN PROGRESS
-- [ ] T017 [US3] Implement resolver-supplied two-parent merge publication with expected-target CAS in `apps/api/Features/VersionControl/MergePublishing/` (FR-023, AC-012). — IN PROGRESS
+- [x] T016 [P] [US3] Implement reversible visibility metadata and show-hidden projections in `apps/api/Features/VersionControl/Visibility/` (FR-017/020/022, AC-007). — Visibility is reversible metadata; hidden commits retain their full reconstructable ancestry without changing hashes or parentage.
+- [x] T017 [US3] Implement resolver-supplied two-parent merge publication with expected-target CAS in `apps/api/Features/VersionControl/MergePublishing/` (FR-023, AC-012). — Only the merge contract can add a validated source parent, with base evidence and atomic expected-target publication.
 - [ ] T018 [US3] Add rewrite/recovery/hold expiry, hide/unhide, reachable-ref, and resolved-merge atomicity tests in `tests/version-control/recovery/` (FR-014–017/022/023, AC-005–007/011/012). — IN PROGRESS
 
 ## Phase 5: Reliability, operations, and readiness
