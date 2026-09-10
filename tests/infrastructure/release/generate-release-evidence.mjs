@@ -24,7 +24,17 @@ writeFileSync(join(directory, 'legacy-release-manifest.json'), JSON.stringify(le
 execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'legacy-release-manifest.json'), revision], { stdio: 'inherit' });
 assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'legacy-release-manifest.json'), revision, '--require-worker'], { stdio: 'pipe' }));
 const manifestDigest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'release-manifest.json'))).digest('hex')}`;
-writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({ sourceRevision: revision, releaseRunId: '12345', manifestDigest, apiImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }));
+writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({
+  sourceRevision: revision,
+  releaseRunId: '12345',
+  manifestDigest,
+  apiImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  workerImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-worker@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+  taskDefinition: 'arn:api-task',
+  workerTaskDefinition: 'arn:worker-task',
+  migrationTask: 'arn:migration-task',
+  smoke: { assetId: '00000000-0000-0000-0000-000000000001' },
+}));
 execFileSync(process.execPath, ['scripts/verify-promotion-evidence.mjs', join(directory, 'release-manifest.json'), join(directory, 'nonprod-deployment.json'), revision, '12345'], { stdio: 'inherit' });
 assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), 'fedcba9876543210fedcba9876543210fedcba98'], { stdio: 'pipe' }));
 console.log('Release evidence generation tests passed.');

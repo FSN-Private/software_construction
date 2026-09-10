@@ -252,3 +252,32 @@ The reviewer ran read-only range/status/diff/source checks including `git diff -
 The independent GPT-5.5 reviewer explicitly states that no valid unresolved blocking finding remains in `5f47b1f723d1f1116a3a0e29297ff47c7244e934..394c1a1eb88db9d9dd28c1a830f24426f0459be3` and returns **PASS**. The worker packaging note does not delay the gate.
 
 **Final gate result: PASS.** No push or merge is authorized by this review.
+
+## Release follow-up pre-push review — 2026-09-10
+
+**Status**: blocked after Round 1; remediation awaiting follow-up review
+
+**Reviewer model**: gpt-5.6-sol
+
+**Destination**: `origin/master`
+
+**Base**: `0749a52c575d7571473f159f089c0ce1bdcbb6b1`
+
+**Reviewed range**: `origin/master..f53b2dc` (`a189b1f`, `ba7f2ee`, `f53b2dc`)
+
+**Pending push scope**: the three local Feature 005 release-preparation commits; no deployment or other remote mutation
+
+### Round 1
+
+**Prompt scope**: The independent reviewer received repository policy, the approved Feature 005 artifacts, release plan, existing review history, complete committed range, worker/container/migration implementation, release/deploy/rollback workflows, evidence and smoke scripts, tests, and exact local validation results. It was asked to disprove push safety across requirements, data integrity, migration, security, supply chain, failure handling, compatibility, tests, and documentation. It made no file, commit, container, or remote changes.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| Production promotion and rollback handle only the API despite the new worker artifact. | Blocking / High | T032–T035; NFR-002/011/015 | `release.yml` published only `api.tar`; `rollback.yml` restored only one task definition; promotion evidence validated only the API digest. A permitted tag could leave imports unprocessed or the API/worker pair inconsistent. | **Valid and fixed in remediation.** T036 adds the shared migration/two-service/smoke deployment path to production, binds promotion evidence to both services, and makes rollback restore the exact retained API/worker pair. |
+| Non-production failure paths can leave a partial API/worker rollout. | Blocking / High | T033/T034; NFR-002/011/012/015 | Rollback began in a later workflow step; ambiguous CLI failure or the 20-minute job timeout could bypass it after one service changed. | **Valid and fixed in remediation.** T037 centralizes both environments on one fail-fast script, installs `ERR`/`TERM` paired rollback before the first service mutation, caps migration/service waits at 10 minutes and smoke at 2 minutes, and reserves a 45-minute job window for rollback. |
+| Exact-range review record was absent. | Blocking / Medium | Pre-push policy | The prior PASS covered the earlier feature range, not `0749a52..f53b2dc`. | **Valid and fixed by this preserved round.** The complete revised range and this record require independent follow-up before PASS. |
+| Smoke did not prove deleted access denial, restored bytes, or manifest membership. | Non-blocking note | T034; AC-001/006/008 | The first script called the lifecycle endpoints without checking those outcomes. | **Non-blocking note fixed voluntarily.** The smoke now requires 404 after deletion, rehashes restored bytes, verifies manifest membership, and avoids the first-page asset-list assumption. |
+
+**No blocking issue found**: the reviewer found the exact initial commit scope clean; the Windows lock target stable; worker base/action pins and non-root runtime sound; clean-database migration transaction, advisory lock, and checksum behavior sound; workflow source binding and token permissions sound; legacy evidence verification compatible; and smoke output private. Docker/PostgreSQL runtime proof remains assigned to required remote CI and did not itself block the proposed push.
+
+**Round 1 gate result: BLOCKED.** The revised exact range, validation, dispositions, and pending record require independent follow-up.

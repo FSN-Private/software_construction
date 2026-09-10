@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
+const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
 
 for (const [name, workflow] of Object.entries(workflows)) {
@@ -20,12 +21,14 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('environment: nonprod'), 'Non
 assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-production deployment must use short-lived OIDC credentials.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('RepoDigests'), 'Non-production deployment must record an immutable registry digest.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('ingest-worker.tar'), 'Non-production deployment must publish the verified worker artifact.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('command:["--migrate"]'), 'Non-production deployment must run the release migration command before services update.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('previousWorkerTaskDefinition'), 'Non-production deployment must retain the prior worker rollback target.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/smoke-ingest.mjs'), 'Non-production deployment must exercise Feature 005 end to end.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('curl --fail'), 'Non-production deployment must fail when its health checks fail.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
+assert.ok(deployScript.includes('RepoDigests'), 'Deployment must record immutable registry digests.');
+assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
+assert.ok(deployScript.includes('command:["--migrate"]'), 'Deployment must run the release migration command before services update.');
+assert.ok(deployScript.includes('previousWorkerTaskDefinition'), 'Deployment must retain the prior worker rollback target.');
+assert.ok(deployScript.includes('trap rollback ERR INT TERM'), 'Deployment must establish rollback handling before either service update.');
+assert.ok(deployScript.includes('scripts/smoke-ingest.mjs'), 'Deployment must exercise Feature 005 end to end.');
+assert.ok(deployScript.includes('curl --fail'), 'Deployment must fail when its health checks fail.');
 assert.ok(workflows['release.yml'].includes('environment: production'), 'Production promotion must require the protected production environment.');
 assert.ok(workflows['release.yml'].includes("tags: ['v*']"), 'Production promotion must be initiated by a versioned tag.');
 assert.ok(workflows['release.yml'].includes('Production promotion requires a v* tag.'), 'Manual production dispatch must reject non-versioned tags.');
@@ -33,10 +36,12 @@ assert.ok(workflows['release.yml'].includes('git merge-base --is-ancestor'), 'Pr
 assert.ok(workflows['release.yml'].includes('compatibility.rollbackAllowed'), 'Production promotion must refuse an incompatible persistent-state transition.');
 assert.ok(workflows['release.yml'].includes('nonprod-deployment-evidence'), 'Production promotion must require retained non-production deployment evidence.');
 assert.ok(workflows['release.yml'].includes('verify-promotion-evidence.mjs'), 'Production promotion must compare exact non-production evidence before approval.');
-assert.ok(workflows['release.yml'].includes('PREVIOUS_TASK'), 'Production promotion must retain a rollback target before updating ECS.');
-assert.ok(workflows['release.yml'].includes('aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK"'), 'Failed production health must restore the prior task definition.');
+assert.ok(workflows['release.yml'].includes('AWS_PRODUCTION_WORKER_SERVICE'), 'Production promotion must configure the worker service.');
+assert.ok(workflows['release.yml'].includes('scripts/deploy-ecs-release.sh'), 'Production promotion must use the same coordinated migration and rollback path as non-production.');
 assert.ok(workflows['rollback.yml'].includes('compatibility.rollbackAllowed'), 'Rollback must require explicit compatibility evidence.');
 assert.ok(workflows['rollback.yml'].includes('compatible_task_definition'), 'Rollback must restore a named task definition without rebuilding.');
+assert.ok(workflows['rollback.yml'].includes('compatible_worker_task_definition'), 'Rollback must restore the worker paired with the API release.');
+assert.ok(workflows['rollback.yml'].includes('restoredWorkerTaskDefinition'), 'Rollback evidence must identify the restored worker task definition.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion-evidence'), 'Rollback must be bound to retained healthy promotion evidence.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion.json'), 'Rollback must verify the requested task definition was previously promoted.');
 assert.ok(!workflows['rollback.yml'].includes('docker build'), 'Rollback must never rebuild artifacts.');
