@@ -98,7 +98,7 @@ jobs:
           case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
           git fetch --no-tags origin master
           git merge-base --is-ancestor "$GITHUB_SHA" origin/master
-          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA" --require-worker
+          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA" --require-worker "$RELEASE_RUN_ID"
           test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
