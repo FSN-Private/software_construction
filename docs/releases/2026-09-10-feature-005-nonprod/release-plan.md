@@ -1,8 +1,11 @@
 # Feature 005 non-production release plan
 
-**Owner**: platform maintainer  
-**Intended revision**: the merge commit produced from `feature/005-image-ingest-storage` after CI and pre-push review  
-**Environment**: AWS non-production  
+**Owner**: platform maintainer
+
+**Intended revision**: the merge commit produced from `feature/005-image-ingest-storage` after CI and pre-push review
+
+**Environment**: AWS non-production
+
 **Included feature**: [Image ingest and durable storage](../../features/005-image-ingest-storage/spec.md)
 
 ## Prerequisites
