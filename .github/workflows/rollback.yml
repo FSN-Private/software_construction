@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_REVISION="$(jq -r .sourceRevision artifacts/production/release-manifest.json)"
-          node scripts/verify-release-evidence.mjs artifacts/production/release-manifest.json "$SOURCE_REVISION" --require-worker
+          node scripts/verify-release-evidence.mjs artifacts/production/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY"
           test "$(jq -r '.compatibility.rollbackAllowed' artifacts/production/release-manifest.json)" = true
           test -n "$COMPATIBLE_TASK_DEFINITION" && test -n "$COMPATIBLE_WORKER_TASK_DEFINITION" && test -n "$ROLLBACK_REASON" && test -n "$PROMOTION_RUN_ID"
           test "$(jq -r .taskDefinition artifacts/production/production-promotion.json)" = "$COMPATIBLE_TASK_DEFINITION"

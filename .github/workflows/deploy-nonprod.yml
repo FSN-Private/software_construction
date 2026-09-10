@@ -62,7 +62,7 @@ jobs:
           run-id: ${{ inputs.release_run_id || github.event.workflow_run.id }}
           name: release-evidence
           path: artifacts/release
-      - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$RELEASE_RUN_ID"
+      - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}

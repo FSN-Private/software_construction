@@ -11,6 +11,7 @@ mkdirSync(outputDirectory, { recursive: true });
 const artifacts = readdirSync(outputDirectory, { withFileTypes: true }).filter((entry) => entry.isFile() && /\.(tar|zip)$/.test(entry.name)).map((entry) => join(outputDirectory, entry.name));
 if (artifacts.length !== 5) throw new Error('Release evidence requires API, ingest worker, web, infrastructure, and Windows artifacts.');
 const digest = (path) => `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
+const buildType = `https://github.com/${repository}/blob/master/docs/contracts/release-provenance-v1.md`;
 const sbom = join(outputDirectory, 'sbom.spdx.json');
 const provenance = join(outputDirectory, 'provenance.json');
 const validation = join(outputDirectory, 'validation-evidence.json');
@@ -21,8 +22,8 @@ writeFileSync(provenance, JSON.stringify({
   predicateType: 'https://slsa.dev/provenance/v1',
   predicate: {
     buildDefinition: {
-      buildType: 'https://actions.github.io/buildtypes/workflow/v1',
-      externalParameters: { sourceRevision, ciRunId, workflow: '.github/workflows/build-release.yml' },
+      buildType,
+      externalParameters: { sourceRevision, ciRunId, repository, workflow: '.github/workflows/build-release.yml' },
       resolvedDependencies: [{ uri: `git+https://github.com/${repository}@refs/heads/master`, digest: { gitCommit: sourceRevision } }],
     },
     runDetails: {

@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { verifyReleaseManifest } from '../packages/release-tools/release-manifest.mjs';
 
-const [manifestPath, expectedSourceRevision, mode, expectedReleaseRunId] = process.argv.slice(2);
-if (!manifestPath || !/^[a-f0-9]{40}$/.test(expectedSourceRevision) || (expectedReleaseRunId && !/^\d+$/.test(expectedReleaseRunId))) {
-  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker] [release-run-id]');
+const [manifestPath, expectedSourceRevision, mode, expectedRepository, expectedReleaseRunId] = process.argv.slice(2);
+if (!manifestPath || !/^[a-f0-9]{40}$/.test(expectedSourceRevision) || (expectedRepository && !/^[\w.-]+\/[\w.-]+$/.test(expectedRepository)) || (expectedReleaseRunId && !/^\d+$/.test(expectedReleaseRunId))) {
+  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker] [owner/repository] [release-run-id]');
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -28,14 +28,16 @@ const validation = JSON.parse(readFileSync(resolve(baseDirectory, validationEntr
 if (isLegacyArtifactSet && provenance._type === undefined) {
   if (provenance.predicateType !== 'https://slsa.dev/provenance/v1' || provenance.buildDefinition?.externalParameters?.sourceRevision !== expectedSourceRevision) throw new Error('Legacy provenance source binding is invalid.');
 } else {
+  if (!expectedRepository) throw new Error('Current provenance verification requires the expected repository.');
   const parameters = provenance.predicate?.buildDefinition?.externalParameters;
   const dependency = provenance.predicate?.buildDefinition?.resolvedDependencies?.[0];
   const subjects = new Map((provenance.subject ?? []).map(({ name, digest }) => [name, digest?.sha256]));
   const builder = provenance.predicate?.runDetails?.builder?.id?.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/\.github\/workflows\/build-release\.yml@refs\/heads\/master$/);
   const invocation = provenance.predicate?.runDetails?.metadata?.invocationId?.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/actions\/runs\/(\d+)$/);
   if (provenance._type !== 'https://in-toto.io/Statement/v1' || provenance.predicateType !== 'https://slsa.dev/provenance/v1') throw new Error('Unsupported provenance statement.');
-  if (parameters?.sourceRevision !== expectedSourceRevision || !/^\d+$/.test(parameters?.ciRunId) || parameters?.workflow !== '.github/workflows/build-release.yml' || dependency?.digest?.gitCommit !== expectedSourceRevision) throw new Error('Provenance source or CI run binding is invalid.');
-  if (!builder || !invocation || builder[1] !== invocation[1] || dependency?.uri !== `git+https://github.com/${builder[1]}@refs/heads/master`) throw new Error('Provenance builder or repository identity is invalid.');
+  if (provenance.predicate?.buildDefinition?.buildType !== `https://github.com/${expectedRepository}/blob/master/docs/contracts/release-provenance-v1.md`) throw new Error('Provenance build type is invalid.');
+  if (parameters?.sourceRevision !== expectedSourceRevision || !/^\d+$/.test(parameters?.ciRunId) || parameters?.repository !== expectedRepository || parameters?.workflow !== '.github/workflows/build-release.yml' || dependency?.digest?.gitCommit !== expectedSourceRevision) throw new Error('Provenance source or CI run binding is invalid.');
+  if (!builder || !invocation || builder[1] !== expectedRepository || invocation[1] !== expectedRepository || dependency?.uri !== `git+https://github.com/${expectedRepository}@refs/heads/master`) throw new Error('Provenance builder or repository identity is invalid.');
   if (expectedReleaseRunId && invocation[2] !== expectedReleaseRunId) throw new Error('Provenance release workflow run does not match the requested evidence run.');
   if (validation.sourceRevision !== expectedSourceRevision || String(validation.ciRunId) !== parameters.ciRunId || validation.ciWorkflow !== 'Continuous integration' || validation.conclusion !== 'success') throw new Error('Provenance does not match the CI validation statement.');
   if (subjects.size !== manifest.artifacts.length || manifest.artifacts.some(({ name, digest }) => subjects.get(name) !== digest.slice(7))) throw new Error('Provenance artifact subjects do not match the release manifest.');
