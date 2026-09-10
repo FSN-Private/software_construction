@@ -9,6 +9,15 @@ using Amazon.S3;
 using Platform.Api.Features.Ingest;
 using Platform.Api.Features.VersionControl;
 using Platform.Api.Features.VersionControl.Integrity;
+using Platform.Api.Features.VersionControl.Publishing;
+using Platform.Api.Features.VersionControl.Working;
+using Platform.Api.Features.VersionControl.Refs;
+using Platform.Api.Features.VersionControl.Query;
+using Platform.Api.Features.VersionControl.Operations;
+using Platform.Api.Features.VersionControl.Rewrite;
+using Platform.Api.Features.VersionControl.Visibility;
+using Platform.Api.Features.VersionControl.MergePublishing;
+using Platform.Api.Features.VersionControl.Projection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +44,15 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
     builder.Services.AddSingleton<IntegrityService>();
+    builder.Services.AddSingleton<WorkingService>();
+    builder.Services.AddSingleton<CommitService>();
+    builder.Services.AddSingleton<RefService>();
+    builder.Services.AddSingleton<QueryService>();
+    builder.Services.AddSingleton<OperationService>();
+    builder.Services.AddSingleton<RewriteService>();
+    builder.Services.AddSingleton<VisibilityService>();
+    builder.Services.AddSingleton<MergeService>();
+    builder.Services.AddSingleton<ProjectionService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));

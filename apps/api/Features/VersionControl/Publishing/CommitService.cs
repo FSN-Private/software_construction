@@ -68,7 +68,8 @@ public sealed class CommitService
             await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'main','main','branch',NULL,true)", cancellationToken, owner, library);
             refState = (null, 1L);
         }
-        if (!string.Equals(refState.Value.Head, request.ExpectedHead, StringComparison.Ordinal)) throw new VersionControlProblem("stale_head");
+        if (!string.Equals(refState.Value.Head, request.ExpectedHead, StringComparison.Ordinal))
+            throw await StaleAsync(connection, owner, library, client, branch, request, refState.Value.Head, cancellationToken);
         checkpoint("ref-locked");
 
         var staged = await ReadStagedAsync(connection, owner, library, client, request.StagingSetId, branch, request.ExpectedHead, cancellationToken);
@@ -182,5 +183,30 @@ public sealed class CommitService
             }
             else if (current is null || !string.Equals(current.ContentSha256, entry.BaseContentSha256, StringComparison.Ordinal)) throw new VersionControlProblem("stale_working_base");
         }
+    }
+
+    private static async Task<VersionControlProblem> StaleAsync(NpgsqlConnection connection, string owner, string library, string client, string branch, CommitRequest request, string? currentHead, CancellationToken cancellationToken)
+    {
+        var staged = await ReadStagedAsync(connection, owner, library, client, request.StagingSetId, branch, request.ExpectedHead, cancellationToken);
+        var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
+        var current = currentHead is null ? new Dictionary<string, ChangeView>(StringComparer.Ordinal) : GraphQueries.State(graph, currentHead);
+        var changes = staged.Entries.Select(entry =>
+        {
+            current.TryGetValue($"{entry.AssetId:D}/{entry.EditId?.ToString("D") ?? "source"}", out var ours);
+            return new
+            {
+                entry.AssetId,
+                entry.EditId,
+                BaseContentSha256 = entry.BaseContentSha256,
+                OursContentSha256 = ours?.ContentSha256,
+                TheirsContentSha256 = entry.ContentSha256,
+            };
+        }).ToArray();
+        return new("stale_head", extensions: new Dictionary<string, object?>
+        {
+            ["baseCommitId"] = request.ExpectedHead,
+            ["oursCommitId"] = currentHead,
+            ["theirs"] = changes,
+        });
     }
 }

@@ -43,7 +43,7 @@ internal static class IngestChecks
             await DatabaseMigrator.ApplyAsync(migrationDb, default);
             await DatabaseMigrator.ApplyAsync(migrationDb, default);
             await using var count = migrationDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
-            Check((long)(await count.ExecuteScalarAsync())! == 2, "Migration command applies each embedded release migration exactly once");
+            Check((long)(await count.ExecuteScalarAsync())! == 3, "Migration command applies each embedded release migration exactly once");
         }
         await using (var create = admin.CreateCommand($"CREATE SCHEMA {schema}")) await create.ExecuteNonQueryAsync();
         await using var db = NpgsqlDataSource.Create(connectionString + ";Search Path=" + schema);

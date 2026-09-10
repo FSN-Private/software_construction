@@ -14,6 +14,7 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
 
     public async Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string operationId, CancellationToken cancellationToken)
     {
+        using var measurement = VersionControlTelemetry.Measure("ref.create");
         if (kind is not ("branch" or "tag")) throw new VersionControlProblem("invalid_request", 400);
         if (request.CommitId is null) throw new VersionControlProblem("invalid_request", 400);
         var name = RefNames.Normalize(request.Name);
@@ -25,7 +26,7 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
         {
             await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,$3,$4,$5,$6,false)", cancellationToken, owner, library, name, request.Name, kind, request.CommitId);
         }
-        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation) { throw new VersionControlProblem("ref_conflict"); }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation) { throw Conflict(); }
         await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at) VALUES($1,$2,$3,$4,NULL,$5,$2,'create',$6,$7)", cancellationToken, Guid.NewGuid(), owner, library, name, request.CommitId, $"created {kind}", Now);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, $"version-control.{kind}.created", StableResource(name), "accepted", cancellationToken);
         var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
@@ -48,15 +49,16 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
 
     public async Task<RefView> RenameAsync(string owner, string library, string currentName, RefRequest request, string operationId, CancellationToken cancellationToken)
     {
+        using var measurement = VersionControlTelemetry.Measure("ref.rename");
         var current = RefNames.Normalize(currentName);
         var next = RefNames.Normalize(request.Name);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var existing = await ReadForUpdateAsync(connection, owner, library, current, cancellationToken) ?? throw new VersionControlProblem("ref_not_found", 404);
         if (existing.Protected || existing.Kind == "tag") { await RejectedAsync(connection, owner, operationId, current, "protected_ref", cancellationToken); await transaction.CommitAsync(cancellationToken); throw new VersionControlProblem("protected_ref"); }
-        if (request.ExpectedVersion != existing.Version) throw new VersionControlProblem("ref_conflict");
+        if (request.ExpectedVersion != existing.Version) throw Conflict();
         try { await ExecuteAsync(connection, "UPDATE vc_refs SET normalized_name=$4,display_name=$5,version=version+1 WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3", cancellationToken, owner, library, current, next, request.Name); }
-        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation) { throw new VersionControlProblem("ref_conflict"); }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation) { throw Conflict(); }
         await ExecuteAsync(connection, "UPDATE vc_materialized_state SET normalized_ref=$4 WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, current, next);
         await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at) VALUES($1,$2,$3,$4,$5,$5,$2,'rename',$6,$7)", cancellationToken, Guid.NewGuid(), owner, library, next, existing.Head, $"renamed from {current}", Now);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.branch.renamed", StableResource(next), "accepted", cancellationToken);
@@ -67,6 +69,7 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
 
     public async Task DeleteAsync(string owner, string library, string nameValue, RefRequest request, string operationId, CancellationToken cancellationToken)
     {
+        using var measurement = VersionControlTelemetry.Measure("ref.delete");
         var name = RefNames.Normalize(nameValue);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -77,7 +80,7 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
             await transaction.CommitAsync(cancellationToken);
             throw new VersionControlProblem(existing.Protected ? "protected_ref" : "confirmation_required");
         }
-        if (request.ExpectedVersion != existing.Version) throw new VersionControlProblem("ref_conflict");
+        if (request.ExpectedVersion != existing.Version) throw Conflict();
         var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
         var retained = HistoryRetention.Reachable(graph, await HistoryRetention.RefHeadsAsync(connection, owner, library, name, cancellationToken));
         retained.UnionWith(await HistoryRetention.HiddenAsync(connection, graph, owner, library, cancellationToken));
@@ -107,4 +110,10 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
 
     private static Task RejectedAsync(NpgsqlConnection connection, string owner, string operationId, string name, string code, CancellationToken cancellationToken) =>
         VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.ref.rejected", StableResource(name), "denied", cancellationToken, code);
+
+    private static VersionControlProblem Conflict()
+    {
+        VersionControlTelemetry.RefConflicts.Add(1);
+        return new("ref_conflict");
+    }
 }

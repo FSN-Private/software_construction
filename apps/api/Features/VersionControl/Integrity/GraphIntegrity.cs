@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Platform.Contracts.VersionControl;
 
@@ -9,10 +8,7 @@ public sealed record GraphIntegrityResult(bool Healthy, IReadOnlyList<string> Co
 
 public static class GraphIntegrity
 {
-    private static readonly Meter Meter = new("Platform.VersionControl");
-    private static readonly Counter<long> Failures = Meter.CreateCounter<long>("platform.version_control.integrity_failures");
-
-    public static GraphIntegrityResult Verify(string libraryId, IEnumerable<StoredCommit> source)
+    public static GraphIntegrityResult Verify(string libraryId, IEnumerable<StoredCommit> source, IReadOnlySet<string>? authoritativeContent = null)
     {
         var commits = source.ToDictionary(commit => commit.Id, StringComparer.Ordinal);
         var codes = new HashSet<string>(StringComparer.Ordinal);
@@ -23,7 +19,9 @@ public static class GraphIntegrity
             VersionControlManifest? manifest = null;
             try { manifest = VersionControlManifestCodec.Read(commit.ManifestBytes); }
             catch (Exception error) when (error is JsonException or ArgumentException or NotSupportedException) { codes.Add("manifest_invalid"); }
+            if (manifest is not null && !commit.ManifestBytes.AsSpan().SequenceEqual(VersionControlManifestCodec.Write(manifest))) codes.Add("manifest_noncanonical");
             if (manifest is not null && (!string.Equals(manifest.LibraryId, libraryId, StringComparison.Ordinal) || !manifest.Parents.SequenceEqual(commit.Parents))) codes.Add("manifest_graph_mismatch");
+            if (manifest is not null && authoritativeContent is not null && manifest.Entries.SelectMany(entry => new[] { entry.BaseContentSha256, entry.ContentSha256 }).Where(value => value is not null).Any(value => !authoritativeContent.Contains(value!))) codes.Add("missing_content");
             foreach (var parent in commit.Parents)
             {
                 if (!commits.TryGetValue(parent, out var parentCommit)) codes.Add("missing_parent");
@@ -38,7 +36,7 @@ public static class GraphIntegrity
             if (HasCycle(id, commits, visiting, visited)) { codes.Add("graph_cycle"); break; }
         }
 
-        if (codes.Count > 0) Failures.Add(1, new KeyValuePair<string, object?>("library", "redacted"));
+        if (codes.Count > 0) VersionControlTelemetry.IntegrityFailures.Add(1, new KeyValuePair<string, object?>("library", "redacted"));
         return new(codes.Count == 0, codes.Order(StringComparer.Ordinal).ToArray(), commits.Count);
     }
 

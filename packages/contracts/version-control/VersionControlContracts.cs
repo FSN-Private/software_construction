@@ -21,8 +21,9 @@ public sealed record IntegrityView(bool Healthy, IReadOnlyList<string> Codes, in
 public sealed record RewritePreview(string Branch, string? OldHead, string NewHead, IReadOnlyList<string> DisplacedCommitIds, string ConfirmationToken);
 public sealed record MergeEvidence(string BaseCommitId, string SourceCommitId, string TargetCommitId);
 
-public sealed class VersionControlProblem(string code, int status = 409) : Exception(code)
+public sealed class VersionControlProblem(string code, int status = 409, IReadOnlyDictionary<string, object?>? extensions = null) : Exception(code)
 {
     public string Code { get; } = code;
     public int Status { get; } = status;
+    public IReadOnlyDictionary<string, object?> Extensions { get; } = extensions ?? new Dictionary<string, object?>();
 }
