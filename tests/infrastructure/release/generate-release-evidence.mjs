@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const directory = mkdtempSync(join(tmpdir(), 'release-evidence-'));
-for (const artifact of ['api.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip']) {
+for (const artifact of ['api.tar', 'ingest-worker.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip']) {
   writeFileSync(join(directory, artifact), artifact);
 }
 const revision = '0123456789abcdef0123456789abcdef01234567';
@@ -16,9 +16,13 @@ execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(dire
 const manifest = JSON.parse(readFileSync(join(directory, 'release-manifest.json'), 'utf8'));
 const sbom = JSON.parse(readFileSync(join(directory, 'sbom.spdx.json'), 'utf8'));
 assert.equal(manifest.sourceRevision, revision);
-assert.equal(manifest.artifacts.length, 4);
+assert.equal(manifest.artifacts.length, 5);
 assert.equal(manifest.evidence.length, 3);
-assert.equal(sbom.files.length, 4);
+assert.equal(sbom.files.length, 5);
+const legacy = { ...manifest, artifacts: manifest.artifacts.filter(({ name }) => name !== 'ingest-worker.tar') };
+writeFileSync(join(directory, 'legacy-release-manifest.json'), JSON.stringify(legacy));
+execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'legacy-release-manifest.json'), revision], { stdio: 'inherit' });
+assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'legacy-release-manifest.json'), revision, '--require-worker'], { stdio: 'pipe' }));
 const manifestDigest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'release-manifest.json'))).digest('hex')}`;
 writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({ sourceRevision: revision, releaseRunId: '12345', manifestDigest, apiImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }));
 execFileSync(process.execPath, ['scripts/verify-promotion-evidence.mjs', join(directory, 'release-manifest.json'), join(directory, 'nonprod-deployment.json'), revision, '12345'], { stdio: 'inherit' });

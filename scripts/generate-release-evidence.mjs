@@ -7,7 +7,7 @@ const [sourceRevision, outputDirectory, ciRunId] = process.argv.slice(2);
 if (!/^[a-f0-9]{40}$/.test(sourceRevision) || !outputDirectory) throw new Error('Usage: generate-release-evidence.mjs <full-source-sha> <output-directory>');
 mkdirSync(outputDirectory, { recursive: true });
 const artifacts = readdirSync(outputDirectory, { withFileTypes: true }).filter((entry) => entry.isFile() && /\.(tar|zip)$/.test(entry.name)).map((entry) => join(outputDirectory, entry.name));
-if (artifacts.length !== 4) throw new Error('Release evidence requires API, web, infrastructure, and Windows artifacts.');
+if (artifacts.length !== 5) throw new Error('Release evidence requires API, ingest worker, web, infrastructure, and Windows artifacts.');
 const digest = (path) => `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
 const sbom = join(outputDirectory, 'sbom.spdx.json');
 const provenance = join(outputDirectory, 'provenance.json');

@@ -24,9 +24,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - run: docker build --file apps/api/Dockerfile --tag platform-api:${{ github.event.workflow_run.head_sha }} .
+      - run: docker build --file apps/ingest-worker/Dockerfile --tag platform-ingest-worker:${{ github.event.workflow_run.head_sha }} .
       - run: docker build --file apps/web/Dockerfile --tag platform-web:${{ github.event.workflow_run.head_sha }} .
       - run: docker build --file packages/infrastructure/Dockerfile --tag platform-infrastructure:${{ github.event.workflow_run.head_sha }} .
-      - run: mkdir -p artifacts/release && docker save platform-api:${{ github.event.workflow_run.head_sha }} -o artifacts/release/api.tar && docker save platform-web:${{ github.event.workflow_run.head_sha }} -o artifacts/release/web.tar && docker save platform-infrastructure:${{ github.event.workflow_run.head_sha }} -o artifacts/release/infrastructure.tar
+      - run: mkdir -p artifacts/release && docker save platform-api:${{ github.event.workflow_run.head_sha }} -o artifacts/release/api.tar && docker save platform-ingest-worker:${{ github.event.workflow_run.head_sha }} -o artifacts/release/ingest-worker.tar && docker save platform-web:${{ github.event.workflow_run.head_sha }} -o artifacts/release/web.tar && docker save platform-infrastructure:${{ github.event.workflow_run.head_sha }} -o artifacts/release/infrastructure.tar
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-release-artifacts

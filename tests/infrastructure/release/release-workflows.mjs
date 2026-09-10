@@ -11,6 +11,7 @@ for (const [name, workflow] of Object.entries(workflows)) {
 }
 
 assert.ok(workflows['build-release.yml'].includes('actions/attest-build-provenance@'), 'Build workflow must attest release evidence.');
+assert.ok(workflows['build-release.yml'].includes('apps/ingest-worker/Dockerfile'), 'Build workflow must package the ingest worker.');
 assert.ok(workflows['build-release.yml'].includes('workflows: [Continuous integration]'), 'Build workflow must be triggered only by the CI workflow.');
 assert.ok(!workflows['build-release.yml'].includes('workflow_dispatch'), 'Build workflow must not self-certify manually dispatched validation evidence.');
 assert.ok(workflows['build-release.yml'].includes('workflow_run.head_sha'), 'Build workflow must bind builds to the validated source revision.');
@@ -18,7 +19,12 @@ assert.ok(readFileSync('scripts/generate-release-evidence.mjs', 'utf8').includes
 assert.ok(workflows['deploy-nonprod.yml'].includes('environment: nonprod'), 'Non-production deployment must use its protected environment.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-production deployment must use short-lived OIDC credentials.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('RepoDigests'), 'Non-production deployment must record an immutable registry digest.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('ingest-worker.tar'), 'Non-production deployment must publish the verified worker artifact.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('command:["--migrate"]'), 'Non-production deployment must run the release migration command before services update.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('previousWorkerTaskDefinition'), 'Non-production deployment must retain the prior worker rollback target.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/smoke-ingest.mjs'), 'Non-production deployment must exercise Feature 005 end to end.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('curl --fail'), 'Non-production deployment must fail when its health checks fail.');
 assert.ok(workflows['release.yml'].includes('environment: production'), 'Production promotion must require the protected production environment.');
 assert.ok(workflows['release.yml'].includes("tags: ['v*']"), 'Production promotion must be initiated by a versioned tag.');

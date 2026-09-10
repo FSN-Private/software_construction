@@ -1,7 +1,7 @@
 # Tasks: Image Ingest and Durable Storage
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), and [contracts/](contracts/)
-**Status**: Complete — implementation, validation, documentation, named milestone commits, and a clean convergence assessment completed 2026-09-09.
+**Status**: Repository release follow-up complete — live non-production execution remains gated on AWS/GitHub environment bootstrap.
 
 ## Phase 1: Setup and shared foundations
 
@@ -71,3 +71,11 @@ T001–T009 are required before stories. Deliver US1 (T010–T014), then US2 (T0
 ## Phase 9: Adversarial review follow-up
 
 - [x] T030 Convert every PNG/JPEG structural read to an exact read and prove sub-header truncations receive deterministic quarantine outcomes per FR-007/008/015, AC-003, and NFR-015 (partial). — Offline and PostgreSQL/MinIO worker checks quarantine a 9-byte PNG and four-byte JPEG as `unsupported_format`.
+
+## Phase 10: Non-production release readiness
+
+- [x] T031 Restore locked `win-x64` packaging for the referenced storage project and reproduce the Windows release ZIP per NFR-011/014 (partial). — The storage lock now contains the required runtime target; no package identity, version, or source changed.
+- [x] T032 Package the ingest worker as a locked, non-root immutable container and include it in checksummed release evidence per NFR-011/014/016 (missing). — Worker publish and artifact contracts pass locally; the Docker daemon is unavailable, so the exact container build remains a required remote CI check.
+- [x] T033 Add a transactional, checksum-pinned schema migration command and coordinate non-production API/worker ECS deployment with rollback per NFR-002/011/015 (missing). — Embedded migrations are serialized and atomic; workflow YAML/Bash, build, rollback, and migration integration contracts pass locally, with PostgreSQL execution delegated to the required remote ingest suite.
+- [x] T034 Implement an authenticated one-item import/download/delete/restore/manifest smoke test in the deployment workflow and publish the exact AWS prerequisites and release procedure per AC-001/006/008 and NFR-003/011/012 (missing). — The bounded smoke script, deployment contracts, runbook, and release plan pass local checks.
+- [ ] T035 Bootstrap the approved AWS non-production resources and protected GitHub configuration, execute the deployment, complete the 15-minute observation window, and record retained evidence per NFR-002/003/007/011/012 (missing). — External gate: only `AWS_NONPROD_ROLE_ARN` currently exists; no deployment mutation is authorized by repository preparation.
