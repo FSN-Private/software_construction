@@ -1,0 +1,114 @@
+name: Promote production release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    outputs:
+      release_run_id: ${{ steps.evidence-runs.outputs.release_run_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: evidence-runs
+        name: Resolve successful build and non-production evidence for this exact tag revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          RELEASE_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-release.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          NONPROD_RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-nonprod.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.workflow_runs[0].id')"
+          test -n "$RELEASE_RUN_ID" && test "$RELEASE_RUN_ID" != null
+          test -n "$NONPROD_RUN_ID" && test "$NONPROD_RUN_ID" != null
+          echo "release_run_id=$RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "nonprod_run_id=$NONPROD_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.evidence-runs.outputs.nonprod_run_id }}
+          name: nonprod-deployment-evidence
+          path: artifacts/nonprod
+      - run: node scripts/verify-promotion-evidence.mjs artifacts/release/release-manifest.json artifacts/nonprod/nonprod-deployment.json "$GITHUB_SHA" "${{ steps.evidence-runs.outputs.release_run_id }}"
+
+  promote:
+    needs: preflight
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RELEASE_RUN_ID: ${{ needs.preflight.outputs.release_run_id }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      SOURCE_REVISION: ${{ github.sha }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.AWS_PRODUCTION_ECR_REGISTRY }}
+      API_REPOSITORY: ${{ vars.AWS_PRODUCTION_API_REPOSITORY }}
+      WORKER_REPOSITORY: ${{ vars.AWS_PRODUCTION_WORKER_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
+      ECS_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_ECS_TASK_DEFINITION }}
+      ECS_API_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_API_CONTAINER }}
+      WORKER_SERVICE: ${{ vars.AWS_PRODUCTION_WORKER_SERVICE }}
+      WORKER_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_WORKER_TASK_DEFINITION }}
+      ECS_WORKER_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_WORKER_CONTAINER }}
+      HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
+      COGNITO_AUTHORITY: ${{ vars.AWS_PRODUCTION_COGNITO_AUTHORITY }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_PRODUCTION_COGNITO_CLIENT_ID }}
+      COGNITO_OWNER_USERNAME: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_USERNAME }}
+      COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_PASSWORD }}
+      RELEASE_DIR: artifacts/release
+      DEPLOYMENT_RECORD: artifacts/release/production-promotion.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.preflight.outputs.release_run_id }}
+          name: release-evidence
+          path: artifacts/release
+      - name: Verify tag, protected-default ancestry, and immutable evidence
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
+          test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: production-release-${{ github.run_id }}
+      - name: Migrate and promote the verified API and worker release
+        run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-promotion-evidence
+          path: artifacts/release
+          retention-days: 90

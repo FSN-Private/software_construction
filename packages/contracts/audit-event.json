@@ -1,0 +1,11 @@
+{
+  "contractVersion": "v1",
+  "eventType": "authorization.denied",
+  "occurredAt": "2026-09-03T00:00:00Z",
+  "operationId": "op_01J00000000000000000000000",
+  "actor": "anonymous",
+  "outcome": "denied",
+  "safeContext": {
+    "reasonCode": "unauthenticated"
+  }
+}

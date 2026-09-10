@@ -1,0 +1,3 @@
+# Phase 5 AWS exercises
+
+Run only after explicitly authorized AWS bootstrap. In non-production, verify the administrator-provisioned owner can sign in; anonymous API access is denied; a synthetic `/live` failure, deployment failure, authentication anomaly, CI failure, backup-age placeholder, and 80%/100% budget test each notify the configured owner within 15 minutes and link to the operations dashboard/runbook. Record the CloudWatch alarm ARN, notification timestamp, operation ID, budget amount, and account recreation result. Destroy and recreate only the non-production stack; do not run this exercise in production.

@@ -1,0 +1,77 @@
+name: Deploy non-production
+
+on:
+  workflow_run:
+    workflows: [Build release evidence]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful Build release evidence workflow run ID for a master revision.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: deploy-nonprod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || github.event.workflow_run.conclusion == 'success' }}
+    environment: nonprod
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RELEASE_RUN_ID: ${{ inputs.release_run_id || github.event.workflow_run.id }}
+      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_NONPROD_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.AWS_NONPROD_ECR_REGISTRY }}
+      API_REPOSITORY: ${{ vars.AWS_NONPROD_API_REPOSITORY }}
+      WORKER_REPOSITORY: ${{ vars.AWS_NONPROD_WORKER_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.AWS_NONPROD_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_NONPROD_ECS_SERVICE }}
+      ECS_TASK_DEFINITION: ${{ vars.AWS_NONPROD_ECS_TASK_DEFINITION }}
+      ECS_API_CONTAINER: ${{ vars.AWS_NONPROD_ECS_API_CONTAINER }}
+      WORKER_SERVICE: ${{ vars.AWS_NONPROD_WORKER_SERVICE }}
+      WORKER_TASK_DEFINITION: ${{ vars.AWS_NONPROD_WORKER_TASK_DEFINITION }}
+      ECS_WORKER_CONTAINER: ${{ vars.AWS_NONPROD_ECS_WORKER_CONTAINER }}
+      HEALTH_URL: ${{ vars.AWS_NONPROD_HEALTH_URL }}
+      COGNITO_AUTHORITY: ${{ vars.AWS_NONPROD_COGNITO_AUTHORITY }}
+      COGNITO_CLIENT_ID: ${{ vars.AWS_NONPROD_COGNITO_CLIENT_ID }}
+      COGNITO_OWNER_USERNAME: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_USERNAME }}
+      COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_PASSWORD }}
+      RELEASE_DIR: artifacts/release
+      DEPLOYMENT_RECORD: artifacts/release/nonprod-deployment.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run_id || github.event.workflow_run.id }}
+          name: release-evidence
+          path: artifacts/release
+      - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: nonprod-release-${{ github.run_id }}
+      - name: Migrate and deploy the verified API and worker release
+        run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nonprod-deployment-evidence
+          path: artifacts/release
+          retention-days: 90

@@ -1,0 +1,123 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: ci / backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: dotnet restore tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --locked-mode
+      - run: dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore
+      - run: npm run lint
+      - run: npm run test:backend
+      - name: Start isolated ingest dependencies
+        run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
+      - run: npm run test:ingest
+      - name: Stop isolated ingest dependencies
+        if: always()
+        run: docker compose -f tests/integration/ingest/compose.yml -p feature005 down
+      - run: npm run test:contract
+      - run: npm run package:api
+
+  web:
+    name: ci / web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm --prefix apps/web ci --ignore-scripts
+      - run: npm --prefix apps/web run format
+      - run: npm --prefix apps/web run typecheck
+      - run: npm --prefix apps/web run test
+      - run: npm --prefix apps/web run test:accessibility
+      - run: npm --prefix apps/web run build
+
+  windows:
+    name: ci / windows
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - run: dotnet build apps/api/Platform.Api.csproj --nologo
+      - run: dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output artifacts/api
+
+  infrastructure:
+    name: ci / infrastructure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: packages/infrastructure/package-lock.json
+      - run: npm --prefix packages/infrastructure ci --ignore-scripts
+      - run: npm run validate:infrastructure
+
+  security:
+    name: ci / security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Block high or critical dependency vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          version: v0.70.0
+          cache: 'false'
+
+  required:
+    name: ci / required
+    needs: [backend, web, windows, infrastructure, security]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every component result to pass
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          WEB: ${{ needs.web.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          INFRASTRUCTURE: ${{ needs.infrastructure.result }}
+          SECURITY: ${{ needs.security.result }}
+        run: |
+          for RESULT in "$BACKEND" "$WEB" "$WINDOWS" "$INFRASTRUCTURE" "$SECURITY"; do
+            test "$RESULT" = success
+          done

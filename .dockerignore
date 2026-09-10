@@ -1,0 +1,12 @@
+.git
+.github
+.agents
+.dotnet-cli
+.npm-cache
+artifacts
+**/bin
+**/obj
+**/node_modules
+**/dist
+cdk.out
+coverage

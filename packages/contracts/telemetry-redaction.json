@@ -1,0 +1,14 @@
+{
+  "contractVersion": "v1",
+  "prohibitedClasses": [
+    "credential",
+    "token",
+    "image-payload",
+    "xmp-payload",
+    "geolocation",
+    "unnecessary-personal-identifier"
+  ],
+  "redactionMarker": "[REDACTED]",
+  "syntheticInput": "Bearer synthetic-test-token; latitude=13.7563",
+  "expectedOutput": "Bearer [REDACTED]; latitude=[REDACTED]"
+}

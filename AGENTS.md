@@ -14,7 +14,7 @@ These instructions apply to the entire repository.
 - For issue, commit, PR, review, and release linkage, use `.agents/skills/github-work-traceability/SKILL.md`. For actionable PR review threads, use the official `.agents/skills/gh-address-comments/SKILL.md`.
 - For dependencies, lockfiles, third-party actions, build plugins, and artifact provenance, use `.agents/skills/dependency-supply-chain-security/SKILL.md`.
 - For releases, deployments, migrations, rollbacks, or production incident follow-up, use `.agents/skills/release-operations/SKILL.md`.
-- Before any local commits are pushed, including documentation, policy, agent-instruction, skill, CI, and configuration changes, read and follow `.agents/skills/adversarial-pre-push-review/SKILL.md`.
+- Before pushing any local commits, read and follow `.agents/skills/adversarial-pre-push-review/SKILL.md`.
 - Use these skills automatically when the request matches; the user does not need to name them.
 
 ## Repository-wide invariants
@@ -24,7 +24,14 @@ These instructions apply to the entire repository.
 - Do not implement a feature until its requirements, design, non-functional considerations, acceptance criteria, and numbered implementation plan are complete and approved, or the user explicitly approves documented assumptions.
 - Keep implementation, applicable unit tests, affected documentation, and plan status in the same work slice.
 - Make a coherent Git commit at every planned milestone. Preserve unrelated changes and existing history.
-- Never push merely because implementation was requested. A push requires explicit user authorization and a passing alternate-model adversarial review.
-- The user explicitly authorizes delegation to a separate agent only as needed for the read-only alternate-model pre-push review. Use a genuinely different available model. If none is available, stop before push and report the gate as unmet.
+- Never push merely because implementation was requested. A push requires explicit user authorization and a passing alternate-model adversarial review with no unresolved blocking findings. Merging additionally requires explicit user authorization.
+- The user explicitly authorizes delegation to a separate agent only as needed for the read-only alternate-model pre-push review. Use a genuinely different available model. If none is available, stop before pushing and report the gate as unmet.
+
+## Execution persistence
+
+- A request to complete an approved feature authorizes execution of all of its in-scope numbered tasks, validation, documentation, milestone commits, convergence work, and remediation of valid blocking review findings. Do not treat a progress update, a failed first attempt, a milestone, or a `BLOCKED` review gate as a handoff or completion point.
+- Keep working through the next unblocked task and through review-remediation cycles in the same request. Record progress in the plan and use commentary for short updates, but give a final response only when the requested outcome is complete or a true blocker prevents further safe progress.
+- A true blocker is limited to a material product or design decision, an explicit user waiver or risk acceptance, missing authority or credentials, an unavailable required external dependency, an unsafe/unrelated worktree conflict, or a validation failure that remains unreproducible after reasonable in-scope diagnosis. State the exact blocker, evidence, and the smallest decision or access needed. Do not ask the user to decide routine implementation details or to authorize a retry, a test, or an in-scope fix.
+- When adversarial review finds valid, in-scope blocking implementation work while the active request is to complete the feature or prepare it for push, map it to the numbered plan, remediate it, validate it, and obtain another independent review. `BLOCKED` is the status of the current push gate, not permission to abandon the feature. Record non-blocking findings without delaying the push. For a review-only request, record findings without changing implementation unless the user asks for fixes.
 
 For bug fixes, refactors, maintenance, and documentation-only work, apply documentation and planning proportional to risk. If the change introduces new behavior or materially changes a contract, treat it as a feature and use the full workflow.
