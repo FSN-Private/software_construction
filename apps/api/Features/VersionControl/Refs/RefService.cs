@@ -9,14 +9,15 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Refs;
 
-public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock = null)
+public sealed class RefService(NpgsqlDataSource dataSource, IntegrityService? integrity = null, TimeProvider? clock = null)
 {
     private DateTimeOffset Now => (clock ?? TimeProvider.System).GetUtcNow();
+    private IntegrityService Integrity => integrity ?? new IntegrityService(dataSource, clock: clock);
 
     public async Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
         using var measurement = VersionControlTelemetry.Measure("ref.create");
-        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
+        if (!(await Integrity.VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (kind is not ("branch" or "tag")) throw new VersionControlProblem("invalid_request", 400);
         if (request.CommitId is null) throw new VersionControlProblem("invalid_request", 400);
         var name = RefNames.Normalize(request.Name);

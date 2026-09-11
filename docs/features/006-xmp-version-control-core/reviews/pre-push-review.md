@@ -81,3 +81,26 @@ Round 1 validation by the reviewer: the no-build contract/model suite with capac
 **Round 1 gate result: BLOCKED**
 
 The earlier PASS above reviewed planning artifacts and is superseded for the completed implementation by this active review series.
+
+### F006-02 storage-version addendum
+
+While preparing the Round 2 handoff, the implementing agent rechecked F006-02 against FR-001, FR-018, and AC-008 and found the first remediation still proved only authoritative database provenance, not physical availability of the pinned storage object version. This was **valid and fixed** before final agreement.
+
+Fixes:
+
+- `S3ObjectStore.VerifyStoredAsync` verifies a specific key/version against the expected SHA-256 and byte length.
+- `IntegrityService` uses the configured object store during full verification and reports `missing_object` or `altered_object` for unavailable or checksum-mismatched pinned versions.
+- DI now supplies the storage-aware `IntegrityService` to the API, scheduled verifier, ref creation, rewrite, recovery, and projection rebuild paths.
+- The PostgreSQL/MinIO version-control harness seeds a real versioned XMP object, verifies healthy storage-backed integrity, then proves altered and missing pinned object versions fail integrity and block ref advancement.
+
+Validation after this addendum:
+
+- `dotnet build tests/version-control/Platform.VersionControl.Tests.csproj --no-restore` passed.
+- `VERSION_CONTROL_INTEGRATION=1 VERSION_CONTROL_CAPACITY=1 dotnet run --no-build --project tests/version-control/Platform.VersionControl.Tests.csproj` passed, including the new storage-backed object corruption regression.
+- `dotnet format tests/version-control/Platform.VersionControl.Tests.csproj --verify-no-changes --no-restore` passed.
+- `git diff --check` passed.
+- `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:contract`, `npm run test:ci-contract`, and `npm run test:reliability` passed.
+- `npm run validate:security` passed with network access for npm advisory checks.
+- `npm run validate:infrastructure` passed with network access for npm advisory checks; the run emitted only the existing CDK deprecation/feature-flag warnings.
+
+The updated pending diff requires a fresh alternate-model review before the pre-push gate can pass.

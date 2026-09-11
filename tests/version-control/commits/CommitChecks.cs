@@ -15,8 +15,10 @@ using Platform.Api.Features.VersionControl.Projection;
 using System.Diagnostics;
 using Amazon.Runtime;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Platform.Storage;
 using NpgsqlTypes;
+using System.Security.Cryptography;
 
 internal static class CommitChecks
 {
@@ -197,7 +199,7 @@ internal static class CommitChecks
             var rewriteStage = await working.StageAsync("owner-1", "library-1", "rewrite-client", "rewrite-test", new([rewriteWorking.Id], reverted.CommitId, 0), "op_rewrite_stage", default);
             var rewriteCommit = await commits.PublishAsync("owner-1", "library-1", "rewrite-client", new(rewriteStage, "rewrite-test", reverted.CommitId, "Disposable branch edit", DateTimeOffset.Parse("2026-09-10T00:02:00Z")), "rewrite-commit", "op_rewrite_commit", default);
             var rewriteClock = new FixedClock(DateTimeOffset.Parse("2026-09-10T00:00:00Z"));
-            var rewrite = new RewriteService(db, rewriteClock);
+            var rewrite = new RewriteService(db, clock: rewriteClock);
             var preview = await rewrite.PreviewAsync("owner-1", "library-1", "rewrite-test", reverted.CommitId!, default);
             Check(preview.DisplacedCommitIds.SequenceEqual([rewriteCommit.CommitId!]), "Rewrite preview must identify only the branch-exclusive commit.");
             await rewrite.ApplyAsync("owner-1", "library-1", new("rewrite-test", reverted.CommitId!, preview.ConfirmationToken, true), "rewrite-apply", "op_rewrite", default);
@@ -208,13 +210,13 @@ internal static class CommitChecks
                 rewriteReflog = (Guid)(await ScalarAsync(connection, "SELECT id FROM vc_reflog WHERE operation='rewrite'", default))!;
                 Check((DateTime)(await ScalarAsync(connection, "SELECT expires_at FROM lifecycle_holds WHERE source_reference=$1 LIMIT 1", default, "vc:" + rewriteCommit.CommitId))! == rewriteClock.GetUtcNow().UtcDateTime.AddDays(90), "Displaced content holds must use the exact 90-day deadline.");
             }
-            var recovered = await new RewriteService(db, new FixedClock(rewriteClock.GetUtcNow().AddDays(90))).RecoverAsync("owner-1", "library-1", rewriteReflog, "recovered-edit", "recover-edit", "op_recover", default);
+            var recovered = await new RewriteService(db, clock: new FixedClock(rewriteClock.GetUtcNow().AddDays(90))).RecoverAsync("owner-1", "library-1", rewriteReflog, "recovered-edit", "recover-edit", "op_recover", default);
             Check(recovered.CommitId == rewriteCommit.CommitId, "Day-90 recovery must restore the identical immutable commit.");
             var recoveredWorking = await working.PutAsync("owner-1", "library-1", "recovered-client", new(Id(50), Id(1050), "recovered-edit", "modified", Digest(250), Digest(251), null, null, 0), "op_recovered_working", default);
             var recoveredStage = await working.StageAsync("owner-1", "library-1", "recovered-client", "recovered-edit", new([recoveredWorking.Id], recovered.CommitId, 0), "op_recovered_stage", default);
             await commits.PublishAsync("owner-1", "library-1", "recovered-client", new(recoveredStage, "recovered-edit", recovered.CommitId, "Advance recovered branch", DateTimeOffset.Parse("2026-09-10T00:02:01Z")), "recovered-child", "op_recovered_child", default);
 
-            await new RewriteService(db, new FixedClock(rewriteClock.GetUtcNow().AddDays(90).AddSeconds(1))).ExpireAsync("owner-1", "library-1", default);
+            await new RewriteService(db, clock: new FixedClock(rewriteClock.GetUtcNow().AddDays(90).AddSeconds(1))).ExpireAsync("owner-1", "library-1", default);
             await using (var connection = await db.OpenConnectionAsync())
             {
                 Check(await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE normalized_name=$1", default, $"recovery/{rewriteReflog:N}") is null, "Expired generated recovery refs must be removed.");
@@ -258,6 +260,7 @@ internal static class CommitChecks
 
             var integrity = new IntegrityService(db);
             Check((await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted graph/content evidence must pass integrity verification.");
+            await PhysicalObjectIntegrityAsync(db);
             var projections = new ProjectionService(db, integrity);
             Check(await projections.RebuildAsync("owner-1", "library-1", default) > 0, "Derived state must rebuild solely from immutable graph evidence.");
             var concurrentWorking = await working.PutAsync("owner-1", "library-1", "rebuild-client", new(Id(70), Id(1070), "main", "modified", Digest(70), Digest(271), null, null, 0), "op_rebuild_working", default);
@@ -421,6 +424,50 @@ internal static class CommitChecks
         var stateP95 = state.Order().ElementAt(18);
         Check(lineageP95 <= 2000 && stateP95 <= 200, "Persisted reference-scale p95 targets must hold.");
         Console.WriteLine($"Persisted capacity checks passed: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms.");
+    }
+
+    private static async Task PhysicalObjectIntegrityAsync(NpgsqlDataSource db)
+    {
+        const string owner = "storage-owner";
+        const string library = "storage-library";
+        var asset = Id(9700);
+        var edit = Id(19700);
+        var payload = "storage-backed-xmp"u8.ToArray();
+        var address = new ContentAddress(Convert.ToHexStringLower(SHA256.HashData(payload)), payload.Length);
+        using var s3 = new AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = "http://127.0.0.1:9000", ForcePathStyle = true });
+        var bucket = "vc-integrity-" + Guid.NewGuid().ToString("N");
+        await s3.PutBucketAsync(new PutBucketRequest { BucketName = bucket });
+        await s3.PutBucketVersioningAsync(new PutBucketVersioningRequest { BucketName = bucket, VersioningConfig = new S3BucketVersioningConfig { Status = VersionStatus.Enabled } });
+        var storage = new S3ObjectStore(s3, bucket, "ingest-test-key");
+        await using var stream = new MemoryStream(payload);
+        var version = await storage.PublishVerifiedAsync(address, stream, default);
+        var at = DateTimeOffset.Parse("2026-09-10T00:05:00Z");
+        var entry = new VersionControlEntry(asset, edit, "added", null, address.Sha256);
+        var manifest = new VersionControlManifest(library, [], owner, at, at, "Storage-backed commit", [entry]);
+        var bytes = VersionControlManifestCodec.Write(manifest);
+        var commit = VersionControlManifestCodec.Digest(bytes);
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            await ExecuteAsync(connection, "INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,$2,'xmp',$3,$4,'authoritative')", default, address.Sha256, address.Length, address.AuthoritativeKey, version);
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) VALUES($1,$2,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($3,$1,0,$4,'fixture')", default, asset, owner, edit, address.Sha256);
+            await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,$2,$3,$2,$4,$4,'Storage-backed commit',1,1,$5)", default, commit, owner, library, at, bytes);
+            await ExecuteAsync(connection, "INSERT INTO vc_commit_entries(commit_id,ordinal,asset_id,edit_id,change_kind,content_sha256) VALUES($1,0,$2,$3,'added',$4)", default, commit, asset, edit, address.Sha256);
+        }
+
+        var integrity = new IntegrityService(db, storage);
+        Check((await integrity.VerifyAsync(owner, library, default)).Healthy, "Pinned storage object version must verify before ref advancement.");
+        await using (var wrong = new MemoryStream("wrong-xmp"u8.ToArray()))
+        {
+            var corrupted = await s3.PutObjectAsync(new PutObjectRequest { BucketName = bucket, Key = address.AuthoritativeKey, InputStream = wrong, ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = "ingest-test-key", ChecksumAlgorithm = ChecksumAlgorithm.SHA256 });
+            await using var connection = await db.OpenConnectionAsync();
+            await ExecuteAsync(connection, "UPDATE content_objects SET storage_version=$2 WHERE sha256=$1", default, address.Sha256, corrupted.VersionId);
+        }
+        Check((await integrity.VerifyAsync(owner, library, default)).Codes.Contains("altered_object"), "Altered pinned storage bytes must fail integrity verification.");
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, "UPDATE content_objects SET storage_version=$2 WHERE sha256=$1", default, address.Sha256, version);
+        await storage.DeleteVersionAsync(address.AuthoritativeKey, version, default);
+        Check((await integrity.VerifyAsync(owner, library, default)).Codes.Contains("missing_object"), "Missing pinned storage version must fail integrity verification.");
+        await RejectCodeAsync(() => new RefService(db, integrity).CreateAsync(owner, library, "branch", new("broken-storage", commit), "broken-storage", "op_broken_storage", default), "graph_corrupt");
     }
 
     private static Guid Id(int value) => Guid.Parse($"{value:x8}-0000-0000-0000-000000000000");

@@ -11,9 +11,10 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Rewrite;
 
-public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? clock = null)
+public sealed class RewriteService(NpgsqlDataSource dataSource, IntegrityService? integrity = null, TimeProvider? clock = null)
 {
     private DateTimeOffset Now => (clock ?? TimeProvider.System).GetUtcNow();
+    private IntegrityService Integrity => integrity ?? new IntegrityService(dataSource, clock: clock);
 
     public async Task<RewritePreview> PreviewAsync(string owner, string library, string branchValue, string newHead, CancellationToken cancellationToken)
     {
@@ -29,7 +30,7 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
 
     public async Task<VersionControlResult> ApplyAsync(string owner, string library, RewriteRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
-        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
+        if (!(await Integrity.VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (!request.Confirm) throw new VersionControlProblem("confirmation_required");
         var branch = RefNames.Normalize(request.Branch);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -77,7 +78,7 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var oldHead = (await ScalarAsync(connection, "SELECT old_head FROM vc_reflog WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND recovery_expires_at >= $4", cancellationToken, reflogId, owner, library, Now) as string)?.Trim() ?? throw new VersionControlProblem("recovery_expired", 404);
-        return await new RefService(dataSource, clock).CreateAsync(owner, library, "branch", new(branchName, oldHead), idempotencyKey, operationId, cancellationToken);
+        return await new RefService(dataSource, integrity, clock).CreateAsync(owner, library, "branch", new(branchName, oldHead), idempotencyKey, operationId, cancellationToken);
     }
 
     public async Task<int> ExpireAsync(string owner, string library, CancellationToken cancellationToken)

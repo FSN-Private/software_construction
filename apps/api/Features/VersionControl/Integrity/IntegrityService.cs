@@ -1,10 +1,13 @@
+using System.Net;
+using Amazon.S3;
 using Npgsql;
 using Platform.Contracts.VersionControl;
+using Platform.Storage;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Integrity;
 
-public sealed class IntegrityService(NpgsqlDataSource dataSource, TimeProvider? clock = null)
+public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore? storage = null, TimeProvider? clock = null)
 {
     public async Task<GraphIntegrityResult> VerifyAsync(string owner, string library, CancellationToken cancellationToken)
     {
@@ -56,6 +59,36 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, TimeProvider? 
             """, cancellationToken, owner, library) is not null;
         if (invalidProvenance && !result.Codes.Contains("invalid_content_provenance", StringComparer.Ordinal))
             result = result with { Healthy = false, Codes = result.Codes.Append("invalid_content_provenance").Order(StringComparer.Ordinal).ToArray() };
+        if (storage is not null)
+        {
+            var codes = result.Codes.ToHashSet(StringComparer.Ordinal);
+            await using var command = Command(connection, """
+                SELECT DISTINCT o.sha256,o.byte_length,o.storage_key,o.storage_version
+                FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id
+                JOIN content_objects o ON o.sha256=e.base_content_sha256 OR o.sha256=e.content_sha256
+                WHERE c.owner_id=$1 AND c.library_id=$2 AND o.category='xmp' AND o.integrity_state='authoritative'
+                  AND o.storage_key<>'' AND o.storage_version IS NOT NULL
+                """, owner, library);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var address = new ContentAddress(reader.GetString(0).Trim(), reader.GetInt64(1));
+                try { await storage.VerifyStoredAsync(reader.GetString(2), reader.GetString(3), address, cancellationToken); }
+                catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound || exception.ErrorCode is "NoSuchKey" or "NoSuchVersion")
+                {
+                    codes.Add("missing_object");
+                }
+                catch (InvalidDataException)
+                {
+                    codes.Add("altered_object");
+                }
+                catch (ArgumentException)
+                {
+                    codes.Add("invalid_content_provenance");
+                }
+            }
+            if (codes.Count != result.Codes.Count) result = result with { Healthy = false, Codes = codes.Order(StringComparer.Ordinal).ToArray() };
+        }
         var crossScope = await ScalarAsync(connection, """
             SELECT 1
             WHERE EXISTS(
