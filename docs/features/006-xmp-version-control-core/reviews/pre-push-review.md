@@ -189,9 +189,26 @@ The reviewer confirmed F006-01–10, F006-12/13, and F006-N03 resolved within th
 
 ### Round 4 remediation
 
-- F006-11: the capacity fixture now creates completed owner/asset/edit upload provenance for both historical content digests and requires a healthy production `IntegrityService` result across all 10,000 manifests and 1,000,000 entries before performance sampling.
+- F006-11: the capacity fixture now creates completed owner/asset/edit upload provenance for both historical content digests and requires a healthy full graph/content-provenance `IntegrityService` result across all 10,000 manifests and 1,000,000 entries before performance sampling.
 - F006-14: deferred database constraint triggers compare the exact ordered normalized parent set and normalized received time with canonical manifest evidence at transaction commit. Extra edges, missing edges, and timestamp mismatches are rejected; malformed evidence remains available to the quarantine verifier rather than being mistaken for a valid page index.
 
-PostgreSQL/MinIO integration and capacity validation passed from a clean schema after remediation: production integrity accepted the full reference-scale library; 10,000-node lineage p95 210 ms; 100,000-asset state p95 4.2 ms; one-million-entry indexed lookup p95 3.7 ms; storage-backed 100-entry commit p95 152 ms; regular 100-entry commit 82 ms.
+PostgreSQL/MinIO integration and capacity validation passed from a clean schema after remediation: full graph/content-provenance integrity accepted the reference-scale library; 10,000-node lineage p95 210 ms; 100,000-asset state p95 4.2 ms; one-million-entry indexed lookup p95 3.7 ms; storage-backed 100-entry commit p95 152 ms; regular 100-entry commit 82 ms. Exact PowerShell command: `$env:VERSION_CONTROL_INTEGRATION='1'; $env:VERSION_CONTROL_CAPACITY='1'; dotnet run --no-build --project tests/version-control/Platform.VersionControl.Tests.csproj`.
 
-Repository validation passed again: `dotnet build`/lint with zero warnings, `dotnet format --verify-no-changes`, `git diff --check`, `npm test`, typecheck, web build, contract checks, CI contract, reliability fault injection, dependency/security validation, and infrastructure validation. A final PostgreSQL integration rerun after narrowing the malformed-evidence exception handler also passed; infrastructure retained only the known CDK notices. Post-merge-only Round 5 review remains pending.
+Repository validation passed again: `dotnet build`/lint with zero warnings, `dotnet format --verify-no-changes`, `git diff --check`, `npm test`, typecheck, web build, contract checks, CI contract, reliability fault injection, dependency/security validation, and infrastructure validation. A final PostgreSQL integration rerun after narrowing the malformed-evidence exception handler also passed; infrastructure retained only the known CDK notices. The post-merge-only Round 5 result follows.
+
+## Stable implementation review Round 5 — 2026-09-11
+
+**Reviewer model**: `gpt-5.6-sol` (alternate model)
+
+**User-directed scope**: `6ebdec6f90957c60facde918ecc6093d103710ec..6173b685143b95653655b62e622e83c8f1431db8` (exactly 13 commits after the latest `origin/master` merge)
+
+The reviewer confirmed F006-01–14 and F006-N03 resolved in the reviewed post-merge scope, retained only F006-N01 as non-blocking, and found no new blocking issue. In particular:
+
+- F006-11 is resolved because every capacity edit has completed upload provenance for both historical digests, the fixture counts one million canonical-matching entries, full graph/content-provenance integrity must pass before sampling, and the MinIO-backed commit measurement runs after the scale load.
+- F006-14 is resolved because deferred constraints validate exact ordered parent arrays and received time after complete root/single-parent/merge transactions; targeted tests reject extra/missing edges and time drift while malformed evidence remains available to the quarantine verifier.
+
+**Round 5 technical gate result: PASS**
+
+**Final reviewer agreement**: `AGREED`
+
+**Final adversarial pre-push gate: PASS**
