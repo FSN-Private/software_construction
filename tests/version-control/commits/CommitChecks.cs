@@ -280,7 +280,6 @@ internal static class CommitChecks
 
             var integrity = new IntegrityService(db);
             Check((await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted graph/content evidence must pass integrity verification.");
-            await PhysicalObjectIntegrityAsync(db);
             await ConcurrentIntegrityPublicationAsync(db);
             await WorkerStorageFailureAsync(db);
             var projections = new ProjectionService(db, integrity);
@@ -310,6 +309,7 @@ internal static class CommitChecks
             }
             Check(assetLatencies.Order().ElementAt(18) <= 200, "Per-asset branch state p95 must be at most 200 ms.");
             if (Environment.GetEnvironmentVariable("VERSION_CONTROL_CAPACITY") == "1") await PersistedLineageCapacityAsync(db);
+            await PhysicalObjectIntegrityAsync(db);
             await using (var connection = await db.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -385,79 +385,112 @@ internal static class CommitChecks
     {
         const string owner = "capacity-owner";
         const string library = "capacity-library";
-        const int count = 10_000;
-        var asset = Id(9900);
-        var edit = Id(19900);
-        var digest = Digest(300);
-        var commits = new List<(string Id, string? Parent, byte[] Bytes, VersionControlManifest Manifest)>(count);
-        string? parent = null;
-        for (var index = 0; index < count; index++)
-        {
-            var entry = new VersionControlEntry(asset, edit, index == 0 ? "added" : "modified", index == 0 ? null : digest, digest);
-            var manifest = new VersionControlManifest(library, parent is null ? [] : [parent], owner, DateTimeOffset.UnixEpoch.AddSeconds(index), DateTimeOffset.UnixEpoch.AddSeconds(index), "Persisted capacity " + index, [entry]);
-            var bytes = VersionControlManifestCodec.Write(manifest);
-            var id = VersionControlManifestCodec.Digest(bytes);
-            commits.Add((id, parent, bytes, manifest));
-            parent = id;
-        }
+        const int commitCount = 10_000;
+        const int entriesPerCommit = 100;
+        var assets = Enumerable.Range(0, entriesPerCommit).Select(index => Id(50_000 + index)).ToArray();
+        var edits = Enumerable.Range(0, entriesPerCommit).Select(index => Id(60_000 + index)).ToArray();
+        var commitIds = new List<string>(commitCount);
         await using var connection = await db.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
-        await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) VALUES($1,$2,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($3,$1,0,$4,'capacity')", default, asset, owner, edit, digest);
+        await using (var writer = await connection.BeginBinaryImportAsync("COPY assets(id,owner_id,state,format) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var asset in assets) { await writer.StartRowAsync(); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync("active", NpgsqlDbType.Text); await writer.WriteAsync("dng", NpgsqlDbType.Text); }
+            await writer.CompleteAsync();
+        }
+        await using (var writer = await connection.BeginBinaryImportAsync("COPY edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) FROM STDIN (FORMAT BINARY)"))
+        {
+            for (var index = 0; index < entriesPerCommit; index++) { await writer.StartRowAsync(); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync("capacity", NpgsqlDbType.Text); }
+            await writer.CompleteAsync();
+        }
+        string? parent = null;
         await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) FROM STDIN (FORMAT BINARY)"))
         {
-            foreach (var item in commits)
+            for (var index = 0; index < commitCount; index++)
             {
+                var baseDigest = index == 0 ? null : Digest(300 + (index - 1) % 2);
+                var contentDigest = Digest(300 + index % 2);
+                var entries = Enumerable.Range(0, entriesPerCommit).Select(ordinal => new VersionControlEntry(assets[ordinal], edits[ordinal], index == 0 ? "added" : "modified", baseDigest, contentDigest)).ToArray();
+                var at = DateTimeOffset.UnixEpoch.AddSeconds(index);
+                var manifest = new VersionControlManifest(library, parent is null ? [] : [parent], owner, at, at, "Persisted capacity " + index, entries);
+                var bytes = VersionControlManifestCodec.Write(manifest);
+                var id = VersionControlManifestCodec.Digest(bytes);
                 await writer.StartRowAsync();
-                await writer.WriteAsync(item.Id, NpgsqlDbType.Char); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync(owner, NpgsqlDbType.Text);
-                await writer.WriteAsync(item.Manifest.AuthoredAt, NpgsqlDbType.TimestampTz); await writer.WriteAsync(item.Manifest.ReceivedAt, NpgsqlDbType.TimestampTz); await writer.WriteAsync(item.Manifest.Message, NpgsqlDbType.Text);
-                await writer.WriteAsync(1, NpgsqlDbType.Integer); await writer.WriteAsync(1, NpgsqlDbType.Integer); await writer.WriteAsync(item.Bytes, NpgsqlDbType.Bytea);
+                await writer.WriteAsync(id, NpgsqlDbType.Char); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync(owner, NpgsqlDbType.Text);
+                await writer.WriteAsync(at, NpgsqlDbType.TimestampTz); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz); await writer.WriteAsync(manifest.Message, NpgsqlDbType.Text);
+                await writer.WriteAsync(1, NpgsqlDbType.Integer); await writer.WriteAsync(1, NpgsqlDbType.Integer); await writer.WriteAsync(bytes, NpgsqlDbType.Bytea);
+                commitIds.Add(id);
+                parent = id;
             }
             await writer.CompleteAsync();
         }
         await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_commit_parents(commit_id,ordinal,parent_id) FROM STDIN (FORMAT BINARY)"))
         {
-            foreach (var item in commits.Where(item => item.Parent is not null)) { await writer.StartRowAsync(); await writer.WriteAsync(item.Id, NpgsqlDbType.Char); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(item.Parent!, NpgsqlDbType.Char); }
+            for (var index = 1; index < commitIds.Count; index++) { await writer.StartRowAsync(); await writer.WriteAsync(commitIds[index], NpgsqlDbType.Char); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(commitIds[index - 1], NpgsqlDbType.Char); }
             await writer.CompleteAsync();
         }
         await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_commit_entries(commit_id,ordinal,asset_id,edit_id,change_kind,base_content_sha256,content_sha256) FROM STDIN (FORMAT BINARY)"))
         {
-            foreach (var item in commits)
+            for (var commitIndex = 0; commitIndex < commitIds.Count; commitIndex++)
             {
-                var entry = item.Manifest.Entries[0];
-                await writer.StartRowAsync(); await writer.WriteAsync(item.Id, NpgsqlDbType.Char); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteAsync(edit, NpgsqlDbType.Uuid); await writer.WriteAsync(entry.Change, NpgsqlDbType.Text);
-                if (entry.BaseContentSha256 is null) await writer.WriteNullAsync(); else await writer.WriteAsync(entry.BaseContentSha256, NpgsqlDbType.Char);
-                await writer.WriteAsync(digest, NpgsqlDbType.Char);
+                var baseDigest = commitIndex == 0 ? null : Digest(300 + (commitIndex - 1) % 2);
+                var contentDigest = Digest(300 + commitIndex % 2);
+                for (var ordinal = 0; ordinal < entriesPerCommit; ordinal++)
+                {
+                    await writer.StartRowAsync(); await writer.WriteAsync(commitIds[commitIndex], NpgsqlDbType.Char); await writer.WriteAsync(ordinal, NpgsqlDbType.Integer); await writer.WriteAsync(assets[ordinal], NpgsqlDbType.Uuid); await writer.WriteAsync(edits[ordinal], NpgsqlDbType.Uuid); await writer.WriteAsync(commitIndex == 0 ? "added" : "modified", NpgsqlDbType.Text);
+                    if (baseDigest is null) await writer.WriteNullAsync(); else await writer.WriteAsync(baseDigest, NpgsqlDbType.Char);
+                    await writer.WriteAsync(contentDigest, NpgsqlDbType.Char);
+                }
             }
             await writer.CompleteAsync();
         }
-        await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'capacity','capacity','branch',$3,false); INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,rebuilt_at) VALUES($1,$2,'capacity',$3,$4,$5,$6,now())", default, owner, library, parent, asset, edit, digest);
         await transaction.CommitAsync();
+        var additionalAssets = Enumerable.Range(0, 99_900).Select(index => Id(70_000 + index)).ToArray();
         await using (var scaleTransaction = await connection.BeginTransactionAsync())
         {
-            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) SELECT md5('vc-capacity-asset-' || value)::uuid,$1,'active','dng' FROM generate_series(1,100000) value", default, owner);
-            await ExecuteAsync(connection, "INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,content_sha256,rebuilt_at) SELECT $1,$2,'capacity',$3,md5('vc-capacity-asset-' || value)::uuid,$4,now() FROM generate_series(1,100000) value", default, owner, library, parent, digest);
-            await ExecuteAsync(connection, "INSERT INTO vc_working_changes(id,owner_id,library_id,client_id,branch_name,asset_id,current_content_sha256,change_kind) SELECT md5('vc-working-' || asset_value || '-' || client_value)::uuid,$1,$2,'capacity-client-' || client_value,'main',md5('vc-capacity-asset-' || asset_value)::uuid,$3,'added' FROM generate_series(1,100000) asset_value CROSS JOIN generate_series(1,10) client_value", default, owner, library, digest);
+            await using (var writer = await connection.BeginBinaryImportAsync("COPY assets(id,owner_id,state,format) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var asset in additionalAssets) { await writer.StartRowAsync(); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync("active", NpgsqlDbType.Text); await writer.WriteAsync("dng", NpgsqlDbType.Text); }
+                await writer.CompleteAsync();
+            }
+            await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'capacity','capacity','branch',$3,false)", default, owner, library, parent);
+            await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,rebuilt_at) FROM STDIN (FORMAT BINARY)"))
+            {
+                for (var index = 0; index < assets.Length; index++)
+                {
+                    await writer.StartRowAsync(); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync("capacity", NpgsqlDbType.Text); await writer.WriteAsync(parent!, NpgsqlDbType.Char); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync(DateTimeOffset.UtcNow, NpgsqlDbType.TimestampTz);
+                }
+                foreach (var asset in additionalAssets)
+                {
+                    await writer.StartRowAsync(); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync("capacity", NpgsqlDbType.Text); await writer.WriteAsync(parent!, NpgsqlDbType.Char); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteNullAsync(); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync(DateTimeOffset.UtcNow, NpgsqlDbType.TimestampTz);
+                }
+                await writer.CompleteAsync();
+            }
             await scaleTransaction.CommitAsync();
         }
-        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_001, "Persisted capacity must contain at least 100,000 library assets.");
-        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million working revisions.");
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_000, "Persisted capacity must contain 100,000 library assets.");
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id WHERE c.owner_id=$1 AND c.library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million immutable commit entries.");
         var queries = new QueryService(db);
         var projection = new ProjectionService(db, new IntegrityService(db));
         var lineage = new List<double>();
         var state = new List<double>();
+        var entryLookup = new List<double>();
         for (var sample = 0; sample < 20; sample++)
         {
             var timer = Stopwatch.StartNew();
             Check((await queries.ProjectAsync(owner, library, "capacity", null, false, 0, 100, default)).Count == 100, "Persisted 10,000-node lineage must return a complete first page.");
             timer.Stop(); lineage.Add(timer.Elapsed.TotalMilliseconds);
             timer.Restart();
-            Check((await projection.AssetAsync(owner, library, "capacity", asset, default)).Count == 1, "Persisted capacity state must resolve the indexed asset.");
+            Check((await projection.AssetAsync(owner, library, "capacity", assets[0], default)).Count == 1, "Persisted capacity state must resolve the indexed asset.");
             timer.Stop(); state.Add(timer.Elapsed.TotalMilliseconds);
+            timer.Restart();
+            Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries WHERE asset_id=$1 AND edit_id=$2", default, assets[0], edits[0]), System.Globalization.CultureInfo.InvariantCulture) == commitCount, "Persisted commit-entry index must resolve every revision for one edit identity.");
+            timer.Stop(); entryLookup.Add(timer.Elapsed.TotalMilliseconds);
         }
         var lineageP95 = lineage.Order().ElementAt(18);
         var stateP95 = state.Order().ElementAt(18);
-        Check(lineageP95 <= 2000 && stateP95 <= 200, "Persisted reference-scale p95 targets must hold.");
-        Console.WriteLine($"Persisted capacity checks passed at 1M working entries/100k assets: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms.");
+        var entryLookupP95 = entryLookup.Order().ElementAt(18);
+        Check(lineageP95 <= 2000 && stateP95 <= 200 && entryLookupP95 <= 200, $"Persisted reference-scale p95 targets must hold: lineage {lineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
+        Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
     }
 
     private static async Task PhysicalObjectIntegrityAsync(NpgsqlDataSource db)

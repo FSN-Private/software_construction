@@ -13,6 +13,7 @@ public sealed class QueryService(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);
         var head = await ResolveAsync(connection, owner, library, refName, cancellationToken);
+        if (asset is null) return await ProjectPageAsync(connection, owner, library, head, showHidden, offset, limit, cancellationToken);
         var graph = await LoadAsync(connection, owner, library, cancellationToken);
         return GraphQueries.Project(graph, head, asset, showHidden, offset, limit).Select(ToView).ToArray();
     }
@@ -74,6 +75,43 @@ public sealed class QueryService(NpgsqlDataSource dataSource)
         }
         var head = await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3", cancellationToken, owner, library, RefNames.Normalize(value)) as string;
         return head?.Trim() ?? throw new VersionControlProblem("commit_not_found", 404);
+    }
+
+    private static async Task<IReadOnlyList<CommitView>> ProjectPageAsync(NpgsqlConnection connection, string owner, string library, string head, bool showHidden, int offset, int limit, CancellationToken cancellationToken)
+    {
+        var result = new List<CommitView>();
+        try
+        {
+            await using var command = Command(connection, """
+                WITH RECURSIVE reachable(id) AS (
+                    SELECT $3::char(64)
+                    UNION
+                    SELECT parent.parent_id
+                    FROM reachable r
+                    JOIN vc_commit_parents parent ON parent.commit_id=r.id)
+                SELECT c.id,c.manifest_bytes,COALESCE(v.hidden,false),bool_or(c.id IS NULL) OVER()
+                FROM reachable r
+                LEFT JOIN vc_commits c ON c.id=r.id AND c.owner_id=$1 AND c.library_id=$2
+                LEFT JOIN vc_visibility v ON v.commit_id=c.id AND v.owner_id=c.owner_id AND v.library_id=c.library_id
+                WHERE c.id IS NULL OR $4 OR NOT COALESCE(v.hidden,false)
+                ORDER BY c.received_at DESC NULLS LAST,c.id
+                OFFSET $5 LIMIT $6
+                """, owner, library, head, showHidden, Math.Max(0, offset), Math.Clamp(limit, 1, 1000));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (reader.GetBoolean(3) || reader.IsDBNull(0)) throw new VersionControlProblem("graph_corrupt");
+                var id = reader.GetString(0).Trim();
+                var bytes = (byte[])reader[1];
+                var manifest = VersionControlManifestCodec.Read(bytes);
+                if (VersionControlManifestCodec.Digest(bytes) != id || !VersionControlManifestCodec.Write(manifest).AsSpan().SequenceEqual(bytes) || manifest.LibraryId != library) throw new VersionControlProblem("graph_corrupt");
+                result.Add(new(id, manifest.Parents, manifest.AuthorId, manifest.AuthoredAt, manifest.ReceivedAt, manifest.Message, manifest.Entries.Select(entry => new ChangeView(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)).ToArray(), reader.GetBoolean(2)));
+            }
+        }
+        catch (VersionControlProblem) { throw; }
+        catch (PostgresException error) when (error.SqlState.StartsWith("22", StringComparison.Ordinal)) { throw new VersionControlProblem("graph_corrupt"); }
+        catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or NotSupportedException or InvalidOperationException or KeyNotFoundException) { throw new VersionControlProblem("graph_corrupt"); }
+        return result;
     }
 
     private static CommitView ToView(GraphCommit commit) => new(commit.Id, commit.Parents, commit.Author, commit.AuthoredAt, commit.ReceivedAt, commit.Message, commit.Entries, commit.Hidden);

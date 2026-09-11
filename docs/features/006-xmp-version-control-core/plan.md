@@ -19,7 +19,7 @@ The format/invariants are in proposed [ADR-0006](../../architecture/decisions/00
 | Working state | mutable owner/client/branch-scoped rows reference immutable base/current XMP IDs |
 | Read model | materialized branch state/image projections derive from manifests and are rebuildable/integrity checked |
 | Retention | immutable commits never change; ref/reflog/hidden metadata manages storage holds; rewrite recovery ≥90 days |
-| Targets | 100-image commit ≤2s p95 after content exists, measured through pinned object-storage validation; per-asset head ≤200ms; 10k-node projection page ≤2s; persisted capacity includes 1M working entries and 100k assets |
+| Targets | 100-image commit ≤2s p95 after content exists, measured through pinned object-storage validation at reference scale; per-asset head ≤200ms; 10k-node projection page ≤2s; persisted capacity includes 1M canonical commit entries and 100k assets |
 
 ## Constitution Check
 

@@ -138,7 +138,7 @@ Round 2 directly inspected requirements, plan/tasks/review history, contracts/sc
 
 - F006-05: added a request fingerprint alongside the fully derived operation fingerprint, moved ref-create/rewrite/recovery/merge replay ahead of mutable preconditions, and covered retries after graph corruption, reflog expiry, and consumed merge staging.
 - F006-08/F006-10: changed staging to a catch-all branch route, asserted the registered route, and made checkout share the target-ref fence with rename under a deterministic race.
-- F006-11: batched provenance, commit-entry, projection, and hold writes; measured 20 production-equivalent MinIO-backed 100-image commits; and persisted 1,000,000 working rows plus 100,000 assets alongside the 10,000-node lineage.
+- F006-11: batched provenance, commit-entry, projection, and hold writes; measured 20 production-equivalent MinIO-backed 100-image commits; the first remediation used 1,000,000 working rows plus 100,000 assets alongside the 10,000-node lineage.
 - F006-12/F006-13: contained storage-provider faults per verification scope, emitted the operational failure signal, and serialized per-library snapshots through quarantine publication with a stale-healthy/new-unhealthy race test.
 - F006-N03: canonical authored time now converts to UTC before microsecond truncation.
 
@@ -151,3 +151,25 @@ Validation after remediation:
 - `git diff --check` passed.
 
 **Current status**: remediation complete; exact-scope Round 3 alternate-model review pending.
+
+## Stable implementation review Round 3 — 2026-09-11
+
+**Reviewer model**: `gpt-5.6-sol` (alternate model)
+
+**Reviewed HEAD**: `48baf7a08d66518058b189b0d461e4550bc7cdef`
+
+**Complete pending scope**: `9d3df7d44062f8be4f7533cf804d065bb5bb6077..48baf7a08d66518058b189b0d461e4550bc7cdef` (129 commits)
+
+The reviewer directly confirmed F006-01–10, F006-12, F006-13, and F006-N03 resolved, with F006-N01/N02 remaining non-blocking. It retained one valid blocker:
+
+- **F006-11 / High**: NFR-016 explicitly requires one million immutable XMP revisions/commit entries, but the Round 2 capacity fixture substituted one million mutable working rows and ran storage-backed publication before loading that proxy dataset. T035 is reopened to persist canonical manifests with one million matching `vc_commit_entries`, retain 100,000 assets, and measure target reads and storage-backed publication after loading the reference-scale dataset.
+
+**Round 3 gate result: BLOCKED**
+
+### Round 3 remediation
+
+T035 now persists 10,000 canonical manifests with 100 matching immutable `vc_commit_entries` each (1,000,000 entries total), plus 100,000 library assets and materialized state rows. Whole-library paging traverses the immutable indexed parent relation and validates the canonical bytes and digest for every returned commit, avoiding transfer and parsing of one million unrelated entries. The production MinIO-backed 100-entry commit measurement runs only after the reference-scale dataset is loaded.
+
+PostgreSQL/MinIO integration and capacity validation passed from a clean schema: 10,000-node lineage p95 359 ms; 100,000-asset state p95 3.7 ms; one-million-entry indexed lookup p95 13.3 ms; storage-backed 100-entry commit p95 295 ms; regular 100-entry commit 73 ms.
+
+Repository validation also passed: `dotnet build` with zero warnings, `dotnet format --verify-no-changes`, `git diff --check`, `npm test`, lint, typecheck, web build, contract checks, CI contract, reliability fault injection, dependency/security validation, and infrastructure validation. Infrastructure emitted only the previously known CDK deprecation and feature-flag notices. Exact-scope Round 4 alternate-model review remains pending.
