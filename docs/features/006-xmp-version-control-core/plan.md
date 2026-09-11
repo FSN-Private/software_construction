@@ -51,3 +51,9 @@ The default branch rejects all rewrite/delete/force operations. A confirmed non-
 Git/LFS, mutable commit rows, last-writer-wins, line-based XMP merging, and non-rebuildable projections are rejected as unsafe or incompatible. Exact encoding/index choices are constrained by stable digest fixtures and latency tests.
 
 **PASS.** No product ambiguity remains; data actions require explicit approval.
+
+## Adversarial-review remediation
+
+The completed implementation review found gaps in canonical-evidence enforcement, content provenance, retention overlap, concurrent rebuilds, mutation idempotency, restore/revert semantics, checkout coordination, public recovery contracts, merge completeness, CI coverage, and integrity alerting. Tasks T024–T032 are the approved in-scope remediation plan; they preserve the existing product contract and add no new dependency.
+
+CI remains triggered for every pull request and pushes to `master`, with stable required job name `ci / backend` and aggregate `ci / required`. The backend job must run unit/contract tests plus Feature 006 PostgreSQL integration and persisted capacity checks on Ubuntu/.NET 10/PostgreSQL 18. Failures are required, owned by the feature implementer, and retried only by rerunning the deterministic job; no test artifact containing XMP payloads is retained.

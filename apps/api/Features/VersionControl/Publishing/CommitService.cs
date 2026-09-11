@@ -8,6 +8,7 @@ using Platform.Api.Features.VersionControl.Adapters;
 using Platform.Api.Features.VersionControl.Refs;
 using Platform.Api.Features.VersionControl.Query;
 using Platform.Api.Features.VersionControl.Projection;
+using Platform.Api.Features.VersionControl.Integrity;
 using Platform.Contracts.VersionControl;
 using static Platform.Storage.IngestDb;
 
@@ -29,6 +30,7 @@ public sealed class CommitService
 
     public async Task<VersionControlResult> PublishAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence = null)
     {
+        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         var timer = Stopwatch.StartNew();
         try
         {
@@ -53,9 +55,10 @@ public sealed class CommitService
     private async Task<VersionControlResult> PublishAttemptAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence)
     {
         var branch = RefNames.Normalize(request.Branch);
-        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request))));
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { request, mergeEvidence }))));
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         await ExecuteAsync(connection, "SELECT pg_advisory_xact_lock(hashtextextended($1,6))", cancellationToken, owner + "\n" + library + "\n" + branch);
         var replay = await ReadReplayAsync(connection, owner, library, idempotencyKey, fingerprint, operationId, cancellationToken);
         if (replay is not null) return replay;
@@ -87,10 +90,11 @@ public sealed class CommitService
         }
 
         var receivedAt = Now;
-        var manifest = new VersionControlManifest(library, parents, owner, request.AuthoredAt, receivedAt, request.Message, staged.Entries);
+        var authoredAt = new DateTimeOffset(request.AuthoredAt.Ticks - request.AuthoredAt.Ticks % 10, TimeSpan.Zero);
+        var manifest = new VersionControlManifest(library, parents, owner, authoredAt, receivedAt, request.Message, staged.Entries);
         var bytes = VersionControlManifestCodec.Write(manifest);
         var commitId = VersionControlManifestCodec.Digest(bytes);
-        await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", cancellationToken, commitId, owner, library, owner, request.AuthoredAt, receivedAt, request.Message, manifest.ContractVersion, manifest.PolicyVersion, bytes);
+        await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", cancellationToken, commitId, owner, library, owner, authoredAt, receivedAt, request.Message, manifest.ContractVersion, manifest.PolicyVersion, bytes);
         for (var ordinal = 0; ordinal < parents.Count; ordinal++) await ExecuteAsync(connection, "INSERT INTO vc_commit_parents(commit_id,ordinal,parent_id) VALUES($1,$2,$3)", cancellationToken, commitId, ordinal, parents[ordinal]);
         for (var ordinal = 0; ordinal < staged.Entries.Length; ordinal++)
         {

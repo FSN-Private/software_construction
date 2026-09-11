@@ -21,6 +21,8 @@ internal static class VerificationChecks
         Check(GraphIntegrity.Verify("library", [stored], new HashSet<string>()).Codes.Contains("missing_content"), "Missing XMP content must quarantine graph refs.");
         Check(GraphIntegrity.Verify("another-library", [stored]).Codes.Contains("cross_library_reference"), "Cross-library commits must be rejected.");
         Check(GraphIntegrity.Verify("library", [stored with { ManifestBytes = [.. bytes, 0] }]).Codes.Contains("manifest_digest_mismatch"), "Altered manifests must be detected.");
+        Check(GraphIntegrity.Verify("library", [stored with { AuthorId = "owner", AuthoredAt = DateTimeOffset.UnixEpoch, ReceivedAt = DateTimeOffset.UnixEpoch, Message = "root", ContractVersion = 1, PolicyVersion = 1, Entries = [] }]).Codes.Contains("manifest_normalization_mismatch"), "Normalized rows must match canonical manifest evidence.");
+        Check(GraphIntegrity.Verify("library", [stored with { Id = VersionControlManifestCodec.Digest("{}"u8), ManifestBytes = "{}"u8.ToArray() }]).Codes.Contains("manifest_invalid"), "Malformed manifests must produce a safe integrity code.");
         var noncanonical = new byte[] { (byte)' ' }.Concat(bytes).ToArray();
         Check(GraphIntegrity.Verify("library", [stored with { Id = VersionControlManifestCodec.Digest(noncanonical), ManifestBytes = noncanonical }]).Codes.Contains("manifest_noncanonical"), "Semantically valid non-canonical manifests must be rejected.");
         var cycle = new[] { new StoredCommit("a", "library", bytes, ["b"]), new StoredCommit("b", "library", bytes, ["a"]) };

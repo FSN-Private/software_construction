@@ -4,6 +4,7 @@ using Platform.Contracts.VersionControl;
 using Platform.Api.Features.VersionControl.Query;
 using Platform.Api.Features.VersionControl.Rewrite;
 using Platform.Api.Features.VersionControl.Projection;
+using Platform.Api.Features.VersionControl.Integrity;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Refs;
@@ -15,11 +16,14 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
     public async Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string operationId, CancellationToken cancellationToken)
     {
         using var measurement = VersionControlTelemetry.Measure("ref.create");
+        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (kind is not ("branch" or "tag")) throw new VersionControlProblem("invalid_request", 400);
         if (request.CommitId is null) throw new VersionControlProblem("invalid_request", 400);
         var name = RefNames.Normalize(request.Name);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 LIMIT 1", cancellationToken, owner, library) is not null) throw new VersionControlProblem("graph_corrupt");
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_commits WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND integrity_state='verified'", cancellationToken, request.CommitId, owner, library) is null) throw new VersionControlProblem("cross_library_reference", 403);
         try
@@ -54,6 +58,8 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
         var next = RefNames.Normalize(request.Name);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         var existing = await ReadForUpdateAsync(connection, owner, library, current, cancellationToken) ?? throw new VersionControlProblem("ref_not_found", 404);
         if (existing.Protected || existing.Kind == "tag") { await RejectedAsync(connection, owner, operationId, current, "protected_ref", cancellationToken); await transaction.CommitAsync(cancellationToken); throw new VersionControlProblem("protected_ref"); }
         if (request.ExpectedVersion != existing.Version) throw Conflict();
@@ -73,6 +79,8 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
         var name = RefNames.Normalize(nameValue);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         var existing = await ReadForUpdateAsync(connection, owner, library, name, cancellationToken) ?? throw new VersionControlProblem("ref_not_found", 404);
         if (existing.Protected || existing.Kind == "tag" && !request.Confirm)
         {
@@ -88,7 +96,7 @@ public sealed class RefService(NpgsqlDataSource dataSource, TimeProvider? clock 
         await ExecuteAsync(connection, "DELETE FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, name);
         var expiry = Now.AddDays(90);
         await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at,recovery_expires_at) VALUES($1,$2,$3,$4,$5,NULL,$2,'delete','confirmed ref deletion',$6,$7)", cancellationToken, Guid.NewGuid(), owner, library, name, existing.Head, Now, expiry);
-        if (existing.Head is not null) await HistoryRetention.UpdateExpiryAsync(connection, RewriteService.Reachable(graph, existing.Head).Except(retained), expiry, cancellationToken);
+        if (existing.Head is not null) await HistoryRetention.ReconcileAsync(connection, graph, owner, library, RewriteService.Reachable(graph, existing.Head), Now, cancellationToken);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, $"version-control.{existing.Kind}.deleted", StableResource(name), "accepted", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.RefMovements.Add(1, new KeyValuePair<string, object?>("operation", "delete"));

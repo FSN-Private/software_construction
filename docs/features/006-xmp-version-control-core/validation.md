@@ -25,6 +25,7 @@ No production migration or deployment was performed by this feature implementati
 ## Completion evidence — 2026-09-11
 
 - Focused PostgreSQL integration and capacity checks passed with a 755 ms 100-entry commit, 2.3 ms per-asset p95, a 9 ms 10,000-node first page, and a 0.24 s one-million-entry/100,000-asset model rebuild.
+- Adversarial remediation T024–T026 passed PostgreSQL 18 on 2026-09-11: a 919 ms 100-entry commit, 2.0 ms per-asset p95, 9 ms 10,000-node first page, and 0.24 s one-million-entry model. The suite additionally proved canonical/normalized evidence checks, owner/asset/edit provenance rejection, pre-advance quarantine, descendant-ref retention, and deterministic rebuild/publication fencing.
 - `npm test`, API correlation, .NET formatting/build, web typecheck/build/tests/accessibility, contract, CI-contract, reliability, infrastructure synthesis/assertions, secret scan, dependency tree, license, and online advisory checks passed.
 - Migration rollback/reapply, immutable-row rejection, idempotent replay, ten-way CAS, staged/base drift, projection freshness/rebuild, canonical corruption quarantine, exact day-90 recovery, lifecycle holds, and two-parent merge rollback were exercised against PostgreSQL 18.
 - `git diff --check` passed. The repository-wide web Prettier command remains non-actionable on this Windows checkout because it reports CRLF style differences in thirteen untouched baseline web files; no unrelated formatting rewrite was included.

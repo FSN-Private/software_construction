@@ -6,6 +6,7 @@ using Platform.Api.Features.VersionControl.Query;
 using Platform.Api.Features.VersionControl.Refs;
 using Platform.Contracts.VersionControl;
 using Platform.Api.Features.VersionControl.Projection;
+using Platform.Api.Features.VersionControl.Integrity;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Rewrite;
@@ -28,10 +29,13 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
 
     public async Task<VersionControlResult> ApplyAsync(string owner, string library, RewriteRequest request, string operationId, CancellationToken cancellationToken)
     {
+        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (!request.Confirm) throw new VersionControlProblem("confirmation_required");
         var branch = RefNames.Normalize(request.Branch);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         var current = await ReadRefAsync(connection, owner, library, branch, true, cancellationToken) ?? throw new VersionControlProblem("ref_not_found", 404);
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, branch) is not null) throw new VersionControlProblem("graph_corrupt");
         if (current.Protected)
@@ -55,7 +59,7 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
         if (current.Head is not null)
         {
             await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,$3,$3,'recovery',$4,true)", cancellationToken, owner, library, $"recovery/{reflogId:N}", current.Head);
-            await HistoryRetention.UpdateExpiryAsync(connection, displaced, expiry, cancellationToken);
+            await HistoryRetention.ReconcileAsync(connection, graph, owner, library, displaced, Now, cancellationToken);
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.rewrite", RefService.StableResource(branch), "accepted", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -74,15 +78,16 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
+        var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
         var expired = new List<(Guid Id, string? OldHead)>();
         await using (var command = Command(connection, "SELECT r.id,r.old_head FROM vc_reflog r LEFT JOIN vc_recovery_expirations x ON x.reflog_id=r.id WHERE r.owner_id=$1 AND r.library_id=$2 AND r.recovery_expires_at < $3 AND x.reflog_id IS NULL FOR UPDATE OF r", owner, library, Now))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) while (await reader.ReadAsync(cancellationToken)) expired.Add((reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetString(1).Trim()));
         foreach (var item in expired)
         {
             await ExecuteAsync(connection, "DELETE FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='recovery'", cancellationToken, owner, library, $"recovery/{item.Id:N}");
-            if (item.OldHead is not null && await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND head_commit_id=$3 LIMIT 1", cancellationToken, owner, library, item.OldHead) is null && await ScalarAsync(connection, "SELECT 1 FROM vc_visibility WHERE owner_id=$1 AND library_id=$2 AND commit_id=$3 AND hidden LIMIT 1", cancellationToken, owner, library, item.OldHead) is null)
-                await ExecuteAsync(connection, "UPDATE lifecycle_holds SET expires_at=$2 WHERE source_reference=$1", cancellationToken, $"vc:{item.OldHead}", Now);
             await ExecuteAsync(connection, "INSERT INTO vc_recovery_expirations(reflog_id,expired_at) VALUES($1,$2)", cancellationToken, item.Id, Now);
+            if (item.OldHead is not null) await HistoryRetention.ReconcileAsync(connection, graph, owner, library, Reachable(graph, item.OldHead), Now, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.RecoveryExpirations.Add(expired.Count);

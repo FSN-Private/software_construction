@@ -20,7 +20,19 @@ public static class VersionControlAdapters
 
             foreach (var digest in new[] { entry.BaseContentSha256, entry.ContentSha256 }.Where(value => value is not null).Distinct(StringComparer.Ordinal))
             {
-                await using var content = Command(connection, "SELECT 1 FROM content_objects WHERE sha256=$1 AND category='xmp' AND integrity_state='authoritative'", digest);
+                await using var content = Command(connection, """
+                    SELECT 1 FROM content_objects o
+                    WHERE o.sha256=$1 AND o.category='xmp' AND o.integrity_state='authoritative'
+                      AND o.storage_key<>'' AND o.storage_version IS NOT NULL
+                      AND (EXISTS(
+                            SELECT 1 FROM edit_identities e JOIN assets a ON a.id=e.asset_id
+                            WHERE e.id=$2 AND e.asset_id=$3 AND a.owner_id=$4 AND e.xmp_sha256=o.sha256)
+                           OR EXISTS(
+                            SELECT 1 FROM upload_sessions u JOIN assets a ON a.id=u.asset_id
+                            WHERE u.owner_id=$4 AND a.owner_id=$4 AND u.asset_id=$3
+                              AND u.edit_id IS NOT DISTINCT FROM $2 AND u.expected_sha256=o.sha256
+                              AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL))
+                    """, digest, entry.EditId, entry.AssetId, owner);
                 if (await content.ExecuteScalarAsync(cancellationToken) is null) throw new VersionControlProblem("content_not_authoritative");
             }
         }

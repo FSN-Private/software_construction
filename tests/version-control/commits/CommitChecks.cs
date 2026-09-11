@@ -37,6 +37,7 @@ internal static class CommitChecks
             await ApplyMigrationsAsync(db);
             await SeedAsync(db, 100);
             var working = new WorkingService(db);
+            await RejectCodeAsync(() => working.PutAsync("owner-1", "library-1", "provenance-client", new(Id(1), Id(1001), "main", "added", null, Digest(309), null, null, 0), "op_wrong_provenance", default), "content_not_authoritative");
             var ids = new List<Guid>();
             for (var index = 0; index < 100; index++)
             {
@@ -172,6 +173,9 @@ internal static class CommitChecks
             }
             var recovered = await new RewriteService(db, new FixedClock(rewriteClock.GetUtcNow().AddDays(90))).RecoverAsync("owner-1", "library-1", rewriteReflog, "recovered-edit", "op_recover", default);
             Check(recovered.CommitId == rewriteCommit.CommitId, "Day-90 recovery must restore the identical immutable commit.");
+            var recoveredWorking = await working.PutAsync("owner-1", "library-1", "recovered-client", new(Id(50), Id(1050), "recovered-edit", "modified", Digest(250), Digest(251), null, null, 0), "op_recovered_working", default);
+            var recoveredStage = await working.StageAsync("owner-1", "library-1", "recovered-client", "recovered-edit", new([recoveredWorking.Id], recovered.CommitId, 0), "op_recovered_stage", default);
+            await commits.PublishAsync("owner-1", "library-1", "recovered-client", new(recoveredStage, "recovered-edit", recovered.CommitId, "Advance recovered branch", DateTimeOffset.Parse("2026-09-10T00:02:01Z")), "recovered-child", "op_recovered_child", default);
 
             await new RewriteService(db, new FixedClock(rewriteClock.GetUtcNow().AddDays(90).AddSeconds(1))).ExpireAsync("owner-1", "library-1", default);
             await using (var connection = await db.OpenConnectionAsync())
@@ -212,6 +216,19 @@ internal static class CommitChecks
             Check((await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted graph/content evidence must pass integrity verification.");
             var projections = new ProjectionService(db, integrity);
             Check(await projections.RebuildAsync("owner-1", "library-1", default) > 0, "Derived state must rebuild solely from immutable graph evidence.");
+            var concurrentWorking = await working.PutAsync("owner-1", "library-1", "rebuild-client", new(Id(70), Id(1070), "main", "modified", Digest(70), Digest(271), null, null, 0), "op_rebuild_working", default);
+            var concurrentStage = await working.StageAsync("owner-1", "library-1", "rebuild-client", "main", new([concurrentWorking.Id], merged.CommitId, 0), "op_rebuild_stage", default);
+            var snapshotCaptured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseRebuild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var blockedRebuild = new ProjectionService(db, integrity, TimeProvider.System, async (point, _) => { if (point == "snapshot-captured") { snapshotCaptured.SetResult(); await releaseRebuild.Task; } });
+            var rebuildTask = blockedRebuild.RebuildAsync("owner-1", "library-1", default);
+            await snapshotCaptured.Task;
+            var concurrentCommit = commits.PublishAsync("owner-1", "library-1", "rebuild-client", new(concurrentStage, "main", merged.CommitId, "Concurrent with rebuild", DateTimeOffset.Parse("2026-09-10T00:04:00Z")), "rebuild-concurrent", "op_rebuild_concurrent", default);
+            await Task.Delay(100);
+            Check(!concurrentCommit.IsCompleted, "Ref publication must wait while rebuild owns the projection snapshot fence.");
+            releaseRebuild.SetResult();
+            await Task.WhenAll(rebuildTask, concurrentCommit);
+            Check((await projections.AssetAsync("owner-1", "library-1", "main", Id(70), default)) is [{ ContentSha256: var rebuiltConcurrent }] && rebuiltConcurrent == Digest(271), "Concurrent publication after rebuild must remain in materialized state.");
             var inventory = await projections.InventoryAsync("owner-1", "library-1", default);
             Check(inventory.CommitRows >= 8 && inventory.EntryRows >= 100 && inventory.ProjectionRows > 0 && inventory.UniqueXmpBytes > 0, "Cost inventory must distinguish graph, projection, and unique XMP storage.");
             var assetLatencies = new List<double>();
@@ -235,8 +252,8 @@ internal static class CommitChecks
             var corruptId = VersionControlManifestCodec.Digest(corruptBytes);
             await using (var connection = await db.OpenConnectionAsync())
                 await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,'owner-1','library-1','owner-1',$2,$2,'Non-canonical fixture',1,1,$3)", default, corruptId, DateTimeOffset.UnixEpoch, corruptBytes);
-            Check(!(await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted non-canonical manifest corruption must quarantine library refs.");
             await RejectCodeAsync(() => refs.CreateAsync("owner-1", "library-1", "branch", new("blocked-by-integrity", mainHead), "op_corrupt_ref", default), "graph_corrupt");
+            Check(!(await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Ref advancement must verify and quarantine persisted non-canonical corruption without a preceding manual verification request.");
 
             Console.WriteLine($"PostgreSQL checks passed: {commitTimer.Elapsed.TotalMilliseconds:F0} ms 100-entry commit, retries/CAS, staged/base drift rejection, refs, divergence, checkout, restore/revert, visibility, rewrite/recovery, holds, merge atomicity, rebuild, and {assetLatencies.Order().ElementAt(18):F1} ms asset-state p95.");
         }
@@ -272,6 +289,22 @@ internal static class CommitChecks
             var asset = Id(index + 1);
             await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) VALUES($1,'owner-1','active','dng')", default, asset);
             await ExecuteAsync(connection, "INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($1,$2,0,$3,'fixture')", default, Id(index + 1001), asset, Digest(index + 1));
+        }
+        var batch = Id(9000);
+        await ExecuteAsync(connection, "INSERT INTO import_batches(id,owner_id,idempotency_key,atomic,state) VALUES($1,'owner-1','vc-provenance',true,'completed')", default, batch);
+        var associations = Enumerable.Range(0, 10).Select(index => (Asset: Id(index + 1), Edit: Id(index + 1001), Digest: Digest(200 + index))).Concat(new (Guid Asset, Guid Edit, string Digest)[]
+        {
+            (Id(20), Id(1020), Digest(220)), (Id(20), Id(1020), Digest(221)), (Id(21), Id(1021), Digest(222)),
+            (Id(21), Id(1021), Digest(22)),
+            (Id(50), Id(1050), Digest(250)), (Id(50), Id(1050), Digest(251)), (Id(60), Id(1060), Digest(260)), (Id(60), Id(1060), Digest(262)), (Id(61), Id(1061), Digest(261)), (Id(70), Id(1070), Digest(271)),
+        }).ToArray();
+        for (var index = 0; index < associations.Length; index++)
+        {
+            var item = associations[index];
+            await ExecuteAsync(connection, """
+                INSERT INTO upload_sessions(id,batch_id,owner_id,target_key,expected_sha256,expected_length,state,expires_at,category,asset_id,edit_id,verified_at)
+                VALUES($1,$2,'owner-1',$3,$4,1,'completed',$5,'xmp',$6,$7,$5)
+                """, default, Id(9100 + index), batch, "vc-provenance/" + item.Digest, item.Digest, DateTimeOffset.UtcNow.AddYears(1), item.Asset, item.Edit);
         }
     }
 

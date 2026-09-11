@@ -1,4 +1,5 @@
 using Npgsql;
+using System.Data;
 using Platform.Api.Features.VersionControl.Integrity;
 using Platform.Api.Features.VersionControl.Query;
 using Platform.Contracts.VersionControl;
@@ -9,22 +10,38 @@ namespace Platform.Api.Features.VersionControl.Projection;
 
 public sealed record VersionControlInventory(long UniqueXmpBytes, long CommitRows, long EntryRows, long ProjectionRows, long AuditRows, long RecoveryRows);
 
-public sealed class ProjectionService(NpgsqlDataSource dataSource, IntegrityService integrity, TimeProvider? clock = null)
+public sealed class ProjectionService
 {
+    private readonly NpgsqlDataSource dataSource;
+    private readonly IntegrityService integrity;
+    private readonly TimeProvider clock;
+    private readonly Func<string, CancellationToken, Task> checkpoint;
+
+    public ProjectionService(NpgsqlDataSource dataSource, IntegrityService integrity) : this(dataSource, integrity, TimeProvider.System, (_, _) => Task.CompletedTask) { }
+    public ProjectionService(NpgsqlDataSource dataSource, IntegrityService integrity, TimeProvider clock, Func<string, CancellationToken, Task> checkpoint)
+    {
+        this.dataSource = dataSource;
+        this.integrity = integrity;
+        this.clock = clock;
+        this.checkpoint = checkpoint;
+    }
+
     public async Task<int> RebuildAsync(string owner, string library, CancellationToken cancellationToken)
     {
         var verified = await integrity.VerifyAsync(owner, library, cancellationToken);
         if (!verified.Healthy) throw new VersionControlProblem("graph_corrupt");
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         var refs = new List<(string Name, string Head)>();
-        await using (var command = Command(connection, "SELECT normalized_name,head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND head_commit_id IS NOT NULL", owner, library))
+        await using (var command = Command(connection, "SELECT normalized_name,head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND head_commit_id IS NOT NULL FOR UPDATE", owner, library))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) while (await reader.ReadAsync(cancellationToken)) refs.Add((reader.GetString(0), reader.GetString(1).Trim()));
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
+        await checkpoint("snapshot-captured", cancellationToken);
         await ExecuteAsync(connection, "DELETE FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2", cancellationToken, owner, library);
         var rows = 0;
         foreach (var reference in refs)
-            rows += await ProjectionWriter.ReplaceAsync(connection, owner, library, reference.Name, reference.Head, graph, (clock ?? TimeProvider.System).GetUtcNow(), cancellationToken);
+            rows += await ProjectionWriter.ReplaceAsync(connection, owner, library, reference.Name, reference.Head, graph, clock.GetUtcNow(), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.ProjectionRebuilds.Add(1);
         return rows;
@@ -56,6 +73,9 @@ public sealed class ProjectionService(NpgsqlDataSource dataSource, IntegrityServ
 
 internal static class ProjectionWriter
 {
+    public static Task LockAsync(NpgsqlConnection connection, string owner, string library, CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, "SELECT pg_advisory_xact_lock(hashtextextended($1,6))", cancellationToken, owner + "\n" + library + "\nprojection");
+
     public static async Task ApplyAsync(NpgsqlConnection connection, string owner, string library, string reference, string head, IReadOnlyList<VersionControlEntry> entries, DateTimeOffset now, CancellationToken cancellationToken)
     {
         foreach (var entry in entries)
