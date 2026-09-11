@@ -280,6 +280,7 @@ internal static class CommitChecks
 
             var integrity = new IntegrityService(db);
             Check((await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted graph/content evidence must pass integrity verification.");
+            await NormalizedPageIndexConstraintsAsync(db, published.CommitId!, merged.CommitId!);
             await ConcurrentIntegrityPublicationAsync(db);
             await WorkerStorageFailureAsync(db);
             var projections = new ProjectionService(db, integrity);
@@ -402,6 +403,20 @@ internal static class CommitChecks
             for (var index = 0; index < entriesPerCommit; index++) { await writer.StartRowAsync(); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync("capacity", NpgsqlDbType.Text); }
             await writer.CompleteAsync();
         }
+        var batch = Id(290_000);
+        await ExecuteAsync(connection, "INSERT INTO import_batches(id,owner_id,idempotency_key,atomic,state) VALUES($1,$2,'capacity-provenance',true,'completed')", default, batch, owner);
+        await using (var writer = await connection.BeginBinaryImportAsync("COPY upload_sessions(id,batch_id,owner_id,target_key,expected_sha256,expected_length,state,expires_at,category,asset_id,edit_id,verified_at) FROM STDIN (FORMAT BINARY)"))
+        {
+            for (var index = 0; index < entriesPerCommit; index++)
+            {
+                foreach (var digest in new[] { Digest(300), Digest(301) })
+                {
+                    var at = DateTimeOffset.UtcNow.AddYears(1);
+                    await writer.StartRowAsync(); await writer.WriteAsync(Id(300_000 + index * 2 + (digest == Digest(301) ? 1 : 0)), NpgsqlDbType.Uuid); await writer.WriteAsync(batch, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync($"capacity/{assets[index]:N}/{digest}", NpgsqlDbType.Text); await writer.WriteAsync(digest, NpgsqlDbType.Char); await writer.WriteAsync(1L, NpgsqlDbType.Bigint); await writer.WriteAsync("completed", NpgsqlDbType.Text); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz); await writer.WriteAsync("xmp", NpgsqlDbType.Text); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz);
+                }
+            }
+            await writer.CompleteAsync();
+        }
         string? parent = null;
         await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) FROM STDIN (FORMAT BINARY)"))
         {
@@ -469,6 +484,7 @@ internal static class CommitChecks
         }
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_000, "Persisted capacity must contain 100,000 library assets.");
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id WHERE c.owner_id=$1 AND c.library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million immutable commit entries.");
+        Check((await new IntegrityService(db).VerifyAsync(owner, library, default)).Healthy, "Persisted capacity history must pass production graph/content provenance verification.");
         var queries = new QueryService(db);
         var projection = new ProjectionService(db, new IntegrityService(db));
         var lineage = new List<double>();
@@ -491,6 +507,22 @@ internal static class CommitChecks
         var entryLookupP95 = entryLookup.Order().ElementAt(18);
         Check(lineageP95 <= 2000 && stateP95 <= 200 && entryLookupP95 <= 200, $"Persisted reference-scale p95 targets must hold: lineage {lineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
         Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
+    }
+
+    private static async Task NormalizedPageIndexConstraintsAsync(NpgsqlDataSource db, string root, string other)
+    {
+        await using var connection = await db.OpenConnectionAsync();
+        await RejectAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO vc_commit_parents(commit_id,ordinal,parent_id) VALUES($1,0,$2)", default, root, other));
+
+        var at = DateTimeOffset.Parse("2026-09-10T00:07:00Z");
+        var entry = new VersionControlEntry(Id(1), Id(1001), "modified", Digest(1), Digest(2));
+        var missingParent = new VersionControlManifest("library-1", [root], "owner-1", at, at, "Missing normalized parent", [entry]);
+        var missingParentBytes = VersionControlManifestCodec.Write(missingParent);
+        await RejectAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,'owner-1','library-1','owner-1',$2,$2,$3,1,1,$4)", default, VersionControlManifestCodec.Digest(missingParentBytes), at, missingParent.Message, missingParentBytes));
+
+        var timestampMismatch = missingParent with { Parents = [], Message = "Mismatched normalized timestamp" };
+        var timestampBytes = VersionControlManifestCodec.Write(timestampMismatch);
+        await RejectAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,'owner-1','library-1','owner-1',$2,$3,$4,1,1,$5)", default, VersionControlManifestCodec.Digest(timestampBytes), at, at.AddSeconds(1), timestampMismatch.Message, timestampBytes));
     }
 
     private static async Task PhysicalObjectIntegrityAsync(NpgsqlDataSource db)

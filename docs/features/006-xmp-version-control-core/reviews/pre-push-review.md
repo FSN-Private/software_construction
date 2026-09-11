@@ -173,3 +173,25 @@ T035 now persists 10,000 canonical manifests with 100 matching immutable `vc_com
 PostgreSQL/MinIO integration and capacity validation passed from a clean schema: 10,000-node lineage p95 359 ms; 100,000-asset state p95 3.7 ms; one-million-entry indexed lookup p95 13.3 ms; storage-backed 100-entry commit p95 295 ms; regular 100-entry commit 73 ms.
 
 Repository validation also passed: `dotnet build` with zero warnings, `dotnet format --verify-no-changes`, `git diff --check`, `npm test`, lint, typecheck, web build, contract checks, CI contract, reliability fault injection, dependency/security validation, and infrastructure validation. Infrastructure emitted only the previously known CDK deprecation and feature-flag notices. Exact-scope Round 4 alternate-model review remains pending.
+
+## Stable implementation review Round 4 — 2026-09-11
+
+**Reviewer model**: `gpt-5.6-sol` (alternate model)
+
+**User-corrected scope**: `6ebdec6f90957c60facde918ecc6093d103710ec..56159db471559e3efe9845603d01ee40a37ddcfd` (exactly 12 commits after the latest `origin/master` merge)
+
+The reviewer confirmed F006-01–10, F006-12/13, and F006-N03 resolved within the corrected scope, retained F006-N01 as non-blocking, and reported two valid blockers:
+
+- **F006-11 / High**: the million-entry fixture populated canonical and normalized rows but associated edit identities only with one of the two historical digests and provided no capacity-owner upload provenance. Production validation would reject or quarantine the fixture, so T035 is reopened to seed valid provenance for every digest and run full library integrity before measuring it.
+- **F006-14 / High**: indexed whole-library paging used normalized parent edges and received times while validating canonical bytes only for returned rows. The schema allowed an extra parent insertion or mismatched normalized time to alter reachability/page membership. T038 adds an exact immutable database invariant and rejection tests for extra/missing edges and timestamp mismatch.
+
+**Round 4 gate result: BLOCKED**
+
+### Round 4 remediation
+
+- F006-11: the capacity fixture now creates completed owner/asset/edit upload provenance for both historical content digests and requires a healthy production `IntegrityService` result across all 10,000 manifests and 1,000,000 entries before performance sampling.
+- F006-14: deferred database constraint triggers compare the exact ordered normalized parent set and normalized received time with canonical manifest evidence at transaction commit. Extra edges, missing edges, and timestamp mismatches are rejected; malformed evidence remains available to the quarantine verifier rather than being mistaken for a valid page index.
+
+PostgreSQL/MinIO integration and capacity validation passed from a clean schema after remediation: production integrity accepted the full reference-scale library; 10,000-node lineage p95 210 ms; 100,000-asset state p95 4.2 ms; one-million-entry indexed lookup p95 3.7 ms; storage-backed 100-entry commit p95 152 ms; regular 100-entry commit 82 ms.
+
+Repository validation passed again: `dotnet build`/lint with zero warnings, `dotnet format --verify-no-changes`, `git diff --check`, `npm test`, typecheck, web build, contract checks, CI contract, reliability fault injection, dependency/security validation, and infrastructure validation. A final PostgreSQL integration rerun after narrowing the malformed-evidence exception handler also passed; infrastructure retained only the known CDK notices. Post-merge-only Round 5 review remains pending.

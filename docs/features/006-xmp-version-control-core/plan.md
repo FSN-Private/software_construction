@@ -60,4 +60,6 @@ The completed implementation review found gaps in canonical-evidence enforcement
 
 The stable Round 2 implementation review found remaining replay-order, slash-route, checkout/rename fencing, production-representative capacity, verifier resilience, and quarantine-publication races. Tasks T033–T037 close those gaps without changing the approved public product behavior or adding a dependency.
 
+The post-merge-only Round 4 review found that reference-scale evidence still lacked complete Feature 005 provenance and that indexed whole-library paging needed a database-enforced canonical parent/time invariant. T035 and T038 close these integrity gaps without changing the public contract.
+
 CI remains triggered for every pull request and pushes to `master`, with stable required job name `ci / backend` and aggregate `ci / required`. The backend job must run unit/contract tests plus Feature 006 PostgreSQL integration and persisted capacity checks on Ubuntu/.NET 10/PostgreSQL 18. Failures are required, owned by the feature implementer, and retried only by rerunning the deterministic job; no test artifact containing XMP payloads is retained.

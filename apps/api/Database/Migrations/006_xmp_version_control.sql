@@ -225,3 +225,28 @@ CREATE TRIGGER vc_commit_entries_immutable BEFORE UPDATE OR DELETE ON vc_commit_
 CREATE TRIGGER vc_reflog_immutable BEFORE UPDATE OR DELETE ON vc_reflog FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
 CREATE TRIGGER vc_divergence_immutable BEFORE UPDATE OR DELETE ON vc_divergence FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
 CREATE TRIGGER vc_recovery_expirations_immutable BEFORE UPDATE OR DELETE ON vc_recovery_expirations FOR EACH ROW EXECUTE FUNCTION vc_reject_immutable_mutation();
+
+CREATE FUNCTION vc_validate_page_index_normalization() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    target_id char(64);
+    canonical jsonb;
+    canonical_parents text[];
+    normalized_parents text[];
+    normalized_received_at timestamptz;
+BEGIN
+    target_id := COALESCE(to_jsonb(NEW)->>'id',to_jsonb(NEW)->>'commit_id')::char(64);
+    SELECT c.received_at INTO normalized_received_at FROM vc_commits c WHERE c.id=target_id;
+    BEGIN
+        SELECT convert_from(c.manifest_bytes,'UTF8')::jsonb INTO canonical FROM vc_commits c WHERE c.id=target_id;
+        canonical_parents := ARRAY(SELECT value FROM jsonb_array_elements_text(canonical->'parents') WITH ORDINALITY AS item(value,ordinal) ORDER BY ordinal);
+    EXCEPTION WHEN data_exception THEN
+        RETURN NEW;
+    END;
+    normalized_parents := ARRAY(SELECT btrim(p.parent_id) FROM vc_commit_parents p WHERE p.commit_id=target_id ORDER BY p.ordinal);
+    IF canonical_parents IS DISTINCT FROM normalized_parents OR (canonical->>'receivedAt')::timestamptz IS DISTINCT FROM normalized_received_at THEN
+        RAISE EXCEPTION 'normalized page index must match canonical commit evidence' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER vc_commit_page_index_normalized AFTER INSERT ON vc_commits DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION vc_validate_page_index_normalization();
+CREATE CONSTRAINT TRIGGER vc_parent_page_index_normalized AFTER INSERT ON vc_commit_parents DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION vc_validate_page_index_normalization();
