@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 const template = JSON.parse(readFileSync('cdk.out/PlatformFoundation-nonprod.template.json', 'utf8'));
 const resources = Object.values(template.Resources);
-const requiredTypes = ['AWS::EC2::VPC', 'AWS::KMS::Key', 'AWS::S3::Bucket', 'AWS::Logs::LogGroup', 'AWS::Budgets::Budget', 'AWS::Cognito::UserPool', 'AWS::SNS::Topic', 'AWS::CloudWatch::Alarm', 'AWS::CloudWatch::Dashboard', 'AWS::ECR::Repository', 'AWS::RDS::DBInstance', 'AWS::ECS::Cluster', 'AWS::ECS::TaskDefinition', 'AWS::ECS::Service', 'AWS::ElasticLoadBalancingV2::LoadBalancer', 'AWS::ApiGatewayV2::Api'];
+const requiredTypes = ['AWS::EC2::VPC', 'AWS::KMS::Key', 'AWS::S3::Bucket', 'AWS::Logs::LogGroup', 'AWS::Budgets::Budget', 'AWS::Cognito::UserPool', 'AWS::SNS::Topic', 'AWS::CloudWatch::Alarm', 'AWS::CloudWatch::Dashboard', 'AWS::ECR::Repository', 'AWS::RDS::DBInstance', 'AWS::ECS::Cluster', 'AWS::ECS::TaskDefinition', 'AWS::ECS::Service', 'AWS::ServiceDiscovery::Service', 'AWS::ApiGatewayV2::Api'];
 for (const type of requiredTypes) {
   if (!resources.some((resource) => resource.Type === type)) {
     throw new Error(`Synthesized template is missing required resource ${type}.`);
@@ -11,6 +11,7 @@ for (const type of requiredTypes) {
 if (resources.filter((resource) => resource.Type === 'AWS::S3::Bucket').length < 2) throw new Error('Foundation and ingest require separate private versioned buckets.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECR::Repository').length !== 2) throw new Error('API and ingest worker require separate ECR repositories.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition').length !== 2 || resources.filter((resource) => resource.Type === 'AWS::ECS::Service').length !== 2) throw new Error('API and ingest worker require paired ECS tasks and services.');
+if (resources.some((resource) => resource.Type === 'AWS::EC2::NatGateway' || resource.Type === 'AWS::ElasticLoadBalancingV2::LoadBalancer')) throw new Error('The low-budget non-production runtime must not provision fixed-cost NAT gateways or load balancers.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECS::Service').some((resource) => resource.Properties.DesiredCount !== 0)) throw new Error('Bootstrap services must stay at zero tasks until verified images are published.');
 const database = resources.find((resource) => resource.Type === 'AWS::RDS::DBInstance');
 if (!database?.Properties?.StorageEncrypted || !database.Properties.DeletionProtection || database.DeletionPolicy !== 'Retain') throw new Error('The ingest database must be encrypted, deletion-protected, and retained.');

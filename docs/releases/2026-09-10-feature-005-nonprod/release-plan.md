@@ -10,7 +10,9 @@
 
 ## Prerequisites
 
+- Bootstrap contexts are owner/alert email `fredrik.snarbacka@gmail.com`, temporary web origin `http://localhost:5173`, Cognito domain prefix `software-construction-nonprod-344531454551`, region `ap-southeast-1`, monthly budget threshold USD 20, and the existing deployment-role ARN. Replace the local origin before hosting the web client.
 - The GitHub `nonprod` environment contains every variable and secret listed in the [deployment runbook](../../../docs/runbooks/deployment-recovery.md#required-configuration). As of 2026-09-10, only `AWS_NONPROD_ROLE_ARN` is configured; the remaining values are an external bootstrap blocker.
+- A current account-specific estimate is reviewed before mutation. The USD 20 budget is an alert, not a service-enforced cap, and the deployment remains blocked if the expected always-on baseline is not explicitly accepted.
 - The named ECR repositories, ECS cluster, API service, worker service, task definitions, PostgreSQL database, private versioned S3 bucket, KMS key, Cognito owner, HTTPS endpoint, task roles, and deployment-role grants exist in the approved account and region.
 - API and worker task definitions supply the database host/port/name, secret-backed username/password, `Ingest__Bucket`, and `Ingest__KmsKeyId`; each process assembles its TLS-required connection string only in memory.
 - The intended revision has passing `ci / required`, passing alternate-model pre-push review, and successful five-artifact release evidence.

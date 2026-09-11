@@ -1,6 +1,6 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
 import { CorsHttpMethod, HttpApi, HttpMethod, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
-import { HttpAlbIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import { HttpServiceDiscoveryIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { FilterPattern, LogGroup, MetricFilter, RetentionDays } from 'aws-cdk-lib/aws-logs';
@@ -10,8 +10,8 @@ import { BlockPublicAccess, Bucket, BucketEncryption, HttpMethods } from 'aws-cd
 import { InstanceClass, InstanceSize, InstanceType, Port, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { Cluster, ContainerImage, FargateService, FargateTaskDefinition, LogDrivers, Secret as EcsSecret } from 'aws-cdk-lib/aws-ecs';
 import { Repository, TagMutability } from 'aws-cdk-lib/aws-ecr';
-import { ApplicationLoadBalancer, ApplicationProtocol } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Credentials, DatabaseInstance, DatabaseInstanceEngine, PostgresEngineVersion } from 'aws-cdk-lib/aws-rds';
+import { DnsRecordType } from 'aws-cdk-lib/aws-servicediscovery';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
@@ -37,10 +37,9 @@ export class PlatformFoundationStack extends Stack {
 
     const vpc = new Vpc(this, 'PlatformVpc', {
       maxAzs: 2,
-      natGateways: 1,
+      natGateways: 0,
       subnetConfiguration: [
         { name: 'edge', subnetType: SubnetType.PUBLIC },
-        { name: 'application', subnetType: SubnetType.PRIVATE_WITH_EGRESS },
         { name: 'data', subnetType: SubnetType.PRIVATE_ISOLATED },
       ],
     });
@@ -112,6 +111,7 @@ export class PlatformFoundationStack extends Stack {
     if (!database.secret) throw new Error('The ingest database must expose generated credentials.');
 
     const cluster = new Cluster(this, 'RuntimeCluster', { vpc, clusterName: `platform-${props.environmentName}` });
+    const namespace = cluster.addDefaultCloudMapNamespace({ name: `${props.environmentName}.platform.internal` });
     const apiExecutionRole = new aws_iam.Role(this, 'ApiExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     const workerExecutionRole = new aws_iam.Role(this, 'WorkerExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     database.secret.grantRead(apiExecutionRole);
@@ -128,7 +128,7 @@ export class PlatformFoundationStack extends Stack {
       Ingest__Database__Password: EcsSecret.fromSecretsManager(database.secret, 'password'),
     };
     const apiTask = new FargateTaskDefinition(this, 'ApiTask', { family: `platform-${props.environmentName}-api`, cpu: 256, memoryLimitMiB: 512, executionRole: apiExecutionRole });
-    apiTask.addContainer('api', {
+    const apiContainer = apiTask.addContainer('api', {
       containerName: 'api',
       image: ContainerImage.fromEcrRepository(apiRepository, 'bootstrap'),
       environment: { ...databaseEnvironment, Authentication__CognitoAuthority: `https://cognito-idp.${this.region}.${this.urlSuffix}/${identity.userPool.userPoolId}`, Authentication__CognitoClientId: identity.client.userPoolClientId },
@@ -153,19 +153,17 @@ export class PlatformFoundationStack extends Stack {
     const workerSecurityGroup = new SecurityGroup(this, 'WorkerSecurityGroup', { vpc, allowAllOutbound: true });
     database.connections.allowDefaultPortFrom(apiSecurityGroup);
     database.connections.allowDefaultPortFrom(workerSecurityGroup);
-    const apiService = new FargateService(this, 'ApiService', { cluster, serviceName: `platform-${props.environmentName}-api`, taskDefinition: apiTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, securityGroups: [apiSecurityGroup], vpcSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS }, circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(60) });
-    const workerService = new FargateService(this, 'WorkerService', { cluster, serviceName: `platform-${props.environmentName}-ingest-worker`, taskDefinition: workerTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, securityGroups: [workerSecurityGroup], vpcSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS }, circuitBreaker: { rollback: true } });
-    const loadBalancer = new ApplicationLoadBalancer(this, 'ApiLoadBalancer', { vpc, internetFacing: false, vpcSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS } });
-    const listener = loadBalancer.addListener('ApiListener', { port: 8080, protocol: ApplicationProtocol.HTTP, open: false });
-    listener.addTargets('ApiTargets', { port: 8080, protocol: ApplicationProtocol.HTTP, targets: [apiService], healthCheck: { path: '/live', healthyHttpCodes: '200' }, deregistrationDelay: Duration.seconds(30) });
     const apiGatewaySecurityGroup = new SecurityGroup(this, 'ApiGatewaySecurityGroup', { vpc, allowAllOutbound: true });
-    loadBalancer.connections.allowFrom(apiGatewaySecurityGroup, Port.tcp(8080));
-    const vpcLink = new VpcLink(this, 'ApiVpcLink', { vpc, securityGroups: [apiGatewaySecurityGroup], subnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS } });
+    apiSecurityGroup.connections.allowFrom(apiGatewaySecurityGroup, Port.tcp(8080));
+    const apiService = new FargateService(this, 'ApiService', { cluster, serviceName: `platform-${props.environmentName}-api`, taskDefinition: apiTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [apiSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(60), cloudMapOptions: { cloudMapNamespace: namespace, name: 'api', dnsRecordType: DnsRecordType.SRV, container: apiContainer, containerPort: 8080 } });
+    const workerService = new FargateService(this, 'WorkerService', { cluster, serviceName: `platform-${props.environmentName}-ingest-worker`, taskDefinition: workerTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [workerSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true } });
+    const vpcLink = new VpcLink(this, 'ApiVpcLink', { vpc, securityGroups: [apiGatewaySecurityGroup], subnets: { subnetType: SubnetType.PRIVATE_ISOLATED } });
     const publicApi = new HttpApi(this, 'PublicApi', {
       createDefaultStage: true,
       corsPreflight: { allowOrigins: [props.webOrigin], allowMethods: [CorsHttpMethod.ANY], allowHeaders: ['authorization', 'content-type', 'idempotency-key', 'x-operation-id'], maxAge: Duration.minutes(15) },
     });
-    const integration = new HttpAlbIntegration('ApiIntegration', listener, { vpcLink });
+    if (!apiService.cloudMapService) throw new Error('The API service must register with Cloud Map.');
+    const integration = new HttpServiceDiscoveryIntegration('ApiIntegration', apiService.cloudMapService, { vpcLink });
     publicApi.addRoutes({ path: '/', methods: [HttpMethod.ANY], integration });
     publicApi.addRoutes({ path: '/{proxy+}', methods: [HttpMethod.ANY], integration });
 
