@@ -44,6 +44,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
     builder.Services.AddSingleton<IntegrityService>();
+    builder.Services.AddHostedService<IntegrityVerificationWorker>();
     builder.Services.AddSingleton<WorkingService>();
     builder.Services.AddSingleton<CommitService>();
     builder.Services.AddSingleton<RefService>();

@@ -71,6 +71,7 @@ export class PlatformFoundationStack extends Stack {
     const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
     const runbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
     const ingestRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/ingest-storage.md';
+    const versionControlRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/version-control-integrity.md';
     const availabilityAlarm = new Alarm(this, 'ServiceAvailabilityAlarm', { metric: availability, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
     availabilityAlarm.addAlarmAction(new SnsAction(alerts));
     const authenticationFailures = new MetricFilter(this, 'AuthenticationFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "authorization.denied" }'), metricNamespace: 'Platform/Auth', metricName: 'AuthenticationFailures', metricValue: '1' });
@@ -86,6 +87,12 @@ export class PlatformFoundationStack extends Stack {
     const integrityDriftMetric = new MetricFilter(this, 'IntegrityDriftMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "ingest.integrity.drift" }'), metricNamespace: 'Platform/Ingest', metricName: 'IntegrityDrift', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
     const integrityDriftAlarm = new Alarm(this, 'IntegrityDriftAlarm', { metric: integrityDriftMetric, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${ingestRunbook}` });
     integrityDriftAlarm.addAlarmAction(new SnsAction(alerts));
+    const versionControlFailureMetric = new MetricFilter(this, 'VersionControlIntegrityFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "version-control.integrity.failure" }'), metricNamespace: 'Platform/VersionControl', metricName: 'IntegrityFailures', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const versionControlHeartbeatMetric = new MetricFilter(this, 'VersionControlIntegrityHeartbeatMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ $.State.AuditEventType = "version-control.integrity.heartbeat" }'), metricNamespace: 'Platform/VersionControl', metricName: 'IntegrityHeartbeats', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const versionControlFailureAlarm = new Alarm(this, 'VersionControlIntegrityFailureAlarm', { metric: versionControlFailureMetric, threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${versionControlRunbook}` });
+    versionControlFailureAlarm.addAlarmAction(new SnsAction(alerts));
+    const versionControlHeartbeatAlarm = new Alarm(this, 'VersionControlIntegrityHeartbeatAlarm', { metric: versionControlHeartbeatMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${versionControlRunbook}` });
+    versionControlHeartbeatAlarm.addAlarmAction(new SnsAction(alerts));
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
       ['CiFailureAlarm', 'Platform/Delivery', 'CiFailures', 1],
@@ -99,6 +106,7 @@ export class PlatformFoundationStack extends Stack {
       [new GraphWidget({ title: 'Authentication failures', left: [authenticationMetric] })],
       [new GraphWidget({ title: 'Ingest storage failures', left: [ingestStorageMetric] })],
       [new GraphWidget({ title: 'Ingest quarantine, repair, and integrity', left: [ingestQuarantineMetric, ingestRepairMetric, integrityDriftMetric] })],
+      [new GraphWidget({ title: 'Version-control integrity', left: [versionControlHeartbeatMetric, versionControlFailureMetric] })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
       [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],

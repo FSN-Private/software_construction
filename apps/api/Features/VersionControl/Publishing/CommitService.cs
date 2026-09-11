@@ -37,7 +37,6 @@ public sealed class CommitService
             var replay = await ReadReplayAsync(replayConnection, owner, library, idempotencyKey, fingerprint, operationId, cancellationToken);
             if (replay is not null) return replay;
         }
-        if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         var timer = Stopwatch.StartNew();
         try
         {
@@ -81,6 +80,7 @@ public sealed class CommitService
         }
         if (!string.Equals(refState.Value.Head, request.ExpectedHead, StringComparison.Ordinal))
             throw await StaleAsync(connection, owner, library, client, branch, request, refState.Value.Head, cancellationToken);
+        if (refState.Value.Head is not null) await ValidateHeadIntegrityAsync(connection, owner, library, refState.Value.Head, cancellationToken);
         checkpoint("ref-locked");
 
         var staged = preparedEntries is null
@@ -89,7 +89,7 @@ public sealed class CommitService
         if (staged.Entries.Any(entry => entry.Change == "conflicted")) throw new VersionControlProblem("unresolved_divergence");
         if (mergeEvidence is not null && !mergeEvidence.RequiredResolutionKeys.All(key => staged.Entries.Any(entry => GraphQueries.Key(new(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)) == key))) throw new VersionControlProblem("unresolved_divergence");
         await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, cancellationToken);
-        await ValidateBaseStateAsync(connection, owner, library, refState.Value.Head, staged.Entries, cancellationToken);
+        await ValidateBaseStateAsync(connection, owner, library, branch, refState.Value.Head, staged.Entries, cancellationToken);
         checkpoint("content-validated");
         var parents = new List<string>();
         if (refState.Value.Head is not null) parents.Add(refState.Value.Head);
@@ -188,18 +188,36 @@ public sealed class CommitService
         return (entries.ToArray(), ids.ToArray());
     }
 
-    private static async Task ValidateBaseStateAsync(NpgsqlConnection connection, string owner, string library, string? head, IReadOnlyList<VersionControlEntry> entries, CancellationToken cancellationToken)
+    private static async Task ValidateBaseStateAsync(NpgsqlConnection connection, string owner, string library, string branch, string? head, IReadOnlyList<VersionControlEntry> entries, CancellationToken cancellationToken)
     {
-        var state = head is null ? new Dictionary<string, ChangeView>(StringComparer.Ordinal) : GraphQueries.State(await QueryService.LoadAsync(connection, owner, library, cancellationToken), head);
         foreach (var entry in entries)
         {
-            state.TryGetValue($"{entry.AssetId:D}/{entry.EditId?.ToString("D") ?? "source"}", out var current);
+            ChangeView? current = null;
+            if (head is not null)
+            {
+                await using var command = Command(connection, "SELECT content_sha256,display_path,lifecycle_state FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3 AND asset_id=$4 AND edit_id IS NOT DISTINCT FROM $5", owner, library, branch, entry.AssetId, entry.EditId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken)) current = new(entry.AssetId, entry.EditId, "clean", null, reader.IsDBNull(0) ? null : reader.GetString(0).Trim(), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2));
+            }
             if (entry.Change == "added")
             {
                 if (current is not null || entry.BaseContentSha256 is not null) throw new VersionControlProblem("stale_working_base");
             }
             else if (current is null || !string.Equals(current.ContentSha256, entry.BaseContentSha256, StringComparison.Ordinal)) throw new VersionControlProblem("stale_working_base");
         }
+    }
+
+    private static async Task ValidateHeadIntegrityAsync(NpgsqlConnection connection, string owner, string library, string head, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, "SELECT manifest_bytes FROM vc_commits WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND integrity_state='verified'", head, owner, library);
+        var bytes = await command.ExecuteScalarAsync(cancellationToken) as byte[] ?? throw new VersionControlProblem("graph_corrupt");
+        try
+        {
+            var manifest = VersionControlManifestCodec.Read(bytes);
+            if (VersionControlManifestCodec.Digest(bytes) != head || !VersionControlManifestCodec.Write(manifest).AsSpan().SequenceEqual(bytes) || manifest.LibraryId != library) throw new VersionControlProblem("graph_corrupt");
+        }
+        catch (VersionControlProblem) { throw; }
+        catch (Exception error) when (error is JsonException or ArgumentException or NotSupportedException or InvalidOperationException or KeyNotFoundException) { throw new VersionControlProblem("graph_corrupt"); }
     }
 
     private static async Task<VersionControlProblem> StaleAsync(NpgsqlConnection connection, string owner, string library, string client, string branch, CommitRequest request, string? currentHead, CancellationToken cancellationToken)
