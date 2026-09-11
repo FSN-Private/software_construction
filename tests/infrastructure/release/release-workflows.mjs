@@ -15,7 +15,9 @@ for (const [name, workflow] of Object.entries(workflows)) {
   assert.ok(workflow.includes('timeout-minutes:'), `${name} must bound runner time.`);
 }
 
-assert.ok(workflows['build-release.yml'].includes('actions/attest-build-provenance@'), 'Build workflow must attest release evidence.');
+assert.ok(!workflows['build-release.yml'].includes('actions/attest-build-provenance@'), 'Build workflow must not require unavailable hosted attestations.');
+assert.ok(!workflows['build-release.yml'].includes('attestations: write') && !workflows['build-release.yml'].includes('id-token: write'), 'Evidence generation must retain read-only token permissions.');
+assert.ok(workflows['build-release.yml'].includes('github.run_id') && workflows['build-release.yml'].includes('github.repository'), 'Local provenance must bind the release workflow invocation and repository.');
 assert.ok(workflows['build-release.yml'].includes('apps/ingest-worker/Dockerfile'), 'Build workflow must package the ingest worker.');
 assert.ok(workflows['build-release.yml'].includes('workflows: [Continuous integration]'), 'Build workflow must be triggered only by the CI workflow.');
 assert.ok(!workflows['build-release.yml'].includes('workflow_dispatch'), 'Build workflow must not self-certify manually dispatched validation evidence.');
@@ -25,6 +27,7 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('environment: nonprod'), 'Non
 assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-production deployment must use short-lived OIDC credentials.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
 assert.ok(deployScript.includes('RepoDigests'), 'Deployment must record immutable registry digests.');
 assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
@@ -40,6 +43,8 @@ assert.ok(workflows['release.yml'].includes("tags: ['v*']"), 'Production promoti
 assert.ok(workflows['release.yml'].includes('Production promotion requires a v* tag.'), 'Manual production dispatch must reject non-versioned tags.');
 assert.ok(workflows['release.yml'].includes('git merge-base --is-ancestor'), 'Production promotion must require protected-default ancestry.');
 assert.ok(workflows['release.yml'].includes('compatibility.rollbackAllowed'), 'Production promotion must refuse an incompatible persistent-state transition.');
+assert.ok(workflows['release.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Production promotion must bind provenance to the trusted repository and selected release run.');
+assert.ok(workflows['rollback.yml'].includes('--require-worker "$GITHUB_REPOSITORY"'), 'Rollback must bind current provenance to the trusted repository.');
 assert.ok(workflows['release.yml'].includes('nonprod-deployment-evidence'), 'Production promotion must require retained non-production deployment evidence.');
 assert.ok(workflows['release.yml'].includes('verify-promotion-evidence.mjs'), 'Production promotion must compare exact non-production evidence before approval.');
 assert.ok(workflows['release.yml'].includes('AWS_PRODUCTION_WORKER_SERVICE'), 'Production promotion must configure the worker service.');
