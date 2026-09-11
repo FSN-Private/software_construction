@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics.Metrics;
 using System.Security.Claims;
 using System.Text;
+using Npgsql;
 
 var factory = new OperationIdFactory();
 var generated = factory.Resolve(null);
@@ -68,6 +69,19 @@ Assert(LibraryPath.CollisionKey("Folder/photo.dng") == LibraryPath.CollisionKey(
 AssertThrows(() => LibraryPath.Normalize("folder/aux"), "Windows reserved device names must be rejected.");
 AssertThrows(() => LibraryPath.Normalize("folder/CON.photo.jpg"), "Windows device names must be rejected before every extension.");
 AssertThrows(() => LibraryPath.Normalize("folder/a\u0001.jpg"), "Windows control characters must be rejected on every host.");
+
+var databaseSettings = new Dictionary<string, string?>
+{
+    ["Ingest:Database:Host"] = "database.internal",
+    ["Ingest:Database:Port"] = "5433",
+    ["Ingest:Database:Name"] = "platform",
+    ["Ingest:Database:Username"] = "platform_owner",
+    ["Ingest:Database:Password"] = "test-only-password",
+};
+var generatedConnection = new NpgsqlConnectionStringBuilder(IngestDatabaseConfiguration.ResolveConnectionString(null, key => databaseSettings.GetValueOrDefault(key)));
+Assert(generatedConnection.Host == "database.internal" && generatedConnection.Port == 5433 && generatedConnection.Database == "platform" && generatedConnection.Username == "platform_owner" && generatedConnection.Password == "test-only-password" && generatedConnection.SslMode == SslMode.Require, "ECS database fields must produce an encrypted PostgreSQL connection string in memory.");
+Assert(IngestDatabaseConfiguration.ResolveConnectionString("Host=explicit", _ => null) == "Host=explicit", "An explicit local connection string must take precedence.");
+Assert(IngestDatabaseConfiguration.ResolveConnectionString(null, _ => null) is null, "Incomplete database settings must keep ingest disabled.");
 
 try { await IngestChecks.RunAsync(); }
 catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }

@@ -63,6 +63,13 @@ jobs:
           name: release-evidence
           path: artifacts/release
       - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
+      - name: Validate deployment configuration
+        run: |
+          missing=()
+          for name in AWS_REGION AWS_ROLE_ARN ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD; do
+            test -n "${!name:-}" || missing+=("$name")
+          done
+          test "${#missing[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${missing[@]}"; exit 1; }
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}

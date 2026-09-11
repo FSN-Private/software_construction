@@ -28,12 +28,14 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-prod
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('Validate deployment configuration') && workflows['deploy-nonprod.yml'].includes('Missing required deployment setting'), 'Non-production deployment must report missing protected configuration before AWS authentication.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
-assert.ok(deployScript.includes('RepoDigests'), 'Deployment must record immutable registry digests.');
+assert.ok(deployScript.includes('describe-images') && deployScript.includes('Immutable ECR tag contains different image bytes'), 'Deployment must safely reuse an identical immutable tag and reject different image bytes.');
 assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
 assert.ok(deployScript.includes('command:["--migrate"]'), 'Deployment must run the release migration command before services update.');
 assert.ok(deployScript.includes('previousWorkerTaskDefinition'), 'Deployment must retain the prior worker rollback target.');
 assert.ok(deployScript.includes('trap rollback ERR INT TERM'), 'Deployment must establish rollback handling before either service update.');
+assert.ok(deployScript.includes('--desired-count 1') && deployScript.includes('PREVIOUS_API_COUNT') && deployScript.includes('PREVIOUS_WORKER_COUNT'), 'The first deployment must start zero-count bootstrap services and restore their prior counts on failure.');
 assert.ok(deployScript.includes('"$API_TASK_ARN"'), 'Deployment must verify the API service stabilized on the candidate task definition.');
 assert.ok(deployScript.includes('"$WORKER_TASK_ARN"'), 'Deployment must verify the worker service stabilized on the candidate task definition.');
 assert.ok(deployScript.includes('scripts/smoke-ingest.mjs'), 'Deployment must exercise Feature 005 end to end.');
