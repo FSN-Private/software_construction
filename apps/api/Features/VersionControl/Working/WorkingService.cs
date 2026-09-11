@@ -2,11 +2,12 @@ using Npgsql;
 using Platform.Api.Features.VersionControl.Adapters;
 using Platform.Api.Features.VersionControl.Refs;
 using Platform.Contracts.VersionControl;
+using Platform.Storage;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Working;
 
-public sealed class WorkingService(NpgsqlDataSource dataSource)
+public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? storage = null)
 {
     public async Task<WorkingChangeView> PutAsync(string owner, string library, string client, WorkingChangeRequest request, string operationId, CancellationToken cancellationToken)
     {
@@ -17,7 +18,7 @@ public sealed class WorkingService(NpgsqlDataSource dataSource)
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockClientAsync(connection, owner, library, client, cancellationToken);
         await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
-        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, [entry], cancellationToken);
+        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, [entry], storage, cancellationToken);
 
         var id = Guid.NewGuid();
         if (request.ExpectedVersion == 0)

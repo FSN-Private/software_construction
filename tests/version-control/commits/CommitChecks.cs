@@ -467,6 +467,7 @@ internal static class CommitChecks
             await ExecuteAsync(connection, "UPDATE content_objects SET storage_version=$2 WHERE sha256=$1", default, address.Sha256, version);
         await storage.DeleteVersionAsync(address.AuthoritativeKey, version, default);
         Check((await integrity.VerifyAsync(owner, library, default)).Codes.Contains("missing_object"), "Missing pinned storage version must fail integrity verification.");
+        await RejectCodeAsync(() => new CommitService(db, storage).PublishAsync(owner, library, "storage-client", new(Guid.NewGuid(), "main", null, "Reject missing storage", at.AddSeconds(1)), "missing-storage-commit", "op_missing_storage_commit", default, preparedEntries: [entry]), "content_not_authoritative");
         await RejectCodeAsync(() => new RefService(db, integrity).CreateAsync(owner, library, "branch", new("broken-storage", commit), "broken-storage", "op_broken_storage", default), "graph_corrupt");
     }
 

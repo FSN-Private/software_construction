@@ -11,6 +11,7 @@ using Platform.Api.Features.VersionControl.Projection;
 using Platform.Api.Features.VersionControl.Integrity;
 using Platform.Api.Features.VersionControl.Working;
 using Platform.Contracts.VersionControl;
+using Platform.Storage;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Publishing;
@@ -18,13 +19,17 @@ namespace Platform.Api.Features.VersionControl.Publishing;
 public sealed class CommitService
 {
     private readonly NpgsqlDataSource dataSource;
+    private readonly S3ObjectStore? storage;
     private readonly TimeProvider clock;
     private readonly Action<string> checkpoint;
 
-    public CommitService(NpgsqlDataSource dataSource) : this(dataSource, TimeProvider.System, _ => { }) { }
-    public CommitService(NpgsqlDataSource dataSource, TimeProvider clock, Action<string> checkpoint)
+    public CommitService(NpgsqlDataSource dataSource) : this(dataSource, null, TimeProvider.System, _ => { }) { }
+    public CommitService(NpgsqlDataSource dataSource, S3ObjectStore storage) : this(dataSource, storage, TimeProvider.System, _ => { }) { }
+    public CommitService(NpgsqlDataSource dataSource, TimeProvider clock, Action<string> checkpoint) : this(dataSource, null, clock, checkpoint) { }
+    public CommitService(NpgsqlDataSource dataSource, S3ObjectStore? storage, TimeProvider clock, Action<string> checkpoint)
     {
         this.dataSource = dataSource;
+        this.storage = storage;
         this.clock = clock;
         this.checkpoint = checkpoint;
     }
@@ -88,7 +93,7 @@ public sealed class CommitService
             : (Entries: preparedEntries.ToArray(), WorkingIds: Array.Empty<Guid>());
         if (staged.Entries.Any(entry => entry.Change == "conflicted")) throw new VersionControlProblem("unresolved_divergence");
         if (mergeEvidence is not null && !mergeEvidence.RequiredResolutionKeys.All(key => staged.Entries.Any(entry => GraphQueries.Key(new(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)) == key))) throw new VersionControlProblem("unresolved_divergence");
-        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, cancellationToken);
+        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, storage, cancellationToken);
         await ValidateBaseStateAsync(connection, owner, library, branch, refState.Value.Head, staged.Entries, cancellationToken);
         checkpoint("content-validated");
         var parents = new List<string>();

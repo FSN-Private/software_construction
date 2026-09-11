@@ -1,4 +1,5 @@
 using System.Net;
+using System.Data;
 using Amazon.S3;
 using Npgsql;
 using Platform.Contracts.VersionControl;
@@ -14,7 +15,9 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
         using var measurement = VersionControlTelemetry.Measure("integrity.verify");
         VersionControlTelemetry.IntegrityVerifications.Add(1);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var readTransaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);
         var commits = new Dictionary<string, StoredCommit>(StringComparer.Ordinal);
+        var storedObjects = new List<(string Sha256, long Length, string Key, string Version)>();
         await using (var command = Command(connection, """
             SELECT c.id,c.library_id,c.manifest_bytes,c.author_id,c.authored_at,c.received_at,c.message,c.contract_version,c.policy_version,
                    COALESCE(array_agg(p.parent_id ORDER BY p.ordinal) FILTER (WHERE p.parent_id IS NOT NULL),ARRAY[]::bpchar[])
@@ -61,7 +64,6 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
             result = result with { Healthy = false, Codes = result.Codes.Append("invalid_content_provenance").Order(StringComparer.Ordinal).ToArray() };
         if (storage is not null)
         {
-            var codes = result.Codes.ToHashSet(StringComparer.Ordinal);
             await using var command = Command(connection, """
                 SELECT DISTINCT o.sha256,o.byte_length,o.storage_key,o.storage_version
                 FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id
@@ -71,23 +73,7 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
                 """, owner, library);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-            {
-                var address = new ContentAddress(reader.GetString(0).Trim(), reader.GetInt64(1));
-                try { await storage.VerifyStoredAsync(reader.GetString(2), reader.GetString(3), address, cancellationToken); }
-                catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound || exception.ErrorCode is "NoSuchKey" or "NoSuchVersion")
-                {
-                    codes.Add("missing_object");
-                }
-                catch (InvalidDataException)
-                {
-                    codes.Add("altered_object");
-                }
-                catch (ArgumentException)
-                {
-                    codes.Add("invalid_content_provenance");
-                }
-            }
-            if (codes.Count != result.Codes.Count) result = result with { Healthy = false, Codes = codes.Order(StringComparer.Ordinal).ToArray() };
+                storedObjects.Add((reader.GetString(0).Trim(), reader.GetInt64(1), reader.GetString(2), reader.GetString(3)));
         }
         var crossScope = await ScalarAsync(connection, """
             SELECT 1
@@ -106,6 +92,28 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
         {
             VersionControlTelemetry.IntegrityFailures.Add(1, new KeyValuePair<string, object?>("library", "redacted"));
             result = result with { Healthy = false, Codes = result.Codes.Append("cross_library_reference").Order(StringComparer.Ordinal).ToArray() };
+        }
+        await readTransaction.CommitAsync(cancellationToken);
+        if (storage is not null)
+        {
+            var codes = result.Codes.ToHashSet(StringComparer.Ordinal);
+            foreach (var item in storedObjects)
+            {
+                try { await storage.VerifyStoredAsync(item.Key, item.Version, new(item.Sha256, item.Length), cancellationToken); }
+                catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound || exception.ErrorCode is "NoSuchKey" or "NoSuchVersion")
+                {
+                    codes.Add("missing_object");
+                }
+                catch (InvalidDataException)
+                {
+                    codes.Add("altered_object");
+                }
+                catch (ArgumentException)
+                {
+                    codes.Add("invalid_content_provenance");
+                }
+            }
+            if (codes.Count != result.Codes.Count) result = result with { Healthy = false, Codes = codes.Order(StringComparer.Ordinal).ToArray() };
         }
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (result.Healthy)

@@ -1,12 +1,13 @@
 using Npgsql;
 using Platform.Contracts.VersionControl;
+using Platform.Storage;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Adapters;
 
 public static class VersionControlAdapters
 {
-    public static async Task ValidateEntriesAsync(NpgsqlConnection connection, string owner, IReadOnlyList<VersionControlEntry> entries, CancellationToken cancellationToken)
+    public static async Task ValidateEntriesAsync(NpgsqlConnection connection, string owner, IReadOnlyList<VersionControlEntry> entries, S3ObjectStore? storage, CancellationToken cancellationToken)
     {
         foreach (var entry in entries)
         {
@@ -21,7 +22,7 @@ public static class VersionControlAdapters
             foreach (var digest in new[] { entry.BaseContentSha256, entry.ContentSha256 }.Where(value => value is not null).Distinct(StringComparer.Ordinal))
             {
                 await using var content = Command(connection, """
-                    SELECT 1 FROM content_objects o
+                    SELECT o.byte_length,o.storage_key,o.storage_version FROM content_objects o
                     WHERE o.sha256=$1 AND o.category='xmp' AND o.integrity_state='authoritative'
                       AND o.storage_key<>'' AND o.storage_version IS NOT NULL
                       AND (EXISTS(
@@ -33,7 +34,13 @@ public static class VersionControlAdapters
                               AND u.edit_id IS NOT DISTINCT FROM $2 AND u.expected_sha256=o.sha256
                               AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL))
                     """, digest, entry.EditId, entry.AssetId, owner);
-                if (await content.ExecuteScalarAsync(cancellationToken) is null) throw new VersionControlProblem("content_not_authoritative");
+                await using var reader = await content.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken)) throw new VersionControlProblem("content_not_authoritative");
+                if (storage is not null)
+                {
+                    try { await storage.VerifyStoredAsync(reader.GetString(1), reader.GetString(2), new(digest!, reader.GetInt64(0)), cancellationToken); }
+                    catch (Exception error) when (error is Amazon.S3.AmazonS3Exception or InvalidDataException or ArgumentException) { throw new VersionControlProblem("content_not_authoritative"); }
+                }
             }
         }
     }

@@ -45,8 +45,8 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
     builder.Services.AddSingleton(sp => new IntegrityService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
     builder.Services.AddHostedService<IntegrityVerificationWorker>();
-    builder.Services.AddSingleton<WorkingService>();
-    builder.Services.AddSingleton<CommitService>();
+    builder.Services.AddSingleton(sp => new WorkingService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
+    builder.Services.AddSingleton(sp => new CommitService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
     builder.Services.AddSingleton<RefService>();
     builder.Services.AddSingleton<QueryService>();
     builder.Services.AddSingleton<OperationService>();
