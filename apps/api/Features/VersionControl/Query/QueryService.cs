@@ -33,6 +33,13 @@ public sealed class QueryService(NpgsqlDataSource dataSource)
         return (head, GraphQueries.State(await LoadAsync(connection, owner, library, cancellationToken), head));
     }
 
+    public async Task<CommitView> GetAsync(string owner, string library, string commitId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var graph = await LoadAsync(connection, owner, library, cancellationToken);
+        return graph.TryGetValue(commitId, out var commit) ? ToView(commit) : throw new VersionControlProblem("commit_not_found", 404);
+    }
+
     public static async Task<IReadOnlyDictionary<string, GraphCommit>> LoadAsync(NpgsqlConnection connection, string owner, string library, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, GraphCommit>(StringComparer.Ordinal);

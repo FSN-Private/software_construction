@@ -7,6 +7,7 @@ Owner: library owner; platform operator assists with corruption only.
 - Protected `main`: rewrite, reset, force-move, rename, and delete are forbidden. Treat repeated violations as a security signal; do not bypass the protection row.
 - Non-default rewrite: fetch the impact preview, review every displaced ID, then submit its exact confirmation token. The move creates an immutable reflog and a protected recovery ref for at least 90 days.
 - Recovery: before the inclusive day-90 deadline, create a named branch from the reflog ID. Verify the recovered commit digest and parentage against the preview. A hold or another ref keeps content after the deadline.
+- Discovery: use `GET .../reflog` to find deletion/rewrite recovery IDs. Checkout preserve returns `stashId`; list it with `GET .../stashes` and restore it once with `POST .../stashes/{id}/restore` while the client has no current working rows.
 - Expiry: run the owner-scoped expiry command after the deadline. It removes only the generated recovery ref and releases a hold only when no ref or hidden-retention rule still requires the head. Never delete commit rows as part of expiry.
 
 Abort and escalate when the preview changes, a recovery digest differs, integrity verification fails, or a required lifecycle hold is absent.

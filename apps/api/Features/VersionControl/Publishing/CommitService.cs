@@ -9,6 +9,7 @@ using Platform.Api.Features.VersionControl.Refs;
 using Platform.Api.Features.VersionControl.Query;
 using Platform.Api.Features.VersionControl.Projection;
 using Platform.Api.Features.VersionControl.Integrity;
+using Platform.Api.Features.VersionControl.Working;
 using Platform.Contracts.VersionControl;
 using static Platform.Storage.IngestDb;
 
@@ -28,8 +29,14 @@ public sealed class CommitService
         this.checkpoint = checkpoint;
     }
 
-    public async Task<VersionControlResult> PublishAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence = null)
+    public async Task<VersionControlResult> PublishAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence = null, IReadOnlyList<VersionControlEntry>? preparedEntries = null, object? fingerprintPayload = null)
     {
+        var fingerprint = Fingerprint(fingerprintPayload ?? request, mergeEvidence);
+        await using (var replayConnection = await dataSource.OpenConnectionAsync(cancellationToken))
+        {
+            var replay = await ReadReplayAsync(replayConnection, owner, library, idempotencyKey, fingerprint, operationId, cancellationToken);
+            if (replay is not null) return replay;
+        }
         if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         var timer = Stopwatch.StartNew();
         try
@@ -38,7 +45,7 @@ public sealed class CommitService
             {
                 try
                 {
-                    return await PublishAttemptAsync(owner, library, client, request, idempotencyKey, operationId, cancellationToken, mergeEvidence);
+                    return await PublishAttemptAsync(owner, library, client, request, idempotencyKey, operationId, cancellationToken, mergeEvidence, preparedEntries, fingerprintPayload);
                 }
                 catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.SerializationFailure) { }
             }
@@ -52,14 +59,15 @@ public sealed class CommitService
         finally { VersionControlTelemetry.CommandLatency.Record(timer.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("operation", "commit")); }
     }
 
-    private async Task<VersionControlResult> PublishAttemptAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence)
+    private async Task<VersionControlResult> PublishAttemptAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence, IReadOnlyList<VersionControlEntry>? preparedEntries, object? fingerprintPayload)
     {
         var branch = RefNames.Normalize(request.Branch);
-        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { request, mergeEvidence }))));
+        var fingerprint = Fingerprint(fingerprintPayload ?? request, mergeEvidence);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await WorkingService.LockClientAsync(connection, owner, library, client, cancellationToken);
         await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
-        await ExecuteAsync(connection, "SELECT pg_advisory_xact_lock(hashtextextended($1,6))", cancellationToken, owner + "\n" + library + "\n" + branch);
+        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
         var replay = await ReadReplayAsync(connection, owner, library, idempotencyKey, fingerprint, operationId, cancellationToken);
         if (replay is not null) return replay;
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, branch) is not null) throw new VersionControlProblem("graph_corrupt");
@@ -75,8 +83,11 @@ public sealed class CommitService
             throw await StaleAsync(connection, owner, library, client, branch, request, refState.Value.Head, cancellationToken);
         checkpoint("ref-locked");
 
-        var staged = await ReadStagedAsync(connection, owner, library, client, request.StagingSetId, branch, request.ExpectedHead, cancellationToken);
+        var staged = preparedEntries is null
+            ? await ReadStagedAsync(connection, owner, library, client, request.StagingSetId, branch, request.ExpectedHead, cancellationToken)
+            : (Entries: preparedEntries.ToArray(), WorkingIds: Array.Empty<Guid>());
         if (staged.Entries.Any(entry => entry.Change == "conflicted")) throw new VersionControlProblem("unresolved_divergence");
+        if (mergeEvidence is not null && !mergeEvidence.RequiredResolutionKeys.All(key => staged.Entries.Any(entry => GraphQueries.Key(new(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)) == key))) throw new VersionControlProblem("unresolved_divergence");
         await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, cancellationToken);
         await ValidateBaseStateAsync(connection, owner, library, refState.Value.Head, staged.Entries, cancellationToken);
         checkpoint("content-validated");
@@ -114,10 +125,10 @@ public sealed class CommitService
             await ExecuteAsync(connection, "INSERT INTO vc_divergence(id,owner_id,library_id,normalized_ref,base_commit_id,ours_commit_id,theirs_commit_id,resolved_commit_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'resolved')", cancellationToken, Guid.NewGuid(), owner, library, branch, mergeEvidence.BaseCommitId, mergeEvidence.TargetCommitId, mergeEvidence.SourceCommitId, commitId);
         }
         checkpoint("holds-published");
-        await ExecuteAsync(connection, "DELETE FROM vc_staged_entries WHERE staging_set_id=$2; DELETE FROM vc_working_changes WHERE id=ANY($1); UPDATE vc_staging_sets SET status='published',version=version+1 WHERE id=$2", cancellationToken, staged.WorkingIds, request.StagingSetId);
+        if (preparedEntries is null) await ExecuteAsync(connection, "DELETE FROM vc_staged_entries WHERE staging_set_id=$2; DELETE FROM vc_working_changes WHERE id=ANY($1); UPDATE vc_staging_sets SET status='published',version=version+1 WHERE id=$2", cancellationToken, staged.WorkingIds, request.StagingSetId);
         var result = new VersionControlResult(operationId, commitId, branch, refState.Value.Version + 1);
         await ExecuteAsync(connection, "INSERT INTO vc_idempotency(owner_id,library_id,idempotency_key,fingerprint,commit_id,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)", cancellationToken, owner, library, idempotencyKey, fingerprint, commitId, JsonSerializer.Serialize(result));
-        await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.commit", request.StagingSetId, "accepted", cancellationToken);
+        await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.commit", preparedEntries is null ? request.StagingSetId : RefService.StableResource(idempotencyKey), "accepted", cancellationToken);
         checkpoint("audit-recorded");
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.Commits.Add(1);
@@ -132,6 +143,8 @@ public sealed class CommitService
             return new(value.Ticks - value.Ticks % 10, TimeSpan.Zero);
         }
     }
+
+    internal static string Fingerprint(object request, MergeEvidence? mergeEvidence) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { request, mergeEvidence }))));
 
     private static async Task<VersionControlResult?> ReadReplayAsync(NpgsqlConnection connection, string owner, string library, string key, string fingerprint, string operationId, CancellationToken cancellationToken)
     {

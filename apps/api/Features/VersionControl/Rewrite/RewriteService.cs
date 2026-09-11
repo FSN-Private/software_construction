@@ -27,7 +27,7 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
         return new(branch, current.Head, newHead, displaced, Token(owner, library, branch, current.Head, newHead));
     }
 
-    public async Task<VersionControlResult> ApplyAsync(string owner, string library, RewriteRequest request, string operationId, CancellationToken cancellationToken)
+    public async Task<VersionControlResult> ApplyAsync(string owner, string library, RewriteRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
         if (!(await new IntegrityService(dataSource, clock).VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (!request.Confirm) throw new VersionControlProblem("confirmation_required");
@@ -36,6 +36,10 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
         await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
+        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
+        var fingerprint = VersionControlIdempotency.Fingerprint(new { operation = "ref.rewrite", request });
+        var replay = await VersionControlIdempotency.ReadAsync<VersionControlResult>(connection, owner, library, idempotencyKey, fingerprint, cancellationToken);
+        if (replay is not null) return replay with { OperationId = operationId };
         var current = await ReadRefAsync(connection, owner, library, branch, true, cancellationToken) ?? throw new VersionControlProblem("ref_not_found", 404);
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, branch) is not null) throw new VersionControlProblem("graph_corrupt");
         if (current.Protected)
@@ -62,16 +66,18 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
             await HistoryRetention.ReconcileAsync(connection, graph, owner, library, displaced, Now, cancellationToken);
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.rewrite", RefService.StableResource(branch), "accepted", cancellationToken);
+        var result = new VersionControlResult(operationId, request.NewHead, branch, current.Version + 1, RecoveryId: reflogId);
+        await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, request.NewHead, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.RefMovements.Add(1, new KeyValuePair<string, object?>("operation", "rewrite"));
-        return new(operationId, request.NewHead, branch, current.Version + 1);
+        return result;
     }
 
-    public async Task<RefView> RecoverAsync(string owner, string library, Guid reflogId, string branchName, string operationId, CancellationToken cancellationToken)
+    public async Task<RefView> RecoverAsync(string owner, string library, Guid reflogId, string branchName, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var oldHead = (await ScalarAsync(connection, "SELECT old_head FROM vc_reflog WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND recovery_expires_at >= $4", cancellationToken, reflogId, owner, library, Now) as string)?.Trim() ?? throw new VersionControlProblem("recovery_expired", 404);
-        return await new RefService(dataSource, clock).CreateAsync(owner, library, "branch", new(branchName, oldHead), operationId, cancellationToken);
+        return await new RefService(dataSource, clock).CreateAsync(owner, library, "branch", new(branchName, oldHead), idempotencyKey, operationId, cancellationToken);
     }
 
     public async Task<int> ExpireAsync(string owner, string library, CancellationToken cancellationToken)
@@ -92,6 +98,16 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, TimeProvider? cl
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.RecoveryExpirations.Add(expired.Count);
         return expired.Count;
+    }
+
+    public async Task<IReadOnlyList<ReflogView>> ListAsync(string owner, string library, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(connection, "SELECT id,normalized_name,old_head,new_head,operation,reason,occurred_at,recovery_expires_at FROM vc_reflog WHERE owner_id=$1 AND library_id=$2 ORDER BY occurred_at DESC,id LIMIT 1000", owner, library);
+        var result = new List<ReflogView>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2).Trim(), reader.IsDBNull(3) ? null : reader.GetString(3).Trim(), reader.GetString(4), reader.GetString(5), reader.GetFieldValue<DateTimeOffset>(6), reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7)));
+        return result;
     }
 
     private static async Task<(string? Head, bool Protected, long Version)?> ReadRefAsync(NpgsqlConnection connection, string owner, string library, string branch, bool update, CancellationToken cancellationToken)

@@ -15,6 +15,8 @@ public sealed class WorkingService(NpgsqlDataSource dataSource)
         _ = VersionControlManifestCodec.Write(new(library, [], owner, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "validate", [entry]));
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockClientAsync(connection, owner, library, client, cancellationToken);
+        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
         await VersionControlAdapters.ValidateEntriesAsync(connection, owner, [entry], cancellationToken);
 
         var id = Guid.NewGuid();
@@ -65,6 +67,8 @@ public sealed class WorkingService(NpgsqlDataSource dataSource)
         var branch = RefNames.Normalize(branchValue);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockClientAsync(connection, owner, library, client, cancellationToken);
+        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
         if (branch != "main" && await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch) is null) throw new VersionControlProblem("ref_not_found", 404);
         var actualHead = (string?)await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch);
         actualHead = actualHead?.Trim();
@@ -87,6 +91,8 @@ public sealed class WorkingService(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var client = await ScalarAsync(connection, "SELECT client_id FROM vc_staging_sets WHERE id=$1 AND owner_id=$2 AND library_id=$3", cancellationToken, setId, owner, library) as string ?? throw new VersionControlProblem("staging_conflict");
+        await LockClientAsync(connection, owner, library, client, cancellationToken);
         var deleted = await ExecuteAsync(connection, "DELETE FROM vc_staged_entries e USING vc_staging_sets s WHERE e.staging_set_id=s.id AND s.id=$1 AND s.owner_id=$2 AND s.library_id=$3 AND s.version=$4 AND s.status='open' AND e.working_change_id=$5", cancellationToken, setId, owner, library, expectedVersion, workingId);
         if (deleted != 1) throw new VersionControlProblem("staging_conflict");
         await ExecuteAsync(connection, "UPDATE vc_staging_sets SET version=version+1 WHERE id=$1", cancellationToken, setId);
@@ -95,4 +101,7 @@ public sealed class WorkingService(NpgsqlDataSource dataSource)
     }
 
     private static WorkingChangeView Read(NpgsqlDataReader reader) => new(reader.GetGuid(0), reader.GetGuid(1), reader.IsDBNull(2) ? null : reader.GetGuid(2), reader.GetString(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5).Trim(), reader.IsDBNull(6) ? null : reader.GetString(6).Trim(), reader.IsDBNull(7) ? null : reader.GetString(7), reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetInt64(9), reader.GetBoolean(10));
+
+    public static Task LockClientAsync(NpgsqlConnection connection, string owner, string library, string client, CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, "SELECT pg_advisory_xact_lock(hashtextextended($1,6))", cancellationToken, owner + "\n" + library + "\n" + client);
 }
