@@ -160,6 +160,7 @@ CREATE TABLE vc_idempotency (
     owner_id text NOT NULL,
     library_id text NOT NULL,
     idempotency_key text NOT NULL,
+    request_fingerprint char(64) NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
     fingerprint char(64) NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
     commit_id char(64) REFERENCES vc_commits(id),
     result jsonb NOT NULL,

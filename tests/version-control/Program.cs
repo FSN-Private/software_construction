@@ -1,5 +1,8 @@
 using Platform.Contracts.VersionControl;
 using Platform.Api.Features.VersionControl.Integrity;
+using Platform.Api.Features.VersionControl;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 
 var manifest = new VersionControlManifest(
     "library-1",
@@ -24,6 +27,13 @@ var second = Stored(childManifest);
 Assert(GraphIntegrity.Verify("library-1", [first, second]).Healthy, "A valid manifest DAG must pass integrity verification.");
 Assert(GraphIntegrity.Verify("library-1", [second]).Codes.Contains("missing_parent"), "Missing parents must be detected.");
 Assert(GraphIntegrity.Verify("library-1", [first with { Id = new string('f', 64) }]).Codes.Contains("manifest_digest_mismatch"), "Changed commit identities must be detected.");
+
+await using (var app = WebApplication.CreateBuilder().Build())
+{
+    VersionControlEndpoints.Map(app);
+    var routes = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().Select(endpoint => endpoint.RoutePattern.RawText).ToArray();
+    Assert(routes.Contains("/v1/libraries/{library}/version-control/staging/{**branch}", StringComparer.Ordinal), "HTTP staging must preserve slash-containing branch names through a catch-all route.");
+}
 
 await CommitChecks.RunAsync();
 RefChecks.Run();

@@ -4,6 +4,7 @@ using Platform.Api.Features.VersionControl.Integrity;
 using Platform.Api.Features.VersionControl.Query;
 using Platform.Contracts.VersionControl;
 using Platform.Api.Features.VersionControl.Refs;
+using System.Text.Json;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Projection;
@@ -78,20 +79,26 @@ internal static class ProjectionWriter
 
     public static async Task ApplyAsync(NpgsqlConnection connection, string owner, string library, string reference, string head, IReadOnlyList<VersionControlEntry> entries, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        foreach (var entry in entries)
+        if (entries.Count == 0) return;
+        var rows = JsonSerializer.Serialize(entries.Select(entry => new
         {
-            if (entry.Change == "deleted")
-            {
-                await ExecuteAsync(connection, "DELETE FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3 AND asset_id=$4 AND edit_id IS NOT DISTINCT FROM $5", cancellationToken, owner, library, reference, entry.AssetId, entry.EditId);
-                continue;
-            }
-            await ExecuteAsync(connection, """
-                INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,display_path,lifecycle_state,rebuilt_at)
-                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-                ON CONFLICT(owner_id,library_id,normalized_ref,asset_id,edit_id)
-                DO UPDATE SET source_commit_id=EXCLUDED.source_commit_id,content_sha256=EXCLUDED.content_sha256,display_path=EXCLUDED.display_path,lifecycle_state=EXCLUDED.lifecycle_state,rebuilt_at=EXCLUDED.rebuilt_at
-                """, cancellationToken, owner, library, reference, head, entry.AssetId, entry.EditId, entry.ContentSha256, entry.Path, entry.Lifecycle, now);
-        }
+            asset_id = entry.AssetId,
+            edit_id = entry.EditId,
+            change_kind = entry.Change,
+            content_sha256 = entry.ContentSha256,
+            display_path = entry.Path,
+            lifecycle_state = entry.Lifecycle,
+        }));
+        await ExecuteAsync(connection, """
+            DELETE FROM vc_materialized_state s USING jsonb_to_recordset($6::jsonb) AS e(asset_id uuid,edit_id uuid,change_kind text,content_sha256 char(64),display_path text,lifecycle_state text)
+            WHERE e.change_kind='deleted' AND s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3 AND s.asset_id=e.asset_id AND s.edit_id IS NOT DISTINCT FROM e.edit_id;
+            INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,display_path,lifecycle_state,rebuilt_at)
+            SELECT $1,$2,$3,$4,e.asset_id,e.edit_id,e.content_sha256,e.display_path,e.lifecycle_state,$5
+            FROM jsonb_to_recordset($6::jsonb) AS e(asset_id uuid,edit_id uuid,change_kind text,content_sha256 char(64),display_path text,lifecycle_state text)
+            WHERE e.change_kind<>'deleted'
+            ON CONFLICT(owner_id,library_id,normalized_ref,asset_id,edit_id)
+            DO UPDATE SET source_commit_id=EXCLUDED.source_commit_id,content_sha256=EXCLUDED.content_sha256,display_path=EXCLUDED.display_path,lifecycle_state=EXCLUDED.lifecycle_state,rebuilt_at=EXCLUDED.rebuilt_at
+            """, cancellationToken, owner, library, reference, head, now, rows);
     }
 
     public static async Task<int> ReplaceAsync(NpgsqlConnection connection, string owner, string library, string reference, string head, IReadOnlyDictionary<string, GraphCommit> graph, DateTimeOffset now, CancellationToken cancellationToken)

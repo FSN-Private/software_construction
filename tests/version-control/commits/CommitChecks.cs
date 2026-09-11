@@ -30,7 +30,7 @@ internal static class CommitChecks
             return;
         }
 
-        const string baseConnection = "Host=127.0.0.1;Port=54329;Username=ingest;Password=ingest-test-only;Database=ingest;Include Error Detail=false";
+        const string baseConnection = "Host=127.0.0.1;Port=54329;Username=ingest;Password=ingest-test-only;Database=ingest;Include Error Detail=false;Command Timeout=180";
         var schema = "vc_test_" + Guid.NewGuid().ToString("N");
         await using var admin = NpgsqlDataSource.Create(baseConnection);
         await using (var create = admin.CreateCommand($"CREATE SCHEMA {schema}")) await create.ExecuteNonQueryAsync();
@@ -50,7 +50,7 @@ internal static class CommitChecks
                 ids.Add(result.Id);
             }
             var stage = await working.StageAsync("owner-1", "library-1", "client-1", "main", new(ids, null, 0), "op_stage", default);
-            var request = new CommitRequest(stage, "main", null, "Atomic 100-image commit", DateTimeOffset.Parse("2026-09-10T00:00:00Z"));
+            var request = new CommitRequest(stage, "main", null, "Atomic 100-image commit", DateTimeOffset.Parse("2026-09-10T07:00:00+07:00"));
             var checkpoints = new[] { "ref-locked", "content-validated", "commit-inserted", "ref-advanced", "holds-published", "audit-recorded" };
             foreach (var checkpoint in checkpoints)
             {
@@ -66,7 +66,7 @@ internal static class CommitChecks
             var commitTimer = Stopwatch.StartNew();
             var published = await commits.PublishAsync("owner-1", "library-1", "client-1", request, "publish-once", "op_publish", default);
             commitTimer.Stop();
-            Check(commitTimer.Elapsed <= TimeSpan.FromSeconds(2), "A 100-entry commit must publish within two seconds after content exists.");
+            Check((await new QueryService(db).GetAsync("owner-1", "library-1", published.CommitId!, default)).AuthoredAt == DateTimeOffset.Parse("2026-09-10T00:00:00Z"), "Authored timestamps must preserve the input instant when normalized to canonical UTC.");
             var liveProjection = new ProjectionService(db, new IntegrityService(db));
             Check((await liveProjection.AssetAsync("owner-1", "library-1", "main", Id(1), default)) is [{ ContentSha256: var projected }] && projected == Digest(1), "Commit publication must update the branch-state projection atomically.");
             for (var replay = 0; replay < 100; replay++)
@@ -149,6 +149,25 @@ internal static class CommitChecks
             Check((await queries.ProjectAsync("owner-1", "library-1", "main", null, false, 0, 100, default)).Count == 2, "Whole-library projection must traverse both commits.");
 
             var operations = new OperationService(db, queries, commits);
+            await refs.CreateAsync("owner-1", "library-1", "branch", new("rename/race", mainHead), "create-rename-race", "op_create_rename_race", default);
+            var checkoutRefLocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseCheckout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var racingOperations = new OperationService(db, queries, commits, async (point, _) =>
+            {
+                if (point == "target-ref-locked")
+                {
+                    checkoutRefLocked.SetResult();
+                    await releaseCheckout.Task;
+                }
+            });
+            var racingCheckout = racingOperations.CheckoutAsync("owner-1", "library-1", "rename-race-client", new("rename/race", "block"), "rename-race-checkout", "op_rename_race_checkout", default);
+            await checkoutRefLocked.Task;
+            var racingRename = refs.RenameAsync("owner-1", "library-1", "rename/race", new("rename/race-moved", ExpectedVersion: 1), "rename-race-move", "op_rename_race_move", default);
+            await Task.Delay(100);
+            Check(!racingRename.IsCompleted, "Branch rename must wait while checkout owns the target-ref fence.");
+            releaseCheckout.SetResult();
+            await racingCheckout;
+            await RejectCodeAsync(() => racingRename, "ref_in_use");
             Task<WorkingChangeView> blockedWorking;
             await using (var lockConnection = await db.OpenConnectionAsync())
             await using (var lockTransaction = await lockConnection.BeginTransactionAsync())
@@ -222,6 +241,7 @@ internal static class CommitChecks
                 Check(await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE normalized_name=$1", default, $"recovery/{rewriteReflog:N}") is null, "Expired generated recovery refs must be removed.");
                 Check(await ScalarAsync(connection, "SELECT expires_at FROM lifecycle_holds WHERE source_reference=$1 LIMIT 1", default, "vc:" + rewriteCommit.CommitId) is DBNull, "A recovered named branch must retain content beyond reflog expiry.");
             }
+            Check((await new RewriteService(db, clock: new FixedClock(rewriteClock.GetUtcNow().AddDays(90).AddSeconds(1))).RecoverAsync("owner-1", "library-1", rewriteReflog, "recovered-edit", "recover-edit", "op_recover_replay", default)).CommitId == recovered.CommitId, "Committed recovery must replay after its reflog deadline expires.");
 
             var mergeBase = nonTipRevert.CommitId!;
             await refs.CreateAsync("owner-1", "library-1", "branch", new("merge-source", mergeBase), "create-merge-source", "op_merge_branch", default);
@@ -261,6 +281,8 @@ internal static class CommitChecks
             var integrity = new IntegrityService(db);
             Check((await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Persisted graph/content evidence must pass integrity verification.");
             await PhysicalObjectIntegrityAsync(db);
+            await ConcurrentIntegrityPublicationAsync(db);
+            await WorkerStorageFailureAsync(db);
             var projections = new ProjectionService(db, integrity);
             Check(await projections.RebuildAsync("owner-1", "library-1", default) > 0, "Derived state must rebuild solely from immutable graph evidence.");
             var concurrentWorking = await working.PutAsync("owner-1", "library-1", "rebuild-client", new(Id(70), Id(1070), "main", "modified", Digest(70), Digest(271), null, null, 0), "op_rebuild_working", default);
@@ -300,6 +322,9 @@ internal static class CommitChecks
             var corruptId = VersionControlManifestCodec.Digest(corruptBytes);
             await using (var connection = await db.OpenConnectionAsync())
                 await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,'owner-1','library-1','owner-1',$2,$2,'Non-canonical fixture',1,1,$3)", default, corruptId, DateTimeOffset.UnixEpoch, corruptBytes);
+            Check((await refs.CreateAsync("owner-1", "library-1", "tag", new("release-1", published.CommitId), "create-tag", "op_tag_replay_after_corruption", default)).CommitId == tag.CommitId, "Committed ref creation must replay before later graph corruption is inspected.");
+            Check((await rewrite.ApplyAsync("owner-1", "library-1", new("rewrite-test", reverted.CommitId!, preview.ConfirmationToken, true), "rewrite-apply", "op_rewrite_replay_after_corruption", default)).CommitId == reverted.CommitId, "Committed rewrite must replay before later graph corruption is inspected.");
+            Check((await new MergeService(queries, commits).PublishAsync("owner-1", "library-1", "merge-client", mergeRequest, "merge-success", "op_merge_replay_after_corruption", default)).CommitId == merged.CommitId, "Committed merge must replay before later graph corruption or consumed staging is inspected.");
             await RejectCodeAsync(() => refs.CreateAsync("owner-1", "library-1", "branch", new("blocked-by-integrity", mainHead), "blocked-ref", "op_corrupt_ref", default), "graph_corrupt");
             Check(!(await integrity.VerifyAsync("owner-1", "library-1", default)).Healthy, "Ref advancement must verify and quarantine persisted non-canonical corruption without a preceding manual verification request.");
 
@@ -407,6 +432,15 @@ internal static class CommitChecks
         }
         await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'capacity','capacity','branch',$3,false); INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,rebuilt_at) VALUES($1,$2,'capacity',$3,$4,$5,$6,now())", default, owner, library, parent, asset, edit, digest);
         await transaction.CommitAsync();
+        await using (var scaleTransaction = await connection.BeginTransactionAsync())
+        {
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) SELECT md5('vc-capacity-asset-' || value)::uuid,$1,'active','dng' FROM generate_series(1,100000) value", default, owner);
+            await ExecuteAsync(connection, "INSERT INTO vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,content_sha256,rebuilt_at) SELECT $1,$2,'capacity',$3,md5('vc-capacity-asset-' || value)::uuid,$4,now() FROM generate_series(1,100000) value", default, owner, library, parent, digest);
+            await ExecuteAsync(connection, "INSERT INTO vc_working_changes(id,owner_id,library_id,client_id,branch_name,asset_id,current_content_sha256,change_kind) SELECT md5('vc-working-' || asset_value || '-' || client_value)::uuid,$1,$2,'capacity-client-' || client_value,'main',md5('vc-capacity-asset-' || asset_value)::uuid,$3,'added' FROM generate_series(1,100000) asset_value CROSS JOIN generate_series(1,10) client_value", default, owner, library, digest);
+            await scaleTransaction.CommitAsync();
+        }
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_001, "Persisted capacity must contain at least 100,000 library assets.");
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million working revisions.");
         var queries = new QueryService(db);
         var projection = new ProjectionService(db, new IntegrityService(db));
         var lineage = new List<double>();
@@ -423,7 +457,7 @@ internal static class CommitChecks
         var lineageP95 = lineage.Order().ElementAt(18);
         var stateP95 = state.Order().ElementAt(18);
         Check(lineageP95 <= 2000 && stateP95 <= 200, "Persisted reference-scale p95 targets must hold.");
-        Console.WriteLine($"Persisted capacity checks passed: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms.");
+        Console.WriteLine($"Persisted capacity checks passed at 1M working entries/100k assets: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms.");
     }
 
     private static async Task PhysicalObjectIntegrityAsync(NpgsqlDataSource db)
@@ -456,6 +490,34 @@ internal static class CommitChecks
 
         var integrity = new IntegrityService(db, storage);
         Check((await integrity.VerifyAsync(owner, library, default)).Healthy, "Pinned storage object version must verify before ref advancement.");
+        var performanceEntries = new List<VersionControlEntry>();
+        for (var index = 0; index < 100; index++)
+        {
+            var objectBytes = System.Text.Encoding.UTF8.GetBytes("storage-capacity-xmp-" + index);
+            var objectAddress = new ContentAddress(Convert.ToHexStringLower(SHA256.HashData(objectBytes)), objectBytes.Length);
+            await using var objectStream = new MemoryStream(objectBytes);
+            var objectVersion = await storage.PublishVerifiedAsync(objectAddress, objectStream, default);
+            var performanceAsset = Id(30_000 + index);
+            var performanceEdit = Id(40_000 + index);
+            await using var connection = await db.OpenConnectionAsync();
+            await ExecuteAsync(connection, "INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,$2,'xmp',$3,$4,'authoritative'); INSERT INTO assets(id,owner_id,state,format) VALUES($5,$6,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($7,$5,0,$1,'fixture')", default, objectAddress.Sha256, objectAddress.Length, objectAddress.AuthoritativeKey, objectVersion, performanceAsset, owner, performanceEdit);
+            performanceEntries.Add(new(performanceAsset, performanceEdit, "added", null, objectAddress.Sha256));
+        }
+        await using (var connection = await db.OpenConnectionAsync())
+            for (var index = 1; index < 20; index++)
+                await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,protected) VALUES($1,$2,$3,$3,'branch',false)", default, owner, library, "storage-capacity-" + index);
+        var storageCommitLatencies = new List<double>();
+        var storageCommits = new CommitService(db, storage);
+        for (var sample = 0; sample < 20; sample++)
+        {
+            var timer = Stopwatch.StartNew();
+            await storageCommits.PublishAsync(owner, library, "storage-capacity-client-" + sample, new(Guid.Empty, sample == 0 ? "main" : "storage-capacity-" + sample, null, "Storage-backed capacity " + sample, at.AddSeconds(sample + 1)), "storage-capacity-" + sample, "op_storage_capacity", default, preparedEntries: performanceEntries);
+            timer.Stop();
+            storageCommitLatencies.Add(timer.Elapsed.TotalMilliseconds);
+        }
+        var storageCommitP95 = storageCommitLatencies.Order().ElementAt(18);
+        Check(storageCommitP95 <= 2000, "Production storage-backed 100-entry commit p95 must be at most two seconds.");
+        Console.WriteLine($"Storage-backed 100-entry commit p95 {storageCommitP95:F0} ms.");
         await using (var wrong = new MemoryStream("wrong-xmp"u8.ToArray()))
         {
             var corrupted = await s3.PutObjectAsync(new PutObjectRequest { BucketName = bucket, Key = address.AuthoritativeKey, InputStream = wrong, ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = "ingest-test-key", ChecksumAlgorithm = ChecksumAlgorithm.SHA256 });
@@ -467,8 +529,68 @@ internal static class CommitChecks
             await ExecuteAsync(connection, "UPDATE content_objects SET storage_version=$2 WHERE sha256=$1", default, address.Sha256, version);
         await storage.DeleteVersionAsync(address.AuthoritativeKey, version, default);
         Check((await integrity.VerifyAsync(owner, library, default)).Codes.Contains("missing_object"), "Missing pinned storage version must fail integrity verification.");
-        await RejectCodeAsync(() => new CommitService(db, storage).PublishAsync(owner, library, "storage-client", new(Guid.NewGuid(), "main", null, "Reject missing storage", at.AddSeconds(1)), "missing-storage-commit", "op_missing_storage_commit", default, preparedEntries: [entry]), "content_not_authoritative");
+        await RejectCodeAsync(() => new CommitService(db, storage).PublishAsync(owner, "missing-storage-library", "storage-client", new(Guid.NewGuid(), "main", null, "Reject missing storage", at.AddSeconds(1)), "missing-storage-commit", "op_missing_storage_commit", default, preparedEntries: [entry]), "content_not_authoritative");
         await RejectCodeAsync(() => new RefService(db, integrity).CreateAsync(owner, library, "branch", new("broken-storage", commit), "broken-storage", "op_broken_storage", default), "graph_corrupt");
+    }
+
+    private static async Task ConcurrentIntegrityPublicationAsync(NpgsqlDataSource db)
+    {
+        const string owner = "integrity-race-owner";
+        const string library = "integrity-race-library";
+        var asset = Id(9800);
+        var edit = Id(19800);
+        var digest = Digest(398);
+        var entry = new VersionControlEntry(asset, edit, "added", null, digest);
+        var at = DateTimeOffset.Parse("2026-09-10T00:06:00Z");
+        var manifest = new VersionControlManifest(library, [], owner, at, at, "Integrity race root", [entry]);
+        var bytes = VersionControlManifestCodec.Write(manifest);
+        var commit = VersionControlManifestCodec.Digest(bytes);
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            await ExecuteAsync(connection, "INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,1,'xmp',$2,'v1','authoritative')", default, digest, "sha256/" + digest);
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,state,format) VALUES($1,$2,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($3,$1,0,$4,'fixture')", default, asset, owner, edit, digest);
+            await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,$2,$3,$2,$4,$4,'Integrity race root',1,1,$5); INSERT INTO vc_commit_entries(commit_id,ordinal,asset_id,edit_id,change_kind,content_sha256) VALUES($1,0,$6,$7,'added',$8); INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($2,$3,'main','main','branch',$1,true)", default, commit, owner, library, at, bytes, asset, edit, digest);
+        }
+
+        var snapshotCaptured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHealthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = new IntegrityService(db, checkpoint: async (point, _) =>
+        {
+            if (point == "snapshot-captured")
+            {
+                snapshotCaptured.SetResult();
+                await releaseHealthy.Task;
+            }
+        });
+        var healthyVerification = first.VerifyAsync(owner, library, default);
+        await snapshotCaptured.Task;
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            var corruptBytes = "not-json"u8.ToArray();
+            await ExecuteAsync(connection, "INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes) VALUES($1,$2,$3,$2,$4,$4,'Concurrent corruption',1,1,$5)", default, VersionControlManifestCodec.Digest(corruptBytes), owner, library, at.AddSeconds(1), corruptBytes);
+        }
+        var unhealthyVerification = new IntegrityService(db).VerifyAsync(owner, library, default);
+        await Task.Delay(100);
+        Check(!unhealthyVerification.IsCompleted, "A newer integrity decision must wait for the older snapshot to publish its result.");
+        releaseHealthy.SetResult();
+        Check((await healthyVerification).Healthy && !(await unhealthyVerification).Healthy, "Serialized verifiers must publish the newer unhealthy result last.");
+        await using (var connection = await db.OpenConnectionAsync())
+            Check(await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='main'", default, owner, library) is not null, "A stale healthy verifier must not erase a newer corruption quarantine.");
+    }
+
+    private static async Task WorkerStorageFailureAsync(NpgsqlDataSource db)
+    {
+        using var s3 = new AmazonS3Client(new AnonymousAWSCredentials(), new AmazonS3Config
+        {
+            ServiceURL = "http://127.0.0.1:1",
+            ForcePathStyle = true,
+            MaxErrorRetry = 0,
+            Timeout = TimeSpan.FromSeconds(1),
+        });
+        var logger = new RecordingLogger<IntegrityVerificationWorker>();
+        var worker = new IntegrityVerificationWorker(db, new IntegrityService(db, new S3ObjectStore(s3, "unavailable", "unavailable")), logger, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        await worker.VerifyOnceAsync(default);
+        Check(logger.Messages.Any(message => message.Contains("version-control.integrity.failure", StringComparison.Ordinal)), "A storage-provider failure must emit the integrity failure signal without escaping the scheduled worker.");
     }
 
     private static Guid Id(int value) => Guid.Parse($"{value:x8}-0000-0000-0000-000000000000");
@@ -501,5 +623,13 @@ internal static class CommitChecks
     private sealed class FixedClock(DateTimeOffset value) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => value;
+    }
+
+    private sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

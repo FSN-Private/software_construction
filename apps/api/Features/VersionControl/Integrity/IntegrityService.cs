@@ -1,5 +1,6 @@
 using System.Net;
 using System.Data;
+using System.Collections.Concurrent;
 using Amazon.S3;
 using Npgsql;
 using Platform.Contracts.VersionControl;
@@ -8,13 +9,24 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Integrity;
 
-public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore? storage = null, TimeProvider? clock = null)
+public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore? storage = null, TimeProvider? clock = null, Func<string, CancellationToken, Task>? checkpoint = null)
 {
     public async Task<GraphIntegrityResult> VerifyAsync(string owner, string library, CancellationToken cancellationToken)
     {
         using var measurement = VersionControlTelemetry.Measure("integrity.verify");
         VersionControlTelemetry.IntegrityVerifications.Add(1);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await ExecuteAsync(connection, "SELECT pg_advisory_lock(hashtextextended($1,6))", cancellationToken, owner + "\n" + library + "\nintegrity");
+        try { return await VerifyLockedAsync(connection, owner, library, cancellationToken); }
+        finally
+        {
+            try { await ExecuteAsync(connection, "SELECT pg_advisory_unlock(hashtextextended($1,6))", CancellationToken.None, owner + "\n" + library + "\nintegrity"); }
+            catch (NpgsqlException) { }
+        }
+    }
+
+    private async Task<GraphIntegrityResult> VerifyLockedAsync(NpgsqlConnection connection, string owner, string library, CancellationToken cancellationToken)
+    {
         await using var readTransaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);
         var commits = new Dictionary<string, StoredCommit>(StringComparer.Ordinal);
         var storedObjects = new List<(string Sha256, long Length, string Key, string Version)>();
@@ -94,26 +106,27 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
             result = result with { Healthy = false, Codes = result.Codes.Append("cross_library_reference").Order(StringComparer.Ordinal).ToArray() };
         }
         await readTransaction.CommitAsync(cancellationToken);
+        await (checkpoint ?? ((_, _) => Task.CompletedTask))("snapshot-captured", cancellationToken);
         if (storage is not null)
         {
-            var codes = result.Codes.ToHashSet(StringComparer.Ordinal);
-            foreach (var item in storedObjects)
+            var storageCodes = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+            await Parallel.ForEachAsync(storedObjects, new ParallelOptions { MaxDegreeOfParallelism = 64, CancellationToken = cancellationToken }, async (item, token) =>
             {
-                try { await storage.VerifyStoredAsync(item.Key, item.Version, new(item.Sha256, item.Length), cancellationToken); }
+                try { await storage.VerifyStoredAsync(item.Key, item.Version, new(item.Sha256, item.Length), token); }
                 catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound || exception.ErrorCode is "NoSuchKey" or "NoSuchVersion")
                 {
-                    codes.Add("missing_object");
+                    storageCodes.TryAdd("missing_object", 0);
                 }
                 catch (InvalidDataException)
                 {
-                    codes.Add("altered_object");
+                    storageCodes.TryAdd("altered_object", 0);
                 }
                 catch (ArgumentException)
                 {
-                    codes.Add("invalid_content_provenance");
+                    storageCodes.TryAdd("invalid_content_provenance", 0);
                 }
-            }
-            if (codes.Count != result.Codes.Count) result = result with { Healthy = false, Codes = codes.Order(StringComparer.Ordinal).ToArray() };
+            });
+            if (!storageCodes.IsEmpty) result = result with { Healthy = false, Codes = result.Codes.Concat(storageCodes.Keys).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() };
         }
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (result.Healthy)

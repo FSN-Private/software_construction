@@ -25,7 +25,7 @@ public static class VersionControlEndpoints
             Results.Ok(await Service<WorkingService>(context).ListAsync(Owner(context), library, Client(context), branch, cancellationToken)));
         group.MapPut("/working", async (HttpContext context, string library, WorkingChangeRequest request, CancellationToken cancellationToken) =>
             Results.Ok(await Service<WorkingService>(context).PutAsync(Owner(context), library, Client(context), request, OperationId(context), cancellationToken)));
-        group.MapPost("/staging/{branch}", async (HttpContext context, string library, string branch, StageRequest request, CancellationToken cancellationToken) =>
+        group.MapPost("/staging/{**branch}", async (HttpContext context, string library, string branch, StageRequest request, CancellationToken cancellationToken) =>
             Results.Created($"/v1/libraries/{library}/version-control/staging", new { id = await Service<WorkingService>(context).StageAsync(Owner(context), library, Client(context), branch, request, OperationId(context), cancellationToken), version = 1, operationId = OperationId(context) }));
         group.MapDelete("/staging/{setId:guid}/entries/{workingId:guid}", async (HttpContext context, string library, Guid setId, Guid workingId, CancellationToken cancellationToken) =>
         {

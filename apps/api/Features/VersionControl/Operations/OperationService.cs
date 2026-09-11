@@ -10,8 +10,23 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.VersionControl.Operations;
 
-public sealed class OperationService(NpgsqlDataSource dataSource, QueryService queries, CommitService commits)
+public sealed class OperationService
 {
+    private readonly NpgsqlDataSource dataSource;
+    private readonly QueryService queries;
+    private readonly CommitService commits;
+    private readonly Func<string, CancellationToken, Task> checkpoint;
+
+    public OperationService(NpgsqlDataSource dataSource, QueryService queries, CommitService commits) : this(dataSource, queries, commits, (_, _) => Task.CompletedTask) { }
+
+    public OperationService(NpgsqlDataSource dataSource, QueryService queries, CommitService commits, Func<string, CancellationToken, Task> checkpoint)
+    {
+        this.dataSource = dataSource;
+        this.queries = queries;
+        this.commits = commits;
+        this.checkpoint = checkpoint;
+    }
+
     public async Task<VersionControlResult> CheckoutAsync(string owner, string library, string client, CheckoutRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
         if (request.DirtyAction is not ("block" or "preserve" or "discard")) throw new VersionControlProblem("invalid_request", 400);
@@ -19,6 +34,8 @@ public sealed class OperationService(NpgsqlDataSource dataSource, QueryService q
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await WorkingService.LockClientAsync(connection, owner, library, client, cancellationToken);
+        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
+        await checkpoint("target-ref-locked", cancellationToken);
         var fingerprint = VersionControlIdempotency.Fingerprint(new { operation = "checkout", request });
         var replay = await VersionControlIdempotency.ReadAsync<VersionControlResult>(connection, owner, library, idempotencyKey, fingerprint, cancellationToken);
         if (replay is not null) return replay with { OperationId = operationId };

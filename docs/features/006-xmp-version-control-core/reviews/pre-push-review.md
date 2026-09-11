@@ -104,3 +104,50 @@ Validation after this addendum:
 - `npm run validate:infrastructure` passed with network access for npm advisory checks; the run emitted only the existing CDK deprecation/feature-flag warnings.
 
 The updated pending diff requires a fresh alternate-model review before the pre-push gate can pass.
+
+## Stable implementation review Round 2 — 2026-09-11
+
+**Status**: `BLOCKED`; remediation T033–T036 in progress
+
+**Reviewer model**: `gpt-5.6-sol` (alternate model)
+
+**Destination**: `origin/feature/006-xmp-version-control-core` at `9d3df7d44062f8be4f7533cf804d065bb5bb6077`
+
+**Integration base**: `origin/master` at `ba134a93ac08fa0f572fcba2a3442cd10a80a65f`
+
+**Reviewed HEAD**: `cc66b34bbd1319e2d904dd36dfb2722ad3b03df5`
+**Complete pending scope**: `9d3df7d44062f8be4f7533cf804d065bb5bb6077..cc66b34bbd1319e2d904dd36dfb2722ad3b03df5` (128 commits)
+
+The first replacement reviewer attempt was invalidated because that agent mutated the shared worktree despite a read-only instruction and returned no verdict. The implementing agent stopped it, audited the changes, retained only valid F006-02 storage-integrity remediation in `9718b38` and `cc66b34`, revalidated the clean scope, and assigned the stable range above to a different read-only alternate model.
+
+Round 2 directly inspected requirements, plan/tasks/review history, contracts/schema, canonical and physical-object integrity, working/commit/ref/restore/rewrite/merge/query/projection paths, CI/alarms, tests, privacy, and branch history. It classified F006-01/02/03/04/06/07/09 as resolved and retained F006-N01/N02 as non-blocking. It reported these valid blocking findings:
+
+| ID | Severity | Disposition |
+|---|---|---|
+| F006-05 | High | **Valid; T033.** Ref creation, rewrite/recovery, and merge can evaluate mutable preconditions before a committed retry consults its durable result. |
+| F006-08 | Medium | **Valid; T034.** The HTTP staging route is not catch-all, so a slash-containing branch cannot complete the stage/commit flow. |
+| F006-10 | High | **Valid; T034.** Checkout does not share the target-ref fence with rename and can write a stale renamed ref. |
+| F006-11 | High | **Valid; T035.** The measured 100-entry commit omits production S3 validation and persisted capacity does not yet exercise the specified 1M entries/100k assets. |
+| F006-12 | High | **Valid; T036.** Ordinary S3 failures escape the scheduled worker and can terminate verification/host execution. |
+| F006-13 | High | **Valid; T036.** Concurrent verifiers can publish quarantine decisions out of snapshot order. |
+| F006-N03 | Non-blocking | **Valid; fix with adjacent commit work.** Normalize authored timestamps to UTC before microsecond truncation. |
+
+**Round 2 gate result: BLOCKED**
+
+### Round 2 remediation
+
+- F006-05: added a request fingerprint alongside the fully derived operation fingerprint, moved ref-create/rewrite/recovery/merge replay ahead of mutable preconditions, and covered retries after graph corruption, reflog expiry, and consumed merge staging.
+- F006-08/F006-10: changed staging to a catch-all branch route, asserted the registered route, and made checkout share the target-ref fence with rename under a deterministic race.
+- F006-11: batched provenance, commit-entry, projection, and hold writes; measured 20 production-equivalent MinIO-backed 100-image commits; and persisted 1,000,000 working rows plus 100,000 assets alongside the 10,000-node lineage.
+- F006-12/F006-13: contained storage-provider faults per verification scope, emitted the operational failure signal, and serialized per-library snapshots through quarantine publication with a stale-healthy/new-unhealthy race test.
+- F006-N03: canonical authored time now converts to UTC before microsecond truncation.
+
+Validation after remediation:
+
+- PostgreSQL/MinIO integration plus capacity passed: storage-backed 100-image commit p95 380 ms; regular 100-image commit 218 ms; 10,000-node persisted lineage p95 517 ms; 100,000-asset state p95 12.5 ms; persisted 1,000,000 working rows; one-million-entry model 0.69 s.
+- `dotnet build` and `dotnet format --verify-no-changes` passed with zero warnings.
+- `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:contract`, `npm run test:ci-contract`, and `npm run test:reliability` passed. The web build retained its known non-module `platform-config.js` warning.
+- `npm run validate:security` and `npm run validate:infrastructure` passed, including online advisory checks; infrastructure emitted only the known CDK deprecation and unconfigured-feature-flag notices.
+- `git diff --check` passed.
+
+**Current status**: remediation complete; exact-scope Round 3 alternate-model review pending.

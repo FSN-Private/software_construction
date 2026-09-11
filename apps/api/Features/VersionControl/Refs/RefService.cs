@@ -14,19 +14,27 @@ public sealed class RefService(NpgsqlDataSource dataSource, IntegrityService? in
     private DateTimeOffset Now => (clock ?? TimeProvider.System).GetUtcNow();
     private IntegrityService Integrity => integrity ?? new IntegrityService(dataSource, clock: clock);
 
-    public async Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
+    public Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken) =>
+        CreateAsync(owner, library, kind, request, idempotencyKey, operationId, null, cancellationToken);
+
+    internal async Task<RefView> CreateAsync(string owner, string library, string kind, RefRequest request, string idempotencyKey, string operationId, object? fingerprintPayload, CancellationToken cancellationToken)
     {
         using var measurement = VersionControlTelemetry.Measure("ref.create");
-        if (!(await Integrity.VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         if (kind is not ("branch" or "tag")) throw new VersionControlProblem("invalid_request", 400);
         if (request.CommitId is null) throw new VersionControlProblem("invalid_request", 400);
         var name = RefNames.Normalize(request.Name);
+        var fingerprint = VersionControlIdempotency.Fingerprint(fingerprintPayload ?? new { operation = "ref.create", kind, request });
+        await using (var replayConnection = await dataSource.OpenConnectionAsync(cancellationToken))
+        {
+            var earlyReplay = await VersionControlIdempotency.ReadAsync<RefView>(replayConnection, owner, library, idempotencyKey, fingerprint, cancellationToken);
+            if (earlyReplay is not null) return earlyReplay;
+        }
+        if (!(await Integrity.VerifyAsync(owner, library, cancellationToken)).Healthy) throw new VersionControlProblem("graph_corrupt");
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await HistoryRetention.LockAsync(connection, owner, library, cancellationToken);
         await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
         await RefNames.LockAsync(connection, owner, library, name, cancellationToken);
-        var fingerprint = VersionControlIdempotency.Fingerprint(new { operation = "ref.create", kind, request });
         var replay = await VersionControlIdempotency.ReadAsync<RefView>(connection, owner, library, idempotencyKey, fingerprint, cancellationToken);
         if (replay is not null) return replay;
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 LIMIT 1", cancellationToken, owner, library) is not null) throw new VersionControlProblem("graph_corrupt");
