@@ -73,6 +73,7 @@ public static class DatabaseMigrator
         await ExecuteFormattedAsync(connection, "REVOKE CREATE ON SCHEMA %I FROM PUBLIC", cancellationToken, schema);
         await ExecuteFormattedAsync(connection, "REVOKE CREATE ON SCHEMA %I FROM %I", cancellationToken, schema, username);
         await ExecuteFormattedAsync(connection, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I", cancellationToken, schema, username);
+        await ExecuteFormattedAsync(connection, "REVOKE ALL PRIVILEGES ON TABLE %I.platform_schema_migrations FROM %I", cancellationToken, schema, username);
         await ExecuteFormattedAsync(connection, "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO %I", cancellationToken, schema, username);
         await ExecuteFormattedAsync(connection, "ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I", cancellationToken, connection.UserName!, schema, username);
         await ExecuteFormattedAsync(connection, "ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I", cancellationToken, connection.UserName!, schema, username);

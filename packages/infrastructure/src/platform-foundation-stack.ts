@@ -176,12 +176,8 @@ export class PlatformFoundationStack extends Stack {
         resources: [ingestBucket.bucketArn],
       }));
       role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
-        actions: ['s3:GetObject', 's3:GetObjectVersion', 's3:GetObjectAttributes', 's3:PutObject', 's3:AbortMultipartUpload', 's3:ListMultipartUploadParts'],
-        resources: [ingestBucket.arnForObjects('*')],
-      }));
-      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
-        actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
-        resources: [ingestBucket.arnForObjects('staging/*'), ingestBucket.arnForObjects('quarantine/*')],
+        actions: ['s3:GetObject', 's3:GetObjectVersion', 's3:GetObjectAttributes'],
+        resources: [ingestBucket.arnForObjects('staging/*'), ingestBucket.arnForObjects('sha256/*')],
       }));
       role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
         effect: aws_iam.Effect.DENY,
@@ -189,6 +185,22 @@ export class PlatformFoundationStack extends Stack {
         resources: [ingestBucket.arnForObjects('sha256/*')],
       }));
     }
+    apiTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:PutObject', 's3:AbortMultipartUpload', 's3:ListMultipartUploadParts'],
+      resources: [ingestBucket.arnForObjects('staging/*')],
+    }));
+    workerTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:PutObject'],
+      resources: [ingestBucket.arnForObjects('sha256/*'), ingestBucket.arnForObjects('quarantine/*')],
+    }));
+    workerTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:AbortMultipartUpload', 's3:ListMultipartUploadParts'],
+      resources: [ingestBucket.arnForObjects('staging/*')],
+    }));
+    workerTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
+      resources: [ingestBucket.arnForObjects('staging/*'), ingestBucket.arnForObjects('quarantine/*')],
+    }));
     encryptionKey.grantEncryptDecrypt(apiTask.taskRole);
     encryptionKey.grantEncryptDecrypt(workerTask.taskRole);
 

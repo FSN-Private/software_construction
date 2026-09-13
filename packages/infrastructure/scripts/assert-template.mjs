@@ -34,13 +34,23 @@ if (!['Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__Runti
 for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId']) {
   if (!template.Outputs?.[output]) throw new Error(`Missing deployment configuration output ${output}.`);
 }
-const deploymentPolicies = resources.filter((resource) => resource.Type === 'AWS::IAM::Policy').flatMap((resource) => resource.Properties.PolicyDocument.Statement);
+const iamPolicies = Object.entries(template.Resources).filter(([, resource]) => resource.Type === 'AWS::IAM::Policy');
+const deploymentPolicies = iamPolicies.flatMap(([, resource]) => resource.Properties.PolicyDocument.Statement);
 for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole']) {
   if (!deploymentPolicies.some((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes(action))) throw new Error(`The deployment role is missing ${action}.`);
 }
 const deleteStatements = deploymentPolicies.filter((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).some((action) => action === 's3:DeleteObject' || action === 's3:DeleteObjectVersion'));
 if (deleteStatements.some((statement) => statement.Effect === 'Allow' && !JSON.stringify(statement.Resource).includes('staging/*') && !JSON.stringify(statement.Resource).includes('quarantine/*'))) throw new Error('Runtime S3 deletion must be limited to staging or quarantine objects.');
 if (deleteStatements.filter((statement) => statement.Effect === 'Deny' && JSON.stringify(statement.Resource).includes('sha256/*')).length < 2) throw new Error('Both runtime task roles must explicitly deny deletion of authoritative sha256 objects and versions.');
+const apiPolicy = iamPolicies.find(([id]) => id.startsWith('ApiTaskTaskRoleDefaultPolicy'))?.[1];
+const workerPolicy = iamPolicies.find(([id]) => id.startsWith('WorkerTaskTaskRoleDefaultPolicy'))?.[1];
+const allowedPutResources = (policy) => policy?.Properties.PolicyDocument.Statement
+  .filter((statement) => statement.Effect === 'Allow' && (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('s3:PutObject'))
+  .map((statement) => JSON.stringify(statement.Resource)) ?? [];
+const apiPutResources = allowedPutResources(apiPolicy);
+if (apiPutResources.length !== 1 || !apiPutResources[0].includes('/staging/*') || apiPutResources[0].includes('/sha256/*') || apiPutResources[0].includes('/quarantine/*') || apiPutResources[0].includes('"/*"')) throw new Error('The API may write only staging objects.');
+const workerPutResources = allowedPutResources(workerPolicy);
+if (workerPutResources.length !== 1 || !workerPutResources[0].includes('/sha256/*') || !workerPutResources[0].includes('/quarantine/*') || workerPutResources[0].includes('"/*"')) throw new Error('The worker may write only authoritative and quarantine objects.');
 const keyPolicies = resources.filter((resource) => resource.Type === 'AWS::KMS::Key').flatMap((resource) => resource.Properties.KeyPolicy.Statement);
 const logsPolicy = keyPolicies.find((statement) => JSON.stringify(statement.Principal).includes('logs.'));
 if (!logsPolicy || !JSON.stringify(logsPolicy.Condition).includes(':log-group:*') || JSON.stringify(logsPolicy.Condition).includes(':log-group/*')) throw new Error('CloudWatch Logs KMS access must use the colon-form log-group ARN pattern.');

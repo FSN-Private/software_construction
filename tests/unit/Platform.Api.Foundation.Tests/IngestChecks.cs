@@ -50,10 +50,13 @@ internal static class IngestChecks
                 Check((long)(await count.ExecuteScalarAsync())! == 2, "Migration command applies each embedded release migration exactly once");
             }
             await using var runtimeDb = NpgsqlDataSource.Create($"Host=127.0.0.1;Port=54329;Username={runtimeRole};Password={runtimePassword};Database=ingest;Search Path={commandSchema}");
-            await using var runtimeCount = runtimeDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
-            Check((long)(await runtimeCount.ExecuteScalarAsync())! == 2, "Restricted runtime role can read migrated tables");
             await using var runtimeGrants = runtimeDb.CreateCommand("SELECT count(DISTINCT privilege_type) FROM information_schema.role_table_grants WHERE grantee=current_user AND table_schema=current_schema() AND table_name='assets' AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')");
             Check((long)(await runtimeGrants.ExecuteScalarAsync())! == 4, "Runtime role receives only the required table DML class of access");
+            await RejectAsync<PostgresException>(async () =>
+            {
+                await using var deniedLedger = runtimeDb.CreateCommand("DELETE FROM platform_schema_migrations");
+                await deniedLedger.ExecuteNonQueryAsync();
+            });
             await RejectAsync<PostgresException>(async () =>
             {
                 await using var deniedDdl = runtimeDb.CreateCommand("CREATE TABLE runtime_must_not_create_schema_objects(id integer)");

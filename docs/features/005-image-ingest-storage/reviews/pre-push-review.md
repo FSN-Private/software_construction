@@ -385,3 +385,17 @@ The independent reviewer inspected the complete pending runtime/bootstrap range,
 The reviewer found no blocker in the release-evidence/source binding, configuration preflight, immutable ECR retry, exact service task checks, zero-count rollback, Cloud Map/VPC-link isolation, Cognito handling, S3 versioning/KMS, or external bootstrap documentation. It retained the documented $20 budget as a non-blocking alert threshold rather than a hard spending cap.
 
 **Round 1 gate result: BLOCKED.** The complete remediated range and this record require independent follow-up before push.
+
+### Round 2 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-sol | **Reviewed base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Reviewed head**: `f1849d5` | **Complete reviewed range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..f1849d5`
+
+The reviewer accepted all four Round 1 remediations: the synthesized CloudWatch Logs KMS condition uses `:log-group:*`; S3 deletion is limited to staging/quarantine with authoritative denies; only the dedicated migration task receives administrator credentials while runtime roles are non-administrative; and migration timeout/signal handling stops and awaits the ECS task with scoped IAM and executable timeout coverage.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| API and worker still shared `s3:PutObject` over the entire ingest bucket. | Blocking / High | T035/T045; FR-003; NFR-003/015 | The public API only requires staging writes but could create an arbitrary current version beneath canonical `sha256/*`, polluting the authoritative namespace and causing integrity or availability failures. | **Valid and fixed by T045.** API writes and multipart actions are limited to `staging/*`; worker writes are limited to `sha256/*` and `quarantine/*`. Exact synthesized assertions reject broad and crossed grants. |
+
+The reviewer recorded runtime `DELETE` access to the migration ledger as a non-blocking excess privilege. T045 voluntarily removes all runtime privileges from `platform_schema_migrations`, with integration coverage for denied ledger writes and denied schema DDL. No other blocker was found in migration provisioning/cleanup, IAM pass-role/task-family scopes, workflow preflight, ECR immutability, zero-count rollback, exact task checks, Cloud Map routing, release evidence, secrets, persistence retention, cost-gate documentation, or tests.
+
+**Round 2 gate result: BLOCKED.** T045 and this complete revised range require another independent follow-up before push.
