@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const migrationScript = readFileSync('scripts/run-ecs-migration.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
@@ -32,7 +33,9 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('Validate deployment configur
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
 assert.ok(deployScript.includes('describe-images') && deployScript.includes('Immutable ECR tag contains different image bytes'), 'Deployment must safely reuse an identical immutable tag and reject different image bytes.');
 assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
-assert.ok(deployScript.includes('command:["--migrate"]'), 'Deployment must run the release migration command before services update.');
+assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
+assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');
+assert.ok(migrationScript.includes('trap cleanup_migration ERR INT TERM') && migrationScript.includes('aws ecs stop-task'), 'Migration timeout or interruption must stop the remote ECS task.');
 assert.ok(deployScript.includes('previousWorkerTaskDefinition'), 'Deployment must retain the prior worker rollback target.');
 assert.ok(deployScript.includes('trap rollback ERR INT TERM'), 'Deployment must establish rollback handling before either service update.');
 assert.ok(deployScript.includes('--desired-count 1') && deployScript.includes('PREVIOUS_API_COUNT') && deployScript.includes('PREVIOUS_WORKER_COUNT'), 'The first deployment must start zero-count bootstrap services and restore their prior counts on failure.');
@@ -78,4 +81,12 @@ const circuitBreakerReversion = assertServiceTask('arn:aws:ecs:ap-southeast-1:11
 assert.notEqual(circuitBreakerReversion.status, 0, 'A service stabilized on the prior task definition must fail closed.');
 assert.match(circuitBreakerReversion.stderr, /unexpected task definition/, 'A circuit-breaker reversion must report the binding failure.');
 assert.match(circuitBreakerReversion.stdout, /paired rollback activated/, 'A post-stability binding failure must activate the parent rollback trap.');
+
+const timedOutMigration = spawnSync(
+  bash,
+  ['-c', 'aws() { if test "$2" = run-task; then printf "arn:aws:ecs:region:account:task/cluster/migration\n"; elif test "$2" = stop-task; then printf "stop-task %s\n" "$*" >&2; elif test "$2" = describe-tasks; then printf "0\n"; fi; }; jq() { printf "{}"; }; timeout() { return 124; }; export -f aws jq timeout; ECS_CLUSTER=cluster MIGRATION_TASK_DEFINITION=migration:1 ECS_MIGRATION_CONTAINER=migration MIGRATION_NETWORK="{}" bash scripts/run-ecs-migration.sh'],
+  { cwd: process.cwd(), encoding: 'utf8', env: process.env }
+);
+assert.notEqual(timedOutMigration.status, 0, 'A migration waiter timeout must fail deployment.');
+assert.match(timedOutMigration.stderr, /stop-task/, 'A migration waiter timeout must stop the remote ECS task.');
 console.log('Release workflow contract tests passed.');

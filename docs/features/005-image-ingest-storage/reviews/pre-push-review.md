@@ -367,3 +367,21 @@ No valid unresolved blocking finding was identified. No blocking issue was found
 The reviewer explicitly agrees that no valid unresolved blocking finding remains in `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..5d051739ba6d42dc2516ed6ec591b39176b81870`.
 
 **Final gate result: PASS.** This review authorizes no push, merge, deployment, migration, or other remote mutation.
+## T035 non-production runtime review — 2026-09-13
+
+**Status**: blocked after Round 1; T041–T044 remediation awaiting independent follow-up
+
+**Reviewer model**: gpt-5.6-sol | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Initial reviewed head**: `54c0d21f091509d3c9673872e981598edaa1fb9b` | **Initial range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..54c0d21f091509d3c9673872e981598edaa1fb9b`
+
+The independent reviewer inspected the complete pending runtime/bootstrap range, Feature 004/005 release requirements, infrastructure, deployment scripts, workflow contracts, tests, and documentation without changing files, commits, containers, or remotes.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| The CloudWatch Logs KMS encryption-context condition synthesized `log-group/*`, which cannot match CloudWatch Logs ARNs. | Blocking / High | T035/T041; NFR-007/014 | The telemetry log group could fail to use its KMS key at deployment or runtime. | **Valid and fixed by T041.** CDK now uses `ArnFormat.COLON_RESOURCE_NAME`; the synthesized-template contract requires `:log-group:*` and rejects the slash form. |
+| API and worker received `s3:DeleteObject*` across the complete ingest bucket, including authoritative content versions. | Blocking / High | T035/T042; FR-005/009; NFR-008/014 | A runtime defect or compromise could remove retained canonical `sha256/*` versions. | **Valid and fixed by T042.** Runtime roles may delete staging/quarantine versions only and explicitly deny `DeleteObject`/`DeleteObjectVersion` for `sha256/*`; synthesis checks both roles. |
+| API and worker received the RDS `platform_admin` master credentials. | Blocking / High | T035/T043; NFR-002/008/014 | Either runtime process could modify schema or bypass database-level least privilege. | **Valid and fixed by T043.** A distinct migration task alone receives administrator credentials and transactionally provisions/rotates a non-administrative runtime principal; API and worker receive only the runtime secret. Integration coverage verifies migrated-table access and absence of administrative role flags. |
+| A migration waiter timeout or signal could leave the remote ECS task running, and the deployment role lacked `ecs:StopTask`. | Blocking / Medium | T035/T044; NFR-002/012/015 | A migration could continue after the workflow reported failure, racing a retry or later release. | **Valid and fixed by T044.** The dedicated helper traps errors/signals immediately after `RunTask`, stops and awaits the active task, and a mocked waiter timeout proves the cleanup path. The deployment role receives cluster-conditioned `ecs:StopTask`. |
+
+The reviewer found no blocker in the release-evidence/source binding, configuration preflight, immutable ECR retry, exact service task checks, zero-count rollback, Cloud Map/VPC-link isolation, Cognito handling, S3 versioning/KMS, or external bootstrap documentation. It retained the documented $20 budget as a non-blocking alert threshold rather than a hard spending cap.
+
+**Round 1 gate result: BLOCKED.** The complete remediated range and this record require independent follow-up before push.

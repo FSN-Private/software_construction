@@ -14,8 +14,10 @@ if (args is ["--migrate"])
 {
     var migrationBuilder = Host.CreateApplicationBuilder(args);
     var migrationConnection = IngestDatabaseConfiguration.ResolveConnectionString(migrationBuilder.Configuration.GetConnectionString("Ingest"), key => migrationBuilder.Configuration[key]) ?? throw new InvalidOperationException("Ingest database configuration is required.");
+    var runtimeUsername = migrationBuilder.Configuration["Ingest:RuntimeDatabase:Username"] ?? throw new InvalidOperationException("Ingest runtime database username is required.");
+    var runtimePassword = migrationBuilder.Configuration["Ingest:RuntimeDatabase:Password"] ?? throw new InvalidOperationException("Ingest runtime database password is required.");
     await using var migrationDataSource = NpgsqlDataSource.Create(migrationConnection);
-    await DatabaseMigrator.ApplyAsync(migrationDataSource, CancellationToken.None);
+    await DatabaseMigrator.ApplyAsync(migrationDataSource, runtimeUsername, runtimePassword, CancellationToken.None);
     return;
 }
 

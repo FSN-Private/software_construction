@@ -10,24 +10,40 @@ for (const type of requiredTypes) {
 }
 if (resources.filter((resource) => resource.Type === 'AWS::S3::Bucket').length < 2) throw new Error('Foundation and ingest require separate private versioned buckets.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECR::Repository').length !== 2) throw new Error('API and ingest worker require separate ECR repositories.');
-if (resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition').length !== 2 || resources.filter((resource) => resource.Type === 'AWS::ECS::Service').length !== 2) throw new Error('API and ingest worker require paired ECS tasks and services.');
+const taskDefinitions = resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition');
+if (taskDefinitions.length !== 3 || resources.filter((resource) => resource.Type === 'AWS::ECS::Service').length !== 2) throw new Error('API, worker, and dedicated migration tasks plus paired runtime services are required.');
 if (resources.some((resource) => resource.Type === 'AWS::EC2::NatGateway' || resource.Type === 'AWS::ElasticLoadBalancingV2::LoadBalancer')) throw new Error('The low-budget non-production runtime must not provision fixed-cost NAT gateways or load balancers.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECS::Service').some((resource) => resource.Properties.DesiredCount !== 0)) throw new Error('Bootstrap services must stay at zero tasks until verified images are published.');
 const database = resources.find((resource) => resource.Type === 'AWS::RDS::DBInstance');
 if (!database?.Properties?.StorageEncrypted || !database.Properties.DeletionProtection || database.DeletionPolicy !== 'Retain') throw new Error('The ingest database must be encrypted, deletion-protected, and retained.');
 const requiredSettings = ['Ingest__Database__Host', 'Ingest__Database__Port', 'Ingest__Database__Name', 'Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__Bucket', 'Ingest__KmsKeyId'];
-for (const task of resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition')) {
+for (const task of taskDefinitions) {
   const container = task.Properties.ContainerDefinitions[0];
   const names = [...(container.Environment ?? []), ...(container.Secrets ?? [])].map(({ Name }) => Name);
   if (requiredSettings.some((name) => !names.includes(name))) throw new Error('Every runtime task must receive the complete ingest database and storage configuration.');
 }
-for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId']) {
+const runtimeTasks = taskDefinitions.filter((task) => ['api', 'worker'].includes(task.Properties.ContainerDefinitions[0].Name));
+const migrationTask = taskDefinitions.find((task) => task.Properties.ContainerDefinitions[0].Name === 'migration');
+if (runtimeTasks.length !== 2 || !migrationTask) throw new Error('Task definitions must keep distinct API, worker, and migration identities.');
+for (const task of runtimeTasks) {
+  const secrets = task.Properties.ContainerDefinitions[0].Secrets ?? [];
+  if (secrets.length !== 2 || JSON.stringify(secrets).includes('IngestDatabaseSecret')) throw new Error('Runtime tasks must receive only restricted runtime database credentials.');
+}
+const migrationSecretNames = (migrationTask.Properties.ContainerDefinitions[0].Secrets ?? []).map(({ Name }) => Name);
+if (!['Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__RuntimeDatabase__Username', 'Ingest__RuntimeDatabase__Password'].every((name) => migrationSecretNames.includes(name))) throw new Error('The migration task must receive admin and runtime credentials for schema migration and runtime-role provisioning.');
+for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId']) {
   if (!template.Outputs?.[output]) throw new Error(`Missing deployment configuration output ${output}.`);
 }
 const deploymentPolicies = resources.filter((resource) => resource.Type === 'AWS::IAM::Policy').flatMap((resource) => resource.Properties.PolicyDocument.Statement);
-for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'iam:PassRole']) {
+for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole']) {
   if (!deploymentPolicies.some((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes(action))) throw new Error(`The deployment role is missing ${action}.`);
 }
+const deleteStatements = deploymentPolicies.filter((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).some((action) => action === 's3:DeleteObject' || action === 's3:DeleteObjectVersion'));
+if (deleteStatements.some((statement) => statement.Effect === 'Allow' && !JSON.stringify(statement.Resource).includes('staging/*') && !JSON.stringify(statement.Resource).includes('quarantine/*'))) throw new Error('Runtime S3 deletion must be limited to staging or quarantine objects.');
+if (deleteStatements.filter((statement) => statement.Effect === 'Deny' && JSON.stringify(statement.Resource).includes('sha256/*')).length < 2) throw new Error('Both runtime task roles must explicitly deny deletion of authoritative sha256 objects and versions.');
+const keyPolicies = resources.filter((resource) => resource.Type === 'AWS::KMS::Key').flatMap((resource) => resource.Properties.KeyPolicy.Statement);
+const logsPolicy = keyPolicies.find((statement) => JSON.stringify(statement.Principal).includes('logs.'));
+if (!logsPolicy || !JSON.stringify(logsPolicy.Condition).includes(':log-group:*') || JSON.stringify(logsPolicy.Condition).includes(':log-group/*')) throw new Error('CloudWatch Logs KMS access must use the colon-form log-group ARN pattern.');
 if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').length < 6) throw new Error('Operations require service, ingest, deployment, authentication, CI, and backup-age alarms.');
 if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === 'AuthenticationFailures' && resource.Properties?.FilterPattern?.includes('$.State.AuditEventType'))) throw new Error('Authentication anomaly alarms must derive a metric from the API JSON authorization-denial audit event.');
 if (!resources.some((resource) => resource.Type === 'AWS::Cognito::UserPoolClient' && resource.Properties?.AllowedOAuthScopes?.includes('openid'))) throw new Error('The owner web client must permit the OpenID scope requested by the Hosted UI.');

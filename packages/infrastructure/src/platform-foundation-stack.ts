@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
 import { CorsHttpMethod, HttpApi, HttpMethod, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpServiceDiscoveryIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
@@ -14,6 +14,7 @@ import { Credentials, DatabaseInstance, DatabaseInstanceEngine, PostgresEngineVe
 import { DnsRecordType } from 'aws-cdk-lib/aws-servicediscovery';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
+import { Secret as SecretsManagerSecret } from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { createOwnerIdentity } from './identity/owner-identity.js';
 
@@ -109,13 +110,25 @@ export class PlatformFoundationStack extends Stack {
       cloudwatchLogsExports: ['postgresql'],
     });
     if (!database.secret) throw new Error('The ingest database must expose generated credentials.');
+    const runtimeDatabaseSecret = new SecretsManagerSecret(this, 'IngestRuntimeDatabaseCredentials', {
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ username: 'platform_runtime' }),
+        generateStringKey: 'password',
+        excludePunctuation: true,
+        passwordLength: 32,
+      },
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
 
     const cluster = new Cluster(this, 'RuntimeCluster', { vpc, clusterName: `platform-${props.environmentName}` });
     const namespace = cluster.addDefaultCloudMapNamespace({ name: `${props.environmentName}.platform.internal` });
     const apiExecutionRole = new aws_iam.Role(this, 'ApiExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     const workerExecutionRole = new aws_iam.Role(this, 'WorkerExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
-    database.secret.grantRead(apiExecutionRole);
-    database.secret.grantRead(workerExecutionRole);
+    const migrationExecutionRole = new aws_iam.Role(this, 'MigrationExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
+    runtimeDatabaseSecret.grantRead(apiExecutionRole);
+    runtimeDatabaseSecret.grantRead(workerExecutionRole);
+    runtimeDatabaseSecret.grantRead(migrationExecutionRole);
+    database.secret.grantRead(migrationExecutionRole);
     const databaseEnvironment = {
       Ingest__Database__Host: database.dbInstanceEndpointAddress,
       Ingest__Database__Port: database.dbInstanceEndpointPort,
@@ -124,8 +137,8 @@ export class PlatformFoundationStack extends Stack {
       Ingest__KmsKeyId: encryptionKey.keyArn,
     };
     const databaseSecrets = {
-      Ingest__Database__Username: EcsSecret.fromSecretsManager(database.secret, 'username'),
-      Ingest__Database__Password: EcsSecret.fromSecretsManager(database.secret, 'password'),
+      Ingest__Database__Username: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'username'),
+      Ingest__Database__Password: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'password'),
     };
     const apiTask = new FargateTaskDefinition(this, 'ApiTask', { family: `platform-${props.environmentName}-api`, cpu: 256, memoryLimitMiB: 512, executionRole: apiExecutionRole });
     const apiContainer = apiTask.addContainer('api', {
@@ -144,8 +157,38 @@ export class PlatformFoundationStack extends Stack {
       secrets: databaseSecrets,
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'ingest-worker' }),
     });
-    ingestBucket.grantReadWrite(apiTask.taskRole);
-    ingestBucket.grantReadWrite(workerTask.taskRole);
+    const migrationTask = new FargateTaskDefinition(this, 'MigrationTask', { family: `platform-${props.environmentName}-ingest-migration`, cpu: 256, memoryLimitMiB: 512, executionRole: migrationExecutionRole });
+    migrationTask.addContainer('migration', {
+      containerName: 'migration',
+      image: ContainerImage.fromEcrRepository(workerRepository, 'bootstrap'),
+      environment: databaseEnvironment,
+      secrets: {
+        Ingest__Database__Username: EcsSecret.fromSecretsManager(database.secret, 'username'),
+        Ingest__Database__Password: EcsSecret.fromSecretsManager(database.secret, 'password'),
+        Ingest__RuntimeDatabase__Username: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'username'),
+        Ingest__RuntimeDatabase__Password: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'password'),
+      },
+      logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'ingest-migration' }),
+    });
+    for (const role of [apiTask.taskRole, workerTask.taskRole]) {
+      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+        actions: ['s3:GetBucketVersioning', 's3:ListBucket', 's3:ListBucketMultipartUploads'],
+        resources: [ingestBucket.bucketArn],
+      }));
+      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+        actions: ['s3:GetObject', 's3:GetObjectVersion', 's3:GetObjectAttributes', 's3:PutObject', 's3:AbortMultipartUpload', 's3:ListMultipartUploadParts'],
+        resources: [ingestBucket.arnForObjects('*')],
+      }));
+      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+        actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
+        resources: [ingestBucket.arnForObjects('staging/*'), ingestBucket.arnForObjects('quarantine/*')],
+      }));
+      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+        effect: aws_iam.Effect.DENY,
+        actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
+        resources: [ingestBucket.arnForObjects('sha256/*')],
+      }));
+    }
     encryptionKey.grantEncryptDecrypt(apiTask.taskRole);
     encryptionKey.grantEncryptDecrypt(workerTask.taskRole);
 
@@ -172,13 +215,13 @@ export class PlatformFoundationStack extends Stack {
       apiRepository.grantPullPush(deploymentRole);
       workerRepository.grantPullPush(deploymentRole);
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecr:DescribeImages'], resources: [apiRepository.repositoryArn, workerRepository.repositoryArn] }));
-      const taskFamilies = [apiTask, workerTask].map((task) => this.formatArn({ service: 'ecs', resource: 'task-definition', resourceName: `${task.family}:*` }));
+      const taskFamilies = [apiTask, workerTask, migrationTask].map((task) => this.formatArn({ service: 'ecs', resource: 'task-definition', resourceName: `${task.family}:*` }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:RegisterTaskDefinition'], resources: ['*'] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTaskDefinition'], resources: taskFamilies }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:RunTask'], resources: taskFamilies, conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeServices', 'ecs:UpdateService'], resources: [apiService.serviceArn, workerService.serviceArn] }));
-      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTasks'], resources: ['*'], conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
-      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn] }));
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTasks', 'ecs:StopTask'], resources: ['*'], conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, migrationTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn, migrationExecutionRole.roleArn] }));
     }
     const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
     encryptionKey.addToResourcePolicy(new aws_iam.PolicyStatement({
@@ -191,7 +234,7 @@ export class PlatformFoundationStack extends Stack {
       principals: [new aws_iam.ServicePrincipal(`logs.${this.region}.${this.urlSuffix}`)],
       actions: ['kms:Encrypt', 'kms:Decrypt', 'kms:ReEncrypt*', 'kms:GenerateDataKey*', 'kms:DescribeKey'],
       resources: ['*'],
-      conditions: { ArnLike: { 'kms:EncryptionContext:aws:logs:arn': this.formatArn({ service: 'logs', resource: 'log-group', resourceName: '*' }) } },
+      conditions: { ArnLike: { 'kms:EncryptionContext:aws:logs:arn': this.formatArn({ service: 'logs', resource: 'log-group', resourceName: '*', arnFormat: ArnFormat.COLON_RESOURCE_NAME }) } },
     }));
     alerts.addSubscription(new EmailSubscription(props.alertEmail));
     const availability = new Metric({ namespace: 'Platform/Service', metricName: 'Availability', statistic: 'Minimum', period: Duration.minutes(5) });
@@ -259,6 +302,8 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'WorkerServiceName', { value: workerService.serviceName });
     new CfnOutput(this, 'WorkerTaskDefinitionFamily', { value: workerTask.family });
     new CfnOutput(this, 'WorkerContainerName', { value: 'worker' });
+    new CfnOutput(this, 'MigrationTaskDefinitionFamily', { value: migrationTask.family });
+    new CfnOutput(this, 'MigrationContainerName', { value: 'migration' });
     new CfnOutput(this, 'HealthUrl', { value: publicApi.apiEndpoint });
     new CfnOutput(this, 'CognitoAuthority', { value: `https://cognito-idp.${this.region}.${this.urlSuffix}/${identity.userPool.userPoolId}` });
     new CfnOutput(this, 'IngestBucketName', { value: ingestBucket.bucketName });
