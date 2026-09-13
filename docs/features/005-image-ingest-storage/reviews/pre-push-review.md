@@ -399,3 +399,25 @@ The reviewer accepted all four Round 1 remediations: the synthesized CloudWatch 
 The reviewer recorded runtime `DELETE` access to the migration ledger as a non-blocking excess privilege. T045 voluntarily removes all runtime privileges from `platform_schema_migrations`, with integration coverage for denied ledger writes and denied schema DDL. No other blocker was found in migration provisioning/cleanup, IAM pass-role/task-family scopes, workflow preflight, ECR immutability, zero-count rollback, exact task checks, Cloud Map routing, release evidence, secrets, persistence retention, cost-gate documentation, or tests.
 
 **Round 2 gate result: BLOCKED.** T045 and this complete revised range require another independent follow-up before push.
+
+### Round 3 — independent final follow-up
+
+**Reviewer model**: gpt-5.6-sol | **Review date**: 2026-09-13 | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Reviewed head**: `ddebb6413445ba0e7b7d48c91381bfc388a61d3b` | **Complete reviewed range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..ddebb6413445ba0e7b7d48c91381bfc388a61d3b`
+
+The independent reviewer inspected the complete revised range, the preserved Round 1 and Round 2 records, Feature 004/005 requirements and release documentation, current infrastructure/application/deployment source, the exact synthesized CloudFormation task/IAM/KMS resources, and updated tests without changing files, commits, infrastructure, or remotes. The working tree is clean and the branch is 15 commits ahead of the stated destination.
+
+The reviewer explicitly accepts every prior blocking disposition:
+
+- **T041 / CloudWatch Logs KMS** remains fixed. CDK uses `ArnFormat.COLON_RESOURCE_NAME`; the exact key policy emits the account/region-scoped `:log-group:*` encryption-context ARN and rejects the slash form.
+- **T042 / authoritative deletion** remains fixed. API and worker both have explicit identity-policy denies for `DeleteObject` and `DeleteObjectVersion` on `sha256/*`; only the worker has deletion allows, limited to `staging/*` and `quarantine/*`.
+- **T043 / database principal separation** remains fixed. API and worker execution roles can read only the generated runtime secret. The separate migration execution role alone can read both runtime and RDS administrator secrets; its transaction provisions a login without superuser, role-creation, database-creation, or schema-creation authority and grants required application-table DML/sequence access.
+- **T044 / migration cleanup** remains fixed. The helper installs its error/interrupt/termination cleanup trap immediately after capturing the task ARN, stops and awaits an active remote task, and preserves failure. The deployment role has cluster-conditioned `ecs:StopTask`, and the executable timeout contract proves cleanup invocation.
+- **T045 / write namespace isolation** fixes the Round 2 blocker. Exact synthesized IAM shows the API has `PutObject`, multipart-abort, and multipart-list only for `staging/*`; it has no bucket-wide, `sha256/*`, or `quarantine/*` write. Worker `PutObject` is limited to `sha256/*` and `quarantine/*`; its staging permission contains only multipart cleanup actions. Required staging/authoritative reads and authoritative deletion denies remain intact. The synthesized assertions bind these statements to the API and worker task-role policies and reject broad or crossed API writes.
+
+The voluntary migration-ledger hardening is also sound. Provisioning revokes every runtime privilege on `platform_schema_migrations` after granting application-table privileges, while default privileges do not retroactively restore access. PostgreSQL integration coverage verifies application-table DML, denied migration-ledger mutation, denied schema DDL, and non-administrative role flags.
+
+No new significant blocking issue was found in deployability, IAM and secret boundaries, S3/KMS persistence, database migration/provisioning, migration timeout recovery, immutable ECR publication, paired service rollback, exact post-stability task checks, workflow configuration contracts, release-evidence binding, Cloud Map/VPC-link routing, cost-gate documentation, or the updated tests.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `99ceba30f5550117634b2df0b7b9327d4044c0b7..ddebb6413445ba0e7b7d48c91381bfc388a61d3b`.
+
+**Final gate result: PASS.** This review authorizes no merge, deployment, migration, or other remote mutation; push authority remains governed by the user's separate authorization.
