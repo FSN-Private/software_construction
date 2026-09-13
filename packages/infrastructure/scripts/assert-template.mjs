@@ -31,14 +31,16 @@ for (const task of runtimeTasks) {
 }
 const migrationSecretNames = (migrationTask.Properties.ContainerDefinitions[0].Secrets ?? []).map(({ Name }) => Name);
 if (!['Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__RuntimeDatabase__Username', 'Ingest__RuntimeDatabase__Password'].every((name) => migrationSecretNames.includes(name))) throw new Error('The migration task must receive admin and runtime credentials for schema migration and runtime-role provisioning.');
-for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId']) {
+for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId', 'DatabaseInstanceIdentifier']) {
   if (!template.Outputs?.[output]) throw new Error(`Missing deployment configuration output ${output}.`);
 }
 const iamPolicies = Object.entries(template.Resources).filter(([, resource]) => resource.Type === 'AWS::IAM::Policy');
 const deploymentPolicies = iamPolicies.flatMap(([, resource]) => resource.Properties.PolicyDocument.Statement);
-for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole']) {
+for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole', 'rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance']) {
   if (!deploymentPolicies.some((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes(action))) throw new Error(`The deployment role is missing ${action}.`);
 }
+const rdsLifecyclePolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('rds:StopDBInstance'));
+if (!JSON.stringify(rdsLifecyclePolicy?.Resource).includes('IngestDatabase')) throw new Error('RDS lifecycle permissions must target the non-production database instance.');
 const deleteStatements = deploymentPolicies.filter((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).some((action) => action === 's3:DeleteObject' || action === 's3:DeleteObjectVersion'));
 if (deleteStatements.some((statement) => statement.Effect === 'Allow' && !JSON.stringify(statement.Resource).includes('staging/*') && !JSON.stringify(statement.Resource).includes('quarantine/*'))) throw new Error('Runtime S3 deletion must be limited to staging or quarantine objects.');
 if (deleteStatements.filter((statement) => statement.Effect === 'Deny' && JSON.stringify(statement.Resource).includes('sha256/*')).length < 2) throw new Error('Both runtime task roles must explicitly deny deletion of authoritative sha256 objects and versions.');
