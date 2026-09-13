@@ -367,3 +367,73 @@ No valid unresolved blocking finding was identified. No blocking issue was found
 The reviewer explicitly agrees that no valid unresolved blocking finding remains in `6b4d4c3a4a4493efa4a6e618cb1e2077d4298e64..5d051739ba6d42dc2516ed6ec591b39176b81870`.
 
 **Final gate result: PASS.** This review authorizes no push, merge, deployment, migration, or other remote mutation.
+## T035 non-production runtime review — 2026-09-13
+
+**Status**: blocked after Round 1; T041–T044 remediation awaiting independent follow-up
+
+**Reviewer model**: gpt-5.6-sol | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Initial reviewed head**: `54c0d21f091509d3c9673872e981598edaa1fb9b` | **Initial range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..54c0d21f091509d3c9673872e981598edaa1fb9b`
+
+The independent reviewer inspected the complete pending runtime/bootstrap range, Feature 004/005 release requirements, infrastructure, deployment scripts, workflow contracts, tests, and documentation without changing files, commits, containers, or remotes.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| The CloudWatch Logs KMS encryption-context condition synthesized `log-group/*`, which cannot match CloudWatch Logs ARNs. | Blocking / High | T035/T041; NFR-007/014 | The telemetry log group could fail to use its KMS key at deployment or runtime. | **Valid and fixed by T041.** CDK now uses `ArnFormat.COLON_RESOURCE_NAME`; the synthesized-template contract requires `:log-group:*` and rejects the slash form. |
+| API and worker received `s3:DeleteObject*` across the complete ingest bucket, including authoritative content versions. | Blocking / High | T035/T042; FR-005/009; NFR-008/014 | A runtime defect or compromise could remove retained canonical `sha256/*` versions. | **Valid and fixed by T042.** Runtime roles may delete staging/quarantine versions only and explicitly deny `DeleteObject`/`DeleteObjectVersion` for `sha256/*`; synthesis checks both roles. |
+| API and worker received the RDS `platform_admin` master credentials. | Blocking / High | T035/T043; NFR-002/008/014 | Either runtime process could modify schema or bypass database-level least privilege. | **Valid and fixed by T043.** A distinct migration task alone receives administrator credentials and transactionally provisions/rotates a non-administrative runtime principal; API and worker receive only the runtime secret. Integration coverage verifies migrated-table access and absence of administrative role flags. |
+| A migration waiter timeout or signal could leave the remote ECS task running, and the deployment role lacked `ecs:StopTask`. | Blocking / Medium | T035/T044; NFR-002/012/015 | A migration could continue after the workflow reported failure, racing a retry or later release. | **Valid and fixed by T044.** The dedicated helper traps errors/signals immediately after `RunTask`, stops and awaits the active task, and a mocked waiter timeout proves the cleanup path. The deployment role receives cluster-conditioned `ecs:StopTask`. |
+
+The reviewer found no blocker in the release-evidence/source binding, configuration preflight, immutable ECR retry, exact service task checks, zero-count rollback, Cloud Map/VPC-link isolation, Cognito handling, S3 versioning/KMS, or external bootstrap documentation. It retained the documented $20 budget as a non-blocking alert threshold rather than a hard spending cap.
+
+**Round 1 gate result: BLOCKED.** The complete remediated range and this record require independent follow-up before push.
+
+### Round 2 — independent follow-up assessment
+
+**Reviewer model**: gpt-5.6-sol | **Reviewed base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Reviewed head**: `f1849d5` | **Complete reviewed range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..f1849d5`
+
+The reviewer accepted all four Round 1 remediations: the synthesized CloudWatch Logs KMS condition uses `:log-group:*`; S3 deletion is limited to staging/quarantine with authoritative denies; only the dedicated migration task receives administrator credentials while runtime roles are non-administrative; and migration timeout/signal handling stops and awaits the ECS task with scoped IAM and executable timeout coverage.
+
+| Finding | Classification / severity | Affected IDs | Evidence and impact | Implementer disposition |
+|---|---|---|---|---|
+| API and worker still shared `s3:PutObject` over the entire ingest bucket. | Blocking / High | T035/T045; FR-003; NFR-003/015 | The public API only requires staging writes but could create an arbitrary current version beneath canonical `sha256/*`, polluting the authoritative namespace and causing integrity or availability failures. | **Valid and fixed by T045.** API writes and multipart actions are limited to `staging/*`; worker writes are limited to `sha256/*` and `quarantine/*`. Exact synthesized assertions reject broad and crossed grants. |
+
+The reviewer recorded runtime `DELETE` access to the migration ledger as a non-blocking excess privilege. T045 voluntarily removes all runtime privileges from `platform_schema_migrations`, with integration coverage for denied ledger writes and denied schema DDL. No other blocker was found in migration provisioning/cleanup, IAM pass-role/task-family scopes, workflow preflight, ECR immutability, zero-count rollback, exact task checks, Cloud Map routing, release evidence, secrets, persistence retention, cost-gate documentation, or tests.
+
+**Round 2 gate result: BLOCKED.** T045 and this complete revised range require another independent follow-up before push.
+
+### Round 3 — independent final follow-up
+
+**Reviewer model**: gpt-5.6-sol | **Review date**: 2026-09-13 | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `99ceba30f5550117634b2df0b7b9327d4044c0b7` | **Reviewed head**: `ddebb6413445ba0e7b7d48c91381bfc388a61d3b` | **Complete reviewed range**: `99ceba30f5550117634b2df0b7b9327d4044c0b7..ddebb6413445ba0e7b7d48c91381bfc388a61d3b`
+
+The independent reviewer inspected the complete revised range, the preserved Round 1 and Round 2 records, Feature 004/005 requirements and release documentation, current infrastructure/application/deployment source, the exact synthesized CloudFormation task/IAM/KMS resources, and updated tests without changing files, commits, infrastructure, or remotes. The working tree is clean and the branch is 15 commits ahead of the stated destination.
+
+The reviewer explicitly accepts every prior blocking disposition:
+
+- **T041 / CloudWatch Logs KMS** remains fixed. CDK uses `ArnFormat.COLON_RESOURCE_NAME`; the exact key policy emits the account/region-scoped `:log-group:*` encryption-context ARN and rejects the slash form.
+- **T042 / authoritative deletion** remains fixed. API and worker both have explicit identity-policy denies for `DeleteObject` and `DeleteObjectVersion` on `sha256/*`; only the worker has deletion allows, limited to `staging/*` and `quarantine/*`.
+- **T043 / database principal separation** remains fixed. API and worker execution roles can read only the generated runtime secret. The separate migration execution role alone can read both runtime and RDS administrator secrets; its transaction provisions a login without superuser, role-creation, database-creation, or schema-creation authority and grants required application-table DML/sequence access.
+- **T044 / migration cleanup** remains fixed. The helper installs its error/interrupt/termination cleanup trap immediately after capturing the task ARN, stops and awaits an active remote task, and preserves failure. The deployment role has cluster-conditioned `ecs:StopTask`, and the executable timeout contract proves cleanup invocation.
+- **T045 / write namespace isolation** fixes the Round 2 blocker. Exact synthesized IAM shows the API has `PutObject`, multipart-abort, and multipart-list only for `staging/*`; it has no bucket-wide, `sha256/*`, or `quarantine/*` write. Worker `PutObject` is limited to `sha256/*` and `quarantine/*`; its staging permission contains only multipart cleanup actions. Required staging/authoritative reads and authoritative deletion denies remain intact. The synthesized assertions bind these statements to the API and worker task-role policies and reject broad or crossed API writes.
+
+The voluntary migration-ledger hardening is also sound. Provisioning revokes every runtime privilege on `platform_schema_migrations` after granting application-table privileges, while default privileges do not retroactively restore access. PostgreSQL integration coverage verifies application-table DML, denied migration-ledger mutation, denied schema DDL, and non-administrative role flags.
+
+No new significant blocking issue was found in deployability, IAM and secret boundaries, S3/KMS persistence, database migration/provisioning, migration timeout recovery, immutable ECR publication, paired service rollback, exact post-stability task checks, workflow configuration contracts, release-evidence binding, Cloud Map/VPC-link routing, cost-gate documentation, or the updated tests.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `99ceba30f5550117634b2df0b7b9327d4044c0b7..ddebb6413445ba0e7b7d48c91381bfc388a61d3b`.
+
+**Final gate result: PASS.** This review authorizes no merge, deployment, migration, or other remote mutation; push authority remains governed by the user's separate authorization.
+
+## T046 MinIO registry CI remediation review — 2026-09-13
+
+**Reviewer model**: gpt-5.6-sol | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `d2309de01b0a7d62a0b34ed10cce1d0677985bff` | **Reviewed head**: `1b88802760acc2d269b647b340d5690a49809cc5` | **Reviewed range**: `d2309de01b0a7d62a0b34ed10cce1d0677985bff..1b88802760acc2d269b647b340d5690a49809cc5`
+
+The independent reviewer inspected the exact four-file commit, current clean status, integration Compose contract and backend workflow wiring, dependency inventory, T046 traceability, validation record, and the reported registry/platform/runtime evidence without changing files, containers, commits, or remotes.
+
+The registry substitution is materially sound. `tests/integration/ingest/compose.yml` changes only the MinIO registry host from Docker Hub to the upstream MinIO Quay repository. It retains release `RELEASE.2025-09-07T16-13-09Z` and exact OCI index digest `sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; the digest, rather than the readable tag, controls the pulled bytes. The supplied verification confirms the Quay index digest and platform manifests, successful public Compose pull, healthy service startup, and the complete PostgreSQL/MinIO ingest suite. No mutable image reference, credential dependency, unsupported Compose syntax, platform loss, application behavior change, or broadened CI permission is introduced.
+
+Documentation and traceability are accurate: the dependency inventory identifies the named registry and immutable digest, T046 records the Docker Hub denial and Quay remediation, and validation distinguishes registry availability from feature behavior while recording the successful full integration path. Existing Compose and CI-contract validation continues to enforce digest pinning and backend integration execution.
+
+No significant blocking issue was found in supply-chain provenance, immutable identity, registry compatibility, workflow behavior, test coverage, documentation, or scope. The working tree is clean and exactly one commit is pending to the stated destination.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `d2309de01b0a7d62a0b34ed10cce1d0677985bff..1b88802760acc2d269b647b340d5690a49809cc5`.
+
+**Final gate result: PASS.** This review authorizes no merge, deployment, migration, or other remote mutation; the separately recorded user authorization governs the push.
