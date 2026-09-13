@@ -421,3 +421,19 @@ No new significant blocking issue was found in deployability, IAM and secret bou
 The reviewer explicitly agrees that no valid unresolved blocking finding remains in `99ceba30f5550117634b2df0b7b9327d4044c0b7..ddebb6413445ba0e7b7d48c91381bfc388a61d3b`.
 
 **Final gate result: PASS.** This review authorizes no merge, deployment, migration, or other remote mutation; push authority remains governed by the user's separate authorization.
+
+## T046 MinIO registry CI remediation review — 2026-09-13
+
+**Reviewer model**: gpt-5.6-sol | **Destination**: `origin/feature/005-image-ingest-storage-release` | **Base**: `d2309de01b0a7d62a0b34ed10cce1d0677985bff` | **Reviewed head**: `1b88802760acc2d269b647b340d5690a49809cc5` | **Reviewed range**: `d2309de01b0a7d62a0b34ed10cce1d0677985bff..1b88802760acc2d269b647b340d5690a49809cc5`
+
+The independent reviewer inspected the exact four-file commit, current clean status, integration Compose contract and backend workflow wiring, dependency inventory, T046 traceability, validation record, and the reported registry/platform/runtime evidence without changing files, containers, commits, or remotes.
+
+The registry substitution is materially sound. `tests/integration/ingest/compose.yml` changes only the MinIO registry host from Docker Hub to the upstream MinIO Quay repository. It retains release `RELEASE.2025-09-07T16-13-09Z` and exact OCI index digest `sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`; the digest, rather than the readable tag, controls the pulled bytes. The supplied verification confirms the Quay index digest and platform manifests, successful public Compose pull, healthy service startup, and the complete PostgreSQL/MinIO ingest suite. No mutable image reference, credential dependency, unsupported Compose syntax, platform loss, application behavior change, or broadened CI permission is introduced.
+
+Documentation and traceability are accurate: the dependency inventory identifies the named registry and immutable digest, T046 records the Docker Hub denial and Quay remediation, and validation distinguishes registry availability from feature behavior while recording the successful full integration path. Existing Compose and CI-contract validation continues to enforce digest pinning and backend integration execution.
+
+No significant blocking issue was found in supply-chain provenance, immutable identity, registry compatibility, workflow behavior, test coverage, documentation, or scope. The working tree is clean and exactly one commit is pending to the stated destination.
+
+The reviewer explicitly agrees that no valid unresolved blocking finding remains in `d2309de01b0a7d62a0b34ed10cce1d0677985bff..1b88802760acc2d269b647b340d5690a49809cc5`.
+
+**Final gate result: PASS.** This review authorizes no merge, deployment, migration, or other remote mutation; the separately recorded user authorization governs the push.
