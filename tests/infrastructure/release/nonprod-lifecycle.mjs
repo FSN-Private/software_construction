@@ -8,14 +8,16 @@ const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:
 const temporaryDirectory = mkdtempSync(join(tmpdir(), 'nonprod-lifecycle-'));
 const logPath = join(temporaryDirectory, 'aws.log').replaceAll('\\', '/');
 
-function run(action, databaseState = 'available', finalCount = '1', failMatch = '') {
+function run(action, databaseState = 'available', finalCount = '1', failMatch = '', timeoutExit = '', postSleepState = 'stopped') {
   writeFileSync(logPath, '');
   const command = String.raw`
     aws() {
       printf '%s\n' "$*" >> "$MOCK_AWS_LOG"
       if test -n "$MOCK_FAIL_MATCH" && [[ "$*" == *"$MOCK_FAIL_MATCH"* ]]; then return 44; fi
+      if test "$1 $2 $3" = 'rds wait db-instance-stopped'; then return 2; fi
       if test "$1 $2" = 'rds describe-db-instances'; then
         if grep -q '^rds stop-db-instance' "$MOCK_AWS_LOG"; then printf 'stopped\n';
+        elif grep -q '^sleep 15$' "$MOCK_AWS_LOG"; then printf '%s\n' "$MOCK_POST_SLEEP_STATE";
         elif grep -q '^rds start-db-instance' "$MOCK_AWS_LOG"; then printf 'available\n';
         else printf '%s\n' "$MOCK_RDS_STATE"; fi
       elif test "$1 $2" = 'ecs describe-services'; then
@@ -25,9 +27,11 @@ function run(action, databaseState = 'available', finalCount = '1', failMatch = 
     timeout() {
       test "$1" = '--foreground' && shift
       shift
+      if test -n "$MOCK_TIMEOUT_EXIT" && test "$1" = bash; then return "$MOCK_TIMEOUT_EXIT"; fi
       "$@"
     }
-    export -f aws timeout
+    sleep() { printf 'sleep %s\n' "$*" >> "$MOCK_AWS_LOG"; }
+    export -f aws timeout sleep
     bash scripts/manage-nonprod-lifecycle.sh "$REQUESTED_ACTION"
   `;
   const result = spawnSync(bash, ['-c', command], {
@@ -40,6 +44,8 @@ function run(action, databaseState = 'available', finalCount = '1', failMatch = 
       MOCK_RDS_STATE: databaseState,
       MOCK_FINAL_COUNT: finalCount,
       MOCK_FAIL_MATCH: failMatch,
+      MOCK_TIMEOUT_EXIT: timeoutExit,
+      MOCK_POST_SLEEP_STATE: postSleepState,
       DATABASE_INSTANCE: 'database-1',
       ECS_CLUSTER: 'cluster-1',
       ECS_SERVICE: 'api-service',
@@ -87,7 +93,15 @@ try {
   const stoppingDatabase = run('stop', 'stopping', '0');
   assert.equal(stoppingDatabase.status, 0, stoppingDatabase.stderr);
   assert.ok(!stoppingDatabase.calls.some((call) => call.startsWith('rds stop-db-instance')), 'Stopping RDS must only be waited.');
-  assert.ok(stoppingDatabase.calls.some((call) => call.startsWith('rds wait db-instance-stopped')));
+  assert.ok(stoppingDatabase.calls.some((call) => call === 'sleep 15'), 'Stopping RDS must be polled without relying on an unavailable AWS CLI waiter.');
+
+  const stopTimedOut = run('stop', 'stopping', '0', '', '124');
+  assert.equal(stopTimedOut.status, 124, 'The complete RDS polling subprocess must preserve timeout exit 124.');
+  assert.match(stopTimedOut.stderr, /did not stop within 1500 seconds/);
+
+  const unexpectedDuringStop = run('stop', 'stopping', '0', '', '', 'modifying');
+  assert.notEqual(unexpectedDuringStop.status, 0, 'An unexpected state entered while polling must fail closed.');
+  assert.match(unexpectedDuringStop.stderr, /entered unexpected state while stopping: modifying/);
 
   const failedUpdate = run('stop', 'available', '0', 'ecs update-service --cluster cluster-1 --service api-service');
   assert.notEqual(failedUpdate.status, 0, 'A failed ECS mutation must fail the lifecycle action.');

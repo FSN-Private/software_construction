@@ -50,13 +50,36 @@ stop_database() {
     stopped) ;;
     available)
       aws rds stop-db-instance --db-instance-identifier "$DATABASE_INSTANCE" >/dev/null
-      timeout --foreground 1500 aws rds wait db-instance-stopped --db-instance-identifier "$DATABASE_INSTANCE"
+      wait_for_database_stopped
       ;;
     stopping)
-      timeout --foreground 1500 aws rds wait db-instance-stopped --db-instance-identifier "$DATABASE_INSTANCE"
+      wait_for_database_stopped
       ;;
     *) echo "Database $DATABASE_INSTANCE cannot stop from state: $state" >&2; return 1 ;;
   esac
+}
+
+wait_for_database_stopped() {
+  local status=0
+  export -f database_state wait_for_database_stopped_poll
+  timeout --foreground 1500 bash -c 'set -Eeuo pipefail; wait_for_database_stopped_poll' || status=$?
+  if ((status == 124)); then
+    echo "Database $DATABASE_INSTANCE did not stop within 1500 seconds." >&2
+  fi
+  return "$status"
+}
+
+wait_for_database_stopped_poll() {
+  local state
+  while true; do
+    state="$(database_state)"
+    case "$state" in
+      stopped) return 0 ;;
+      available|stopping) ;;
+      *) echo "Database $DATABASE_INSTANCE entered unexpected state while stopping: $state" >&2; return 1 ;;
+    esac
+    sleep 15
+  done
 }
 
 service_count() {
