@@ -17,6 +17,7 @@ $variables = [ordered]@{
     AWS_NONPROD_ECS_TASK_DEFINITION = $outputs.ApiTaskDefinitionFamily
     AWS_NONPROD_ECS_API_CONTAINER = $outputs.ApiContainerName
     AWS_NONPROD_WORKER_SERVICE = $outputs.WorkerServiceName
+    AWS_NONPROD_DATABASE_INSTANCE = $outputs.DatabaseInstanceIdentifier
     AWS_NONPROD_WORKER_TASK_DEFINITION = $outputs.WorkerTaskDefinitionFamily
     AWS_NONPROD_ECS_WORKER_CONTAINER = $outputs.WorkerContainerName
     AWS_NONPROD_MIGRATION_TASK_DEFINITION = $outputs.MigrationTaskDefinitionFamily

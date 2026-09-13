@@ -234,6 +234,7 @@ export class PlatformFoundationStack extends Stack {
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeServices', 'ecs:UpdateService'], resources: [apiService.serviceArn, workerService.serviceArn] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTasks', 'ecs:StopTask'], resources: ['*'], conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, migrationTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn, migrationExecutionRole.roleArn] }));
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance'], resources: [database.instanceArn] }));
     }
     const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
     encryptionKey.addToResourcePolicy(new aws_iam.PolicyStatement({
@@ -321,5 +322,6 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'IngestBucketName', { value: ingestBucket.bucketName });
     new CfnOutput(this, 'IngestKmsKeyArn', { value: encryptionKey.keyArn });
     new CfnOutput(this, 'IngestDatabaseSecretArn', { value: database.secret.secretArn });
+    new CfnOutput(this, 'DatabaseInstanceIdentifier', { value: database.instanceIdentifier });
   }
 }
