@@ -3,7 +3,23 @@ import { readFileSync } from 'node:fs';
 import { detectDrift, fetchCurrentProtection } from '../../packages/infrastructure/identity/verify-protection.mjs';
 
 const baseline = new URL('../../packages/infrastructure/identity/protection-baseline.json', import.meta.url);
+const trustPolicyPath = new URL('../../packages/infrastructure/identity/github-oidc-trust-policy.template.json', import.meta.url);
 const observed = JSON.parse(readFileSync(baseline, 'utf8'));
+const trustPolicy = JSON.parse(readFileSync(trustPolicyPath, 'utf8'));
+const trustSubject = trustPolicy.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:sub'];
+
+assert.equal(
+  trustPolicy.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:aud'],
+  'sts.amazonaws.com',
+  'AWS trust must retain the STS audience restriction.',
+);
+
+assert.equal(
+  trustSubject,
+  'repo:<OWNER>@<OWNER_ID>/<REPOSITORY>@<REPOSITORY_ID>:environment:<ENVIRONMENT>',
+  'AWS trust must use GitHub immutable owner and repository IDs with the protected environment.',
+);
+assert.ok(!trustSubject.includes('repo:<OWNER>/<REPOSITORY>'), 'Name-only GitHub OIDC subjects must not be accepted.');
 const changed = {
   ...observed,
   branchProtection: { ...observed.branchProtection, allowForcePushes: true },

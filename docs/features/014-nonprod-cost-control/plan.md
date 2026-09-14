@@ -46,7 +46,7 @@ The workflow dispatch input enters the script through an environment variable an
 
 ## Security, Compatibility, and Operations
 
-OIDC remains bound to `repo:FSN-Private/software_construction:environment:nonprod`. GitHub token permissions remain `contents: read` and `id-token: write`. RDS permissions are scoped to the generated DB ARN; ECS permissions already target the two services. No secrets are logged or added.
+OIDC remains bound to the immutable repository identity `repo:FSN-Private@325881310/software_construction@1352353437:environment:nonprod`. GitHub token permissions remain `contents: read` and `id-token: write`. RDS permissions are scoped to the generated DB ARN; ECS permissions already target the two services. No secrets are logged or added.
 
 Rollback is a commit revert before infrastructure update. After deployment, rollback removes the lifecycle workflow and RDS permissions; it does not alter retained database contents. If shutdown fails after ECS reaches zero, rerun `stop`; if start fails, leave services stopped and inspect the reported RDS state.
 
