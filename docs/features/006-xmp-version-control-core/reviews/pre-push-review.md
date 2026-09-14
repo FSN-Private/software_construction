@@ -276,3 +276,25 @@ Reviewed complete technical scope `39d732b085466bc26769f7dbbd2089637adf28b7..b9e
 **Round 3 technical gate: PASS**
 
 **Final reviewer agreement: AGREED. Final adversarial pre-push gate: PASS.** No valid unresolved blocking findings remain. The documented infrastructure preparation remains a separate, uncompleted pre-merge gate.
+
+## Linux CI remediation review — 2026-09-14
+
+**Reviewer model**: `gpt-6-astra` (alternate model; read-only)
+
+**Remote**: `origin`
+
+**Push destination**: `origin/feature/006-xmp-version-control-core`, currently `cc8fb1ce7b75f9876a131fe742bcf494e8807e84`
+
+**Pull-request base / integration destination**: `origin/master` at `640c1996f61a049e215e4456db60f0932c332c45`
+
+**Reviewed remediation scope**: `cc8fb1ce7b75f9876a131fe742bcf494e8807e84..78f3faffa1f83557765eb3a1365cfb832df5ee93` (only T045 and its validation record; previously gated history was excluded)
+
+PR #24 run `34842589670` identified F006-C02: Ubuntu surfaced the deliberately unavailable S3 endpoint as `HttpRequestException`, which escaped the scheduled verifier's per-library provider-failure boundary. T045 adds that transport exception to the existing narrow catch filter without changing direct integrity-request semantics. The regression check uses the unavailable S3 endpoint and proves the worker emits redacted `verification_unavailable` telemetry without escaping.
+
+Local validation passed: `npm run test:backend`; the exact required PostgreSQL/capacity mode with one million persisted entries and 100,000 assets; the full PostgreSQL/MinIO ingest suite; API format/build; contract validation; and `git diff --check`.
+
+The reviewer found no significant blocking issue in correctness, cancellation, data integrity, security/privacy, compatibility, regression coverage, documentation, or commit scope. It confirmed that the per-library boundary contains the observed Ubuntu transport failure while preserving subsequent verification.
+
+**Technical gate result: PASS**
+
+**Final reviewer agreement: AGREED. Final adversarial pre-push gate: PASS.** No valid unresolved blocking findings remain. The documented infrastructure preparation remains a separate, uncompleted pre-merge gate.
