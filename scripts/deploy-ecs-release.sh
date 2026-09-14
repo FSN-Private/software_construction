@@ -11,7 +11,10 @@ docker load --input "$RELEASE_DIR/api.tar"
 docker load --input "$RELEASE_DIR/ingest-worker.tar"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 publish_immutable() {
-  local source="$1" repository="$2" target="$ECR_REGISTRY/$repository:$SOURCE_REVISION" digest
+  local source="$1"
+  local repository="$2"
+  local target="$ECR_REGISTRY/$repository:$SOURCE_REVISION"
+  local digest
   if digest="$(aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$SOURCE_REVISION" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)"; then
     docker pull "$target" >/dev/null
     test "$(docker inspect --format='{{.Id}}' "$source")" = "$(docker inspect --format='{{.Id}}' "$target")" || { echo "Immutable ECR tag contains different image bytes: $target"; return 1; }

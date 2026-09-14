@@ -45,6 +45,7 @@ assert.ok(lifecycle.includes('group: deploy-nonprod') && lifecycle.includes('can
 assert.ok(lifecycle.includes('scripts/manage-nonprod-lifecycle.sh "$REQUESTED_ACTION"'), 'Lifecycle workflow inputs must enter the validated shared script through the environment.');
 assert.ok(lifecycle.includes('if: ${{ always() }}') && lifecycle.includes('PRIOR_JOB_STATUS: ${{ job.status }}') && lifecycle.includes('scripts/manage-nonprod-lifecycle.sh report'), 'Lifecycle failures must preserve failure and report final resource state.');
 assert.ok(deployScript.includes('describe-images') && deployScript.includes('Immutable ECR tag contains different image bytes'), 'Deployment must safely reuse an identical immutable tag and reject different image bytes.');
+assert.doesNotMatch(deployScript, /local[^\n]*repository=.*target=.*\$repository/, 'Bash locals must be assigned before a later local initializer expands them under nounset.');
 assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
 assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
 assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');

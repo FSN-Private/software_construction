@@ -43,6 +43,20 @@ The reviewer found no blocking issue. The template has one `StringEquals` map co
 
 Documentation accurately distinguishes the completed OIDC repair from the still-running deployment. The reviewer recommended the non-blocking clarification that owner or repository renames also require re-querying the emitted subject; the bootstrap runbook now includes it.
 
+### Round 2 — PASS
+
+Deployment retry `34795455725` proved the immutable OIDC subject repair and exposed a separate Bash `nounset` failure in `publish_immutable`: `repository` was expanded by a dependent initializer in the same `local` command before Bash assigned it. The reviewed follow-up splits those declarations and adds a release-contract regression assertion that rejects the hazardous form.
+
+The reviewer found no blocking issue in the exact staged two-file follow-up. The existing argument quoting, immutable ECR tag and digest behavior, and API/worker callers remain unchanged. Validation passed with `npm run test:release-evidence`, `npm run test:reliability`, `npm run test:ci-contract`, Git Bash syntax checking, and `git diff --cached --check`.
+
+**Follow-up base**: `793f2c3bc572f8d19cdbb2714ce9bfba40355479`
+
+**Follow-up pending-push scope**:
+
+- `scripts/deploy-ecs-release.sh`
+- `tests/infrastructure/release/release-workflows.mjs`
+- `docs/features/014-nonprod-cost-control/reviews/immutable-oidc-subject-hotfix.md`
+
 ## Final gate
 
-**PASS** — alternate-model review completed with no unresolved blocking findings. Pushing remains separately authorized.
+**PASS** — both alternate-model review rounds completed with no unresolved blocking findings. Pushing remains separately authorized.
