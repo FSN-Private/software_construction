@@ -39,6 +39,8 @@ const deploymentPolicies = iamPolicies.flatMap(([, resource]) => resource.Proper
 for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole', 'rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance']) {
   if (!deploymentPolicies.some((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes(action))) throw new Error(`The deployment role is missing ${action}.`);
 }
+const describeTaskDefinitionPolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('ecs:DescribeTaskDefinition'));
+if (describeTaskDefinitionPolicy?.Resource !== '*') throw new Error('ECS DescribeTaskDefinition does not support task-definition resource scoping and must use Resource "*".');
 const rdsLifecyclePolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('rds:StopDBInstance'));
 if (!JSON.stringify(rdsLifecyclePolicy?.Resource).includes('IngestDatabase')) throw new Error('RDS lifecycle permissions must target the non-production database instance.');
 const deleteStatements = deploymentPolicies.filter((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).some((action) => action === 's3:DeleteObject' || action === 's3:DeleteObjectVersion'));
