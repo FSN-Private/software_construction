@@ -9,6 +9,7 @@ const rollback = readFileSync('.github/workflows/rollback.yml', 'utf8');
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
 const lifecycleScript = readFileSync('scripts/manage-nonprod-lifecycle.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
+const integrityWorker = readFileSync('apps/api/Features/VersionControl/Integrity/IntegrityVerificationWorker.cs', 'utf8');
 
 function concurrencyGroup(workflow) {
   return workflow.match(/concurrency:\r?\n\s+group:\s+([^\r\n]+)/)?.[1].trim();
@@ -48,6 +49,9 @@ function canRollback(manifest, promotionEvidence, requestedTaskDefinition, reque
 
 assert.equal(cancelInProgress(ci), true, 'Superseded CI revisions must cancel.');
 assert.match(ci, /if: \$\{\{ always\(\) \}\}/, 'Required aggregation must run after cancellation or failure.');
+assert.match(ci, /VERSION_CONTROL_INTEGRATION:\s*['"]?1/, 'Required CI must enable Feature 006 PostgreSQL integration checks.');
+assert.match(ci, /VERSION_CONTROL_CAPACITY:\s*['"]?1/, 'Required CI must enable Feature 006 capacity checks.');
+assert.match(integrityWorker, /TimeSpan\.FromMinutes\(10\)/, 'Integrity verification must emit a heartbeat inside the fifteen-minute alert window.');
 for (const [name, workflow] of Object.entries({ deploy, release, rollback })) {
   assert.equal(cancelInProgress(workflow), false, `${name} must serialize deliveries rather than canceling one.`);
   assert.ok(timeoutMinutes(workflow).length > 0, `${name} must bound runner-loss wait time.`);

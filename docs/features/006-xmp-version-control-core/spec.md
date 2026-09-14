@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-02
 
-**Status**: Draft — awaiting product-owner approval
+**Status**: Approved — 2026-09-10
 
 **Owner**: Project maintainer
 
@@ -138,6 +138,9 @@ As the library owner, I can rewrite a non-default branch after reviewing impact,
 - **AC-010**: A checkout fixture with dirty working changes blocks or preserves them according to the chosen explicit path and never silently moves or loses them.
 - **AC-011**: A purge fixture cannot remove an image or XMP object required by a reachable, hidden, reflog, or recovery-held commit; it becomes eligible only after all holds release.
 - **AC-012**: A resolved merge fixture records base/source/target evidence and resolved entries, creates the correct parents, and either atomically advances the expected target head or leaves no merge commit/ref change.
+- **AC-013**: Browser preflight accepts the version-control concurrency headers `X-Client-Id` and `If-Match` from the configured web origin.
+- **AC-014**: Intentional non-production scale-to-zero suppresses missing-heartbeat notifications and a successful start or deployment restores them.
+- **AC-015**: The deployed API task has at least 2 GiB memory for full reference-scale integrity verification.
 
 ### Key Entities
 
@@ -160,7 +163,7 @@ As the library owner, I can rewrite a non-default branch after reviewing impact,
 - **NFR-004 Privacy**: Audit/telemetry contains hashes/IDs and operation categories, not XMP payloads, filenames, geolocation, or descriptive metadata. Verification: log tests.
 - **NFR-005 Accessibility**: Not applicable to the engine's internal UI-free core; feature 010 owns accessible presentation. Error contracts MUST include machine code and plain-language summary for accessible consumers.
 - **NFR-006 Compatibility**: Manifests, commit IDs, graph/ref contracts, and policy versions are forward-readable and explicitly versioned. Verification: compatibility fixtures.
-- **NFR-007 Observability**: Metrics cover commit/ref rate/latency/conflict, stale heads, graph verification, reflog expiry, and repair; integrity failure alerts within 15 minutes. Verification: fault injection.
+- **NFR-007 Observability**: Metrics cover commit/ref rate/latency/conflict, stale heads, graph verification, reflog expiry, and repair; integrity failure alerts within 15 minutes while the service is intentionally running, without paging during scheduled non-production shutdown. Verification: fault injection and lifecycle contract tests.
 - **NFR-008 Maintainability**: Domain invariants have one authoritative implementation and no storage/provider leakage in public contracts. Verification: architecture tests.
 - **NFR-009 Testability**: Property/model tests cover DAG acyclicity, atomic ref updates, reachability, idempotency, projection rebuild, hidden state, and expiry/holds. Verification: CI evidence.
 - **NFR-010 Localization**: Commit/ref identifiers and hashes are locale-invariant; user messages/times are localizable without changing identity. Verification: locale tests.
@@ -169,7 +172,7 @@ As the library owner, I can rewrite a non-default branch after reviewing impact,
 - **NFR-013 Cost**: Storage/reporting distinguishes unique XMP bytes, graph rows, manifests, projections, audit, and retained displaced history; compaction never weakens recovery. Verification: inventory/cost report.
 - **NFR-014 Compliance**: Commit/audit/recovery retention follows the umbrella privacy/deletion policy and documented jurisdictional review. Verification: policy mapping.
 - **NFR-015 Reliability**: No acknowledged committed XMP or reachable commit is lost or silently changed across concurrency, retry, restart, rebuild, or ref rewrite. Verification: fault/property tests.
-- **NFR-016 Scalability**: Support at least 1,000,000 XMP revisions/commit entries and 100,000 assets per library while meeting stated read/commit targets. Verification: capacity test.
+- **NFR-016 Scalability**: Support at least 1,000,000 XMP revisions/commit entries and 100,000 assets per library while meeting stated read/commit targets; the deployed verifier receives a 2 GiB memory ceiling. Verification: capacity and synthesized-infrastructure tests.
 
 ## Success Criteria *(mandatory)*
 

@@ -1,0 +1,54 @@
+using Platform.Contracts.VersionControl;
+using Platform.Api.Features.VersionControl.Integrity;
+using Platform.Api.Features.VersionControl;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
+
+var manifest = new VersionControlManifest(
+    "library-1",
+    [],
+    "owner-1",
+    DateTimeOffset.Parse("2026-09-10T00:00:00Z"),
+    DateTimeOffset.Parse("2026-09-10T00:00:01Z"),
+    "Initial edit",
+    [new(Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"), "added", null, new string('a', 64))]);
+var bytes = VersionControlManifestCodec.Write(manifest);
+var decoded = VersionControlManifestCodec.Read(bytes);
+Assert(decoded.LibraryId == manifest.LibraryId && decoded.Parents.SequenceEqual(manifest.Parents) && decoded.Entries.SequenceEqual(manifest.Entries), "Canonical manifest must round-trip without changing its value.");
+Assert(VersionControlManifestCodec.Write(decoded).SequenceEqual(bytes), "Manifest bytes must be stable after a compatible read.");
+Assert(VersionControlManifestCodec.Digest(manifest) == VersionControlManifestCodec.Digest(bytes), "Commit identity must digest the exact canonical bytes.");
+var fixtureBytes = System.Text.Encoding.UTF8.GetBytes(File.ReadAllText("packages/contracts/version-control/fixtures/manifest-v1.json").TrimEnd('\r', '\n'));
+var fixtureDigest = File.ReadAllText("packages/contracts/version-control/fixtures/manifest-v1.sha256").Trim();
+Assert(VersionControlManifestCodec.Digest(fixtureBytes) == fixtureDigest, "The v1 canonical manifest fixture digest must remain stable.");
+
+var first = Stored(manifest);
+var childManifest = manifest with { Parents = [first.Id], Message = "Second edit", ReceivedAt = manifest.ReceivedAt.AddSeconds(1) };
+var second = Stored(childManifest);
+Assert(GraphIntegrity.Verify("library-1", [first, second]).Healthy, "A valid manifest DAG must pass integrity verification.");
+Assert(GraphIntegrity.Verify("library-1", [second]).Codes.Contains("missing_parent"), "Missing parents must be detected.");
+Assert(GraphIntegrity.Verify("library-1", [first with { Id = new string('f', 64) }]).Codes.Contains("manifest_digest_mismatch"), "Changed commit identities must be detected.");
+
+await using (var app = WebApplication.CreateBuilder().Build())
+{
+    VersionControlEndpoints.Map(app);
+    var routes = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().Select(endpoint => endpoint.RoutePattern.RawText).ToArray();
+    Assert(routes.Contains("/v1/libraries/{library}/version-control/staging/{**branch}", StringComparer.Ordinal), "HTTP staging must preserve slash-containing branch names through a catch-all route.");
+}
+
+await CommitChecks.RunAsync();
+RefChecks.Run();
+RecoveryChecks.Run();
+VerificationChecks.Run();
+
+Console.WriteLine("Version-control contract checks passed.");
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+
+static StoredCommit Stored(VersionControlManifest value)
+{
+    var canonical = VersionControlManifestCodec.Write(value);
+    return new(VersionControlManifestCodec.Digest(canonical), value.LibraryId, canonical, value.Parents);
+}
