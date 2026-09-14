@@ -32,7 +32,7 @@ public sealed class IntegrityVerificationWorker(NpgsqlDataSource dataSource, Int
                     if (result.Healthy) logger.LogInformation("Version-control integrity heartbeat {AuditEventType} {Scope} {CommitsChecked}", "version-control.integrity.heartbeat", "redacted", result.CommitsChecked);
                     else logger.LogError("Version-control integrity failure {AuditEventType} {Scope} {ReasonCode}", "version-control.integrity.failure", "redacted", string.Join(',', result.Codes));
                 }
-                catch (Exception error) when (error is NpgsqlException or AmazonServiceException or TimeoutException or IOException)
+                catch (Exception error) when (error is NpgsqlException or AmazonServiceException or HttpRequestException or TimeoutException or IOException)
                 {
                     logger.LogError("Version-control integrity verification unavailable {AuditEventType} {Scope} {ReasonCode}", "version-control.integrity.failure", "redacted", "verification_unavailable");
                 }

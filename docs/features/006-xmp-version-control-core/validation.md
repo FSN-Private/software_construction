@@ -41,3 +41,12 @@ No production migration or deployment was performed by this feature implementati
 - The full PostgreSQL/MinIO ingest suite passed, including runtime-role migration/rehearsal, exact-byte retrieval, lifecycle, reconstruction, HTTP isolation, retries, quarantine, and atomic fault coverage.
 - `npm run test:backend`, `npm run test:release-evidence`, `npm run test:reliability`, `npm run test:ci-contract`, `npm run test:contract`, infrastructure TypeScript/CDK synthesis and assertions, .NET format/build, and API publish passed. Only the existing CDK `addDependency` deprecation warnings remain; no remote CI run is claimed.
 - F006-C01 remediation makes infrastructure preparation a hard pre-merge release gate, preserves the live task-definition rollback pair across CDK bootstrap revisions, and synthesizes the new non-production heartbeat alarm with actions disabled until a healthy start/deployment.
+
+## Linux CI remediation evidence — 2026-09-14
+
+- PR #24 run `34842589670` exposed `HttpRequestException: Connection refused (127.0.0.1:1)` from the deliberately unavailable S3 endpoint in `WorkerStorageFailureAsync`. The provider-specific transport exception escaped the scheduled verifier even though equivalent `AmazonServiceException`, database, timeout, and I/O failures were already contained per scope.
+- T045 adds `HttpRequestException` only to the scheduled per-scope failure boundary. Direct integrity requests keep their existing behavior, while the worker records `version-control.integrity.failure` with `verification_unavailable` and continues its schedule.
+- `npm run test:backend`, API formatting/build, `npm run test:contract`, and `git diff --check` pass. The worker-storage regression check now passes locally.
+- The exact required-CI PostgreSQL/capacity mode passes with 1,000,000 persisted entries and 100,000 assets: 10,000-node lineage p95 355 ms, asset-state p95 2.9 ms, entry-index p95 5.6 ms, storage-backed 100-entry commit p95 510 ms, and the in-memory million-entry model in 1.02 s.
+- The full PostgreSQL/MinIO ingest suite passes after the capacity run, including migration rehearsal, retrieval, lifecycle, reconstruction, HTTP isolation, retries, quarantine, atomicity, and provider-fault coverage.
+- An initial capacity attempt was invalidated when a full C: drive crashed Docker Desktop and PostgreSQL disconnected with `EndOfStreamException`. After clearing only regenerable caches/artifacts, detaching the stale WSL VHD, recreating the disposable services, and restoring locked dependencies, the complete clean reruns above passed.

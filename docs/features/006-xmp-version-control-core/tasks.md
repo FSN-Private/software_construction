@@ -74,6 +74,10 @@
 - [x] T043 Run Feature 006 unit/integration/capacity and infrastructure/release/reliability validation, record compatibility evidence, and commit the remediation milestone (AC-013/014/015, NFR-006/007/009/011/015/016). — All local required-CI equivalents pass; milestone commit follows this task update.
 - [x] T044 Enforce infrastructure-first rollout, preserve the deployed rollback task pair across CDK bootstrap revisions, and initialize non-production heartbeat actions safely per F006-C01 (AC-013/014/015, NFR-003/007/011/012/015/016). — The release plan blocks merge until CDK/output evidence exists; synthesized alarms start suppressed and healthy application deployment enables them.
 
+## Phase 8: Linux CI remediation
+
+- [x] T045 Contain provider transport failures surfaced as `HttpRequestException` at the scheduled verifier boundary and prove the required Linux-equivalent PostgreSQL/capacity suite remains healthy (NFR-002/007/009/015; F006-C02). — The worker now records `verification_unavailable` and continues when the AWS HTTP transport refuses a connection; the ordinary backend suite, required PostgreSQL/capacity mode, and ingest integration suite pass.
+
 ## Traceability
 
 FR-001–009: T005/T007–T012; FR-010: T012/T014; FR-011–012: T012–T014; FR-013: T011/T014; FR-014–017: T015–T018; FR-018: T006/T019–T020; FR-019: T004/T011/T015; FR-020: T001/T002/T007/T012/T016/T020; FR-021: T013–T014; FR-022: T005/T009/T015–T018; FR-023: T017–T018. AC-001: T009–T010; AC-002: T009/T014; AC-003: T009–T010; AC-004: T012/T014/T019; AC-005: T011/T014–T015/T018; AC-006–007: T015–T018; AC-008: T006/T019–T020; AC-009–010: T012–T014; AC-011: T005/T015/T018; AC-012: T017–T018. NFR-001: T009/T012/T020; NFR-002: T009/T020; NFR-003: T003/T005/T020; NFR-004: T004/T020; NFR-005: T007/T012; NFR-006: T002/T008/T022; NFR-007: T006/T021; NFR-008: T001/T019; NFR-009: T010/T014/T018/T020; NFR-010: T002/T020; NFR-011: T002/T004/T022; NFR-012: T021; NFR-013: T015/T021; NFR-014: T003/T021; NFR-015: T006/T009/T010/T014/T018–T022; NFR-016: T004/T012/T020. Milestones: graph foundation; commit MVP; refs/compare; recovery/visibility; rebuild readiness.
@@ -83,3 +87,5 @@ Remediation traceability: F006-01/02 → T024; F006-03 → T025; F006-04 → T02
 Post-master compatibility traceability: AC-013 → T040/T043; AC-014 → T041/T043; AC-015 → T042/T043; NFR-002/003/007/012/013/015 → T041/T043; NFR-001/013/016 → T042/T043; NFR-006/008/009/011 → T039/T040/T043.
 
 Rollout review traceability: F006-C01 and AC-013/014/015 → T044; NFR-003/007/011/012/015/016 → T044.
+
+CI remediation traceability: F006-C02 and NFR-002/007/009/015 → T045.
