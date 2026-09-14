@@ -212,3 +212,67 @@ The reviewer confirmed F006-01–14 and F006-N03 resolved in the reviewed post-m
 **Final reviewer agreement**: `AGREED`
 
 **Final adversarial pre-push gate: PASS**
+
+## Post-master compatibility review — 2026-09-14
+
+**Reviewer model**: `gpt-6-astra` (alternate model; read-only)
+
+**Remote**: `origin`
+
+**Push destination**: `origin/feature/006-xmp-version-control-core`, currently `39d732b085466bc26769f7dbbd2089637adf28b7`
+
+**Pull-request base / integration destination**: `origin/master` at `640c1996f61a049e215e4456db60f0932c332c45`
+
+**Previously reviewed remote feature head**: `39d732b085466bc26769f7dbbd2089637adf28b7`
+
+**Round 1 implementation head**: `e791a74e657d45ba36dba02bdd9c0a52813f1249`
+
+**Round 1 remediation head**: `9ca1105`
+
+**Round 2 remediation head**: `b9e4dd3`
+
+**Complete technical scope**: `39d732b085466bc26769f7dbbd2089637adf28b7..b9e4dd3` (the six new master commits, compatibility merge, and rollout remediation). The final pending push additionally contains this review record only.
+
+The reviewer was directed not to re-review the already gated Feature 006 history. It inspected both compatibility merge parents, the complete changed source/tests/configuration, Feature 006 specification/plan/tasks/validation, release plan, CORS and resource sizing, alarm lifecycle/IAM/output behavior, migration/runtime-role preservation, workflow failure paths, rollout/rollback safety, dependencies, and commit clarity.
+
+### Round 1
+
+The reviewer found no blocking issue in security/privacy/authorization, data integrity/migrations, source-level CORS/resource sizing, lifecycle failure recovery, dependencies, merge preservation, unrelated changes, or commit clarity. It independently reran the release-workflow, reliability, protection-drift, and CI-contract checks successfully. It reported one blocker:
+
+| ID | Classification | Severity | Evidence and impact | Affected requirements/tasks | Suggested remediation |
+|---|---|---|---|---|---|
+| F006-C01 | Blocking | High | The release plan began with merge, but the merged workflows immediately required a new alarm variable. The alarm, IAM, CORS, and API memory existed only in undeployed CDK; application deployment clones task definitions and cannot apply them. Automatic deployment would fail configuration validation, and populating only the variable would leave the other fixes absent. | AC-013–015; NFR-007/011/012/016; T040–T043 | Enforce infrastructure-first rollout, configure the generated output, verify live IAM/CORS/memory, and preserve known-good image/task rollback targets across CDK bootstrap revisions. |
+
+**Round 1 gate: BLOCKED**
+
+### Implementing-agent assessment and remediation
+
+F006-C01 is **valid and fixed** in T044. No AWS or GitHub environment mutation had occurred, so there was no contrary rollout evidence. Commit `9ca1105`:
+
+- makes reviewed CDK deployment and output configuration a hard pre-merge gate;
+- requires capturing and restoring the exact live API/worker task definitions and desired counts so CDK's `bootstrap` revisions never become application rollback targets;
+- verifies live CORS, 2048 MiB API memory, scoped alarm IAM, configured GitHub variable, and alarm state before merge;
+- initializes a new non-production missing-heartbeat alarm with actions disabled until a healthy manual start or application deployment enables it; and
+- records explicit abort, rollback, retention, and evidence requirements without authorizing production promotion.
+
+Validation after remediation passed: `npm run test:release-evidence`, `npm run test:reliability`, and full `npm run validate:infrastructure`, including TypeScript, CDK synthesis/assertions, secret scan, dependency tree, licenses, and vulnerability audit. Only the pre-existing CDK deprecation and unconfigured-feature-flag notices remain.
+
+### Round 2 reviewer assessment
+
+The reviewer agreed that infrastructure-first preparation, task/count restoration, generated configuration, live IAM/CORS/memory checks, and `ActionsEnabled=false` addressed the original rollout omission, but rejected the initial **valid and fixed** disposition as incomplete. The release plan incorrectly required a heartbeat from a restored nonzero API before merge even though current `master` contains neither Feature 006 nor its integrity worker. Enabling the alarm for that binary would deadlock the merge gate and create a false alarm.
+
+F006-C01 therefore remained **valid and blocking**. The reviewer found no additional blocker in security/privacy, data integrity, merge preservation, CORS, resource sizing, scoped IAM, dependencies, or source-level release safeguards. Template, release-workflow, and reliability checks passed.
+
+**Round 2 gate: BLOCKED**
+
+### Round 2 remediation
+
+The release plan now keeps the new alarm suppressed before merge regardless of the restored API desired count. Only a successful post-merge deployment of the verifier-capable Feature 006 API enables it and must produce a heartbeat during the observation window. Rollback guidance in the feature plan, release plan, and deployment runbook makes the same capability distinction: enable only for a verifier-capable task; keep actions disabled when rollback restores the pre-Feature 006 binary.
+
+### Round 3 reviewer assessment
+
+Reviewed complete technical scope `39d732b085466bc26769f7dbbd2089637adf28b7..b9e4dd3d3384f7aee2397b921d7b930f0bbeeee7` and the pending review record. The reviewer accepts F006-C01 as valid and fixed after both remediation rounds. Infrastructure preparation precedes merge; the captured rollback pair is preserved; the pre-Feature 006 API is not required to emit an unsupported heartbeat; and deployment/rollback alarm handling distinguishes verifier-capable releases. No new blocking issue or valid unresolved blocking finding remains.
+
+**Round 3 technical gate: PASS**
+
+**Final reviewer agreement: AGREED. Final adversarial pre-push gate: PASS.** No valid unresolved blocking findings remain. The documented infrastructure preparation remains a separate, uncompleted pre-merge gate.
