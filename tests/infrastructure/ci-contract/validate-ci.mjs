@@ -21,6 +21,7 @@ assert.ok(workflow.includes('test "$RESULT" = success'), 'The aggregate check mu
 assert.ok(!workflow.includes('- run: npm run format'), 'Backend CI must not invoke web formatting without installing web dependencies.');
 assert.ok(workflow.includes('cache-dependency-path: apps/web/package-lock.json'), 'Web CI must cache from its own lockfile.');
 assert.ok(workflow.includes('cache-dependency-path: packages/infrastructure/package-lock.json'), 'Infrastructure CI must cache from its own lockfile.');
+assert.ok(workflow.includes('npm run test:release-evidence') && workflow.includes('npm run test:reliability'), 'Infrastructure CI must enforce release and lifecycle workflow contracts.');
 
 const protectionWorkflow = readFileSync('.github/workflows/verify-protection.yml', 'utf8');
 assert.ok(protectionWorkflow.includes('PROTECTION_AUDIT_TOKEN'), 'Protection verification must use the dedicated read-only audit token.');

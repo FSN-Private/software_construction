@@ -63,3 +63,11 @@ The stable Round 2 implementation review found remaining replay-order, slash-rou
 The post-merge-only Round 4 review found that reference-scale evidence still lacked complete Feature 005 provenance and that indexed whole-library paging needed a database-enforced canonical parent/time invariant. T035 and T038 close these integrity gaps without changing the public contract.
 
 CI remains triggered for every pull request and pushes to `master`, with stable required job name `ci / backend` and aggregate `ci / required`. The backend job must run unit/contract tests plus Feature 006 PostgreSQL integration and persisted capacity checks on Ubuntu/.NET 10/PostgreSQL 18. Failures are required, owned by the feature implementer, and retried only by rerunning the deterministic job; no test artifact containing XMP payloads is retained.
+
+## Post-master compatibility remediation
+
+The 2026-09-14 compatibility audit covers all six commits added to `master` since Feature 006's last merge base. The non-production scheduler intentionally stops the API every day, so its lifecycle script disables only the missing-heartbeat alarm actions after the API desired count reaches zero and restores them after a stable manual start. A successful non-production deployment also restores those actions. The deployment role receives only enable/disable access to that alarm, whose generated name is exported to the protected GitHub environment.
+
+API Gateway CORS admits the existing version-control precondition headers `X-Client-Id` and `If-Match`. The API Fargate task uses 2 GiB memory, the largest native memory choice available with its existing 0.25 vCPU allocation, to accommodate full verification of the persisted million-entry reference fixture without adding code or dependencies. The worker and migration tasks remain unchanged.
+
+Rollback is a commit revert followed by the normal CDK deployment. Before rollback, manually enable the heartbeat alarm if the API is running; after rollback, scheduled shutdowns no longer suppress it and operators must expect the former false notification behavior.

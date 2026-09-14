@@ -33,7 +33,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.RequireHttpsMetadata = true;
 });
 builder.Services.AddAuthorization();
-var ingestConnection = builder.Configuration.GetConnectionString("Ingest");
+var ingestConnection = IngestDatabaseConfiguration.ResolveConnectionString(builder.Configuration.GetConnectionString("Ingest"), key => builder.Configuration[key]);
 if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:Bucket"]) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:KmsKeyId"]))
 {
     builder.Services.AddSingleton(NpgsqlDataSource.Create(ingestConnection));

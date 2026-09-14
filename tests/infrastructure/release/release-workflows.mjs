@@ -3,8 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
+const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const configureNonprod = readFileSync('scripts/configure-nonprod-github.ps1', 'utf8');
+const migrationScript = readFileSync('scripts/run-ecs-migration.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
@@ -28,12 +30,33 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-prod
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('Validate deployment configuration') && workflows['deploy-nonprod.yml'].includes('Missing required deployment setting'), 'Non-production deployment must report missing protected configuration before AWS authentication.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
-assert.ok(deployScript.includes('RepoDigests'), 'Deployment must record immutable registry digests.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/manage-nonprod-lifecycle.sh start-database'), 'Non-production deployment must start RDS before migration.');
+const nonprodCredentialAction = 'aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c';
+assert.equal(workflows['deploy-nonprod.yml'].split(nonprodCredentialAction).length - 1, 2, 'Non-production deployment must refresh its OIDC session after a cold database start.');
+assert.ok(workflows['deploy-nonprod.yml'].indexOf('scripts/manage-nonprod-lifecycle.sh start-database') < workflows['deploy-nonprod.yml'].lastIndexOf(nonprodCredentialAction) && workflows['deploy-nonprod.yml'].lastIndexOf(nonprodCredentialAction) < workflows['deploy-nonprod.yml'].indexOf('scripts/deploy-ecs-release.sh'), 'Fresh deployment credentials must be acquired after database startup and before migration.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_DATABASE_INSTANCE') && configureNonprod.includes('AWS_NONPROD_DATABASE_INSTANCE = $outputs.DatabaseInstanceIdentifier'), 'Non-production deployment must consume the generated RDS identifier.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM') && configureNonprod.includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM = $outputs.VersionControlHeartbeatAlarmName'), 'Non-production deployment must consume the generated version-control heartbeat alarm name.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"'), 'A successful non-production deployment must restore heartbeat notifications.');
+const lifecycle = workflows['nonprod-lifecycle.yml'];
+assert.ok(lifecycle.includes('workflow_dispatch:') && lifecycle.includes("cron: '0 17 * * *'"), 'Non-production lifecycle must support manual control and daily shutdown.');
+assert.ok(lifecycle.includes('environment: nonprod') && lifecycle.includes('id-token: write'), 'Non-production lifecycle must use the protected OIDC environment.');
+assert.ok(lifecycle.includes("github.event_name == 'schedule' && 'stop' || inputs.action"), 'Scheduled lifecycle runs must always stop compute.');
+assert.ok(lifecycle.includes('group: deploy-nonprod') && lifecycle.includes('cancel-in-progress: false'), 'Lifecycle operations must serialize with deployment.');
+assert.ok(lifecycle.includes('scripts/manage-nonprod-lifecycle.sh "$REQUESTED_ACTION"'), 'Lifecycle workflow inputs must enter the validated shared script through the environment.');
+assert.ok(lifecycle.includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM'), 'Lifecycle operations must receive the generated version-control heartbeat alarm name.');
+assert.ok(lifecycle.includes('if: ${{ always() }}') && lifecycle.includes('PRIOR_JOB_STATUS: ${{ job.status }}') && lifecycle.includes('scripts/manage-nonprod-lifecycle.sh report'), 'Lifecycle failures must preserve failure and report final resource state.');
+assert.ok(deployScript.includes('describe-images') && deployScript.includes('Immutable ECR tag contains different image bytes'), 'Deployment must safely reuse an identical immutable tag and reject different image bytes.');
+assert.doesNotMatch(deployScript, /local[^\n]*repository=.*target=.*\$repository/, 'Bash locals must be assigned before a later local initializer expands them under nounset.');
+assert.ok(!deployScript.includes('file:///dev/stdin') && ['API_UPDATED', 'WORKER_UPDATED', 'MIGRATION_UPDATED'].every((name) => deployScript.includes(`--cli-input-json "$${name}"`)), 'Task registration must pass generated JSON directly instead of treating stdin as an AWS CLI input file.');
 assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
-assert.ok(deployScript.includes('command:["--migrate"]'), 'Deployment must run the release migration command before services update.');
+assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
+assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');
+assert.ok(migrationScript.includes('trap cleanup_migration ERR INT TERM') && migrationScript.includes('aws ecs stop-task'), 'Migration timeout or interruption must stop the remote ECS task.');
 assert.ok(deployScript.includes('previousWorkerTaskDefinition'), 'Deployment must retain the prior worker rollback target.');
 assert.ok(deployScript.includes('trap rollback ERR INT TERM'), 'Deployment must establish rollback handling before either service update.');
+assert.ok(deployScript.includes('--desired-count 1') && deployScript.includes('PREVIOUS_API_COUNT') && deployScript.includes('PREVIOUS_WORKER_COUNT'), 'The first deployment must start zero-count bootstrap services and restore their prior counts on failure.');
 assert.ok(deployScript.includes('"$API_TASK_ARN"'), 'Deployment must verify the API service stabilized on the candidate task definition.');
 assert.ok(deployScript.includes('"$WORKER_TASK_ARN"'), 'Deployment must verify the worker service stabilized on the candidate task definition.');
 assert.ok(deployScript.includes('scripts/smoke-ingest.mjs'), 'Deployment must exercise Feature 005 end to end.');
@@ -76,4 +99,12 @@ const circuitBreakerReversion = assertServiceTask('arn:aws:ecs:ap-southeast-1:11
 assert.notEqual(circuitBreakerReversion.status, 0, 'A service stabilized on the prior task definition must fail closed.');
 assert.match(circuitBreakerReversion.stderr, /unexpected task definition/, 'A circuit-breaker reversion must report the binding failure.');
 assert.match(circuitBreakerReversion.stdout, /paired rollback activated/, 'A post-stability binding failure must activate the parent rollback trap.');
+
+const timedOutMigration = spawnSync(
+  bash,
+  ['-c', 'aws() { if test "$2" = run-task; then printf "arn:aws:ecs:region:account:task/cluster/migration\n"; elif test "$2" = stop-task; then printf "stop-task %s\n" "$*" >&2; elif test "$2" = describe-tasks; then printf "0\n"; fi; }; jq() { printf "{}"; }; timeout() { return 124; }; export -f aws jq timeout; ECS_CLUSTER=cluster MIGRATION_TASK_DEFINITION=migration:1 ECS_MIGRATION_CONTAINER=migration MIGRATION_NETWORK="{}" bash scripts/run-ecs-migration.sh'],
+  { cwd: process.cwd(), encoding: 'utf8', env: process.env }
+);
+assert.notEqual(timedOutMigration.status, 0, 'A migration waiter timeout must fail deployment.');
+assert.match(timedOutMigration.stderr, /stop-task/, 'A migration waiter timeout must stop the remote ECS task.');
 console.log('Release workflow contract tests passed.');

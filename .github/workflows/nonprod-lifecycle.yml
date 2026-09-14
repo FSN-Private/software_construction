@@ -1,0 +1,67 @@
+name: Manage non-production lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Start or stop the non-production database and services.
+        required: true
+        type: choice
+        options:
+          - start
+          - stop
+  schedule:
+    - cron: '0 17 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-nonprod
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    environment: nonprod
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      REQUESTED_ACTION: ${{ github.event_name == 'schedule' && 'stop' || inputs.action }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_NONPROD_ROLE_ARN }}
+      DATABASE_INSTANCE: ${{ vars.AWS_NONPROD_DATABASE_INSTANCE }}
+      ECS_CLUSTER: ${{ vars.AWS_NONPROD_ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.AWS_NONPROD_ECS_SERVICE }}
+      WORKER_SERVICE: ${{ vars.AWS_NONPROD_WORKER_SERVICE }}
+      VERSION_CONTROL_HEARTBEAT_ALARM: ${{ vars.AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Validate lifecycle configuration
+        run: |
+          missing=()
+          for name in REQUESTED_ACTION AWS_REGION AWS_ROLE_ARN DATABASE_INSTANCE ECS_CLUSTER ECS_SERVICE WORKER_SERVICE VERSION_CONTROL_HEARTBEAT_ALARM; do
+            test -n "${!name:-}" || missing+=("$name")
+          done
+          test "${#missing[@]}" -eq 0 || { printf 'Missing required lifecycle setting: %s\n' "${missing[@]}"; exit 1; }
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: nonprod-lifecycle-${{ github.run_id }}
+      - name: Apply lifecycle state
+        id: apply
+        run: bash scripts/manage-nonprod-lifecycle.sh "$REQUESTED_ACTION"
+      - name: Report final lifecycle state
+        if: ${{ always() }}
+        env:
+          PRIOR_JOB_STATUS: ${{ job.status }}
+        run: |
+          set +e
+          bash scripts/manage-nonprod-lifecycle.sh report
+          report_status=$?
+          set -e
+          test "$PRIOR_JOB_STATUS" = success
+          test "$report_status" -eq 0

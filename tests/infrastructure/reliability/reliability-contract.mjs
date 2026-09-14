@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 
 const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
 const deploy = readFileSync('.github/workflows/deploy-nonprod.yml', 'utf8');
+const lifecycle = readFileSync('.github/workflows/nonprod-lifecycle.yml', 'utf8');
 const release = readFileSync('.github/workflows/release.yml', 'utf8');
 const rollback = readFileSync('.github/workflows/rollback.yml', 'utf8');
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const lifecycleScript = readFileSync('scripts/manage-nonprod-lifecycle.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const integrityWorker = readFileSync('apps/api/Features/VersionControl/Integrity/IntegrityVerificationWorker.cs', 'utf8');
 
@@ -54,6 +56,9 @@ for (const [name, workflow] of Object.entries({ deploy, release, rollback })) {
   assert.equal(cancelInProgress(workflow), false, `${name} must serialize deliveries rather than canceling one.`);
   assert.ok(timeoutMinutes(workflow).length > 0, `${name} must bound runner-loss wait time.`);
 }
+assert.equal(concurrencyGroup(lifecycle), concurrencyGroup(deploy), 'Non-production lifecycle changes must queue behind deployments.');
+assert.equal(cancelInProgress(lifecycle), false, 'Lifecycle runs must not cancel an active deployment.');
+assert.ok(Math.max(...timeoutMinutes(lifecycle)) <= 45, 'Lifecycle operations must have a 45-minute bound.');
 assert.equal(
   concurrencyGroup(release),
   concurrencyGroup(rollback),
@@ -99,12 +104,17 @@ assert.equal(
   'Production rollback must queue behind an active production promotion.'
 );
 
-const worstDeliveryTimeout = Math.max(...timeoutMinutes(deploy), ...timeoutMinutes(release), ...timeoutMinutes(rollback));
-assert.ok(worstDeliveryTimeout <= 60, 'Coordinated delivery must retain a bounded runner-loss window.');
+assert.ok(Math.max(...timeoutMinutes(release), ...timeoutMinutes(rollback)) <= 60, 'Production delivery must retain a bounded runner-loss window.');
+assert.ok(Math.max(...timeoutMinutes(deploy)) <= 90, 'Non-production deployment must retain a bounded cold-start window.');
 assert.match(deploy, /timeout --foreground 2100 bash scripts\/deploy-ecs-release\.sh/, 'Non-production must terminate deployment with recovery time left.');
 assert.match(release, /timeout --foreground 2100 bash scripts\/deploy-ecs-release\.sh/, 'Production promotion must terminate deployment with recovery time left.');
 assert.match(rollback, /timeout --foreground 1200 bash scripts\/rollback-ecs-release\.sh/, 'Standalone rollback must terminate its target attempt with restore time left.');
-assert.ok(Math.max(...timeoutMinutes(deploy)) * 60 - 2100 >= 1200, 'Non-production must reserve at least 20 runner minutes beyond its deployment deadline.');
+const databaseStartTimeout = Number(lifecycleScript.match(/timeout --foreground (\d+) aws rds wait db-instance-available/)?.[1]);
+assert.ok(databaseStartTimeout > 0, 'Non-production database startup must have an explicit timeout.');
+assert.ok(Math.max(...timeoutMinutes(deploy)) * 60 - databaseStartTimeout - 2100 >= 1200, 'Non-production must reserve at least 20 runner minutes after cold database startup and its deployment deadline.');
+const credentialAction = 'aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c';
+assert.equal(deploy.split(credentialAction).length - 1, 2, 'Non-production must refresh OIDC credentials after database startup.');
+assert.ok(deploy.indexOf('scripts/manage-nonprod-lifecycle.sh start-database') < deploy.lastIndexOf(credentialAction) && deploy.lastIndexOf(credentialAction) < deploy.indexOf('scripts/deploy-ecs-release.sh'), 'The fresh OIDC session must cover deployment and rollback.');
 assert.ok(Math.max(...timeoutMinutes(release)) * 60 - 2100 >= 1200, 'Production must reserve at least 20 runner minutes beyond its deployment deadline.');
 assert.ok(Math.max(...timeoutMinutes(rollback)) * 60 - 1200 >= 1200, 'Standalone rollback must reserve at least 20 runner minutes to restore the captured pair.');
 

@@ -90,6 +90,8 @@ jobs:
           cache-dependency-path: packages/infrastructure/package-lock.json
       - run: npm --prefix packages/infrastructure ci --ignore-scripts
       - run: npm run validate:infrastructure
+      - run: npm run test:release-evidence
+      - run: npm run test:reliability
 
   security:
     name: ci / security

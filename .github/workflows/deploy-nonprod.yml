@@ -29,7 +29,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       RELEASE_RUN_ID: ${{ inputs.release_run_id || github.event.workflow_run.id }}
       SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -43,11 +43,15 @@ jobs:
       ECS_TASK_DEFINITION: ${{ vars.AWS_NONPROD_ECS_TASK_DEFINITION }}
       ECS_API_CONTAINER: ${{ vars.AWS_NONPROD_ECS_API_CONTAINER }}
       WORKER_SERVICE: ${{ vars.AWS_NONPROD_WORKER_SERVICE }}
+      DATABASE_INSTANCE: ${{ vars.AWS_NONPROD_DATABASE_INSTANCE }}
       WORKER_TASK_DEFINITION: ${{ vars.AWS_NONPROD_WORKER_TASK_DEFINITION }}
       ECS_WORKER_CONTAINER: ${{ vars.AWS_NONPROD_ECS_WORKER_CONTAINER }}
+      MIGRATION_TASK_DEFINITION: ${{ vars.AWS_NONPROD_MIGRATION_TASK_DEFINITION }}
+      ECS_MIGRATION_CONTAINER: ${{ vars.AWS_NONPROD_ECS_MIGRATION_CONTAINER }}
       HEALTH_URL: ${{ vars.AWS_NONPROD_HEALTH_URL }}
       COGNITO_AUTHORITY: ${{ vars.AWS_NONPROD_COGNITO_AUTHORITY }}
       COGNITO_CLIENT_ID: ${{ vars.AWS_NONPROD_COGNITO_CLIENT_ID }}
+      VERSION_CONTROL_HEARTBEAT_ALARM: ${{ vars.AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM }}
       COGNITO_OWNER_USERNAME: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_USERNAME }}
       COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_PASSWORD }}
       RELEASE_DIR: artifacts/release
@@ -63,13 +67,31 @@ jobs:
           name: release-evidence
           path: artifacts/release
       - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - name: Validate deployment configuration
+        run: |
+          missing=()
+          for name in AWS_REGION AWS_ROLE_ARN ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE DATABASE_INSTANCE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD VERSION_CONTROL_HEARTBEAT_ALARM; do
+            test -n "${!name:-}" || missing+=("$name")
+          done
+          test "${#missing[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${missing[@]}"; exit 1; }
+      - name: Authenticate to AWS for database startup
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: nonprod-start-${{ github.run_id }}
+      - name: Start the non-production database
+        run: bash scripts/manage-nonprod-lifecycle.sh start-database
+      - name: Refresh AWS credentials for deployment and rollback
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: nonprod-release-${{ github.run_id }}
       - name: Migrate and deploy the verified API and worker release
         run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
+      - name: Restore version-control heartbeat notifications
+        run: aws cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nonprod-deployment-evidence

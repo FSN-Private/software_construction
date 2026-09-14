@@ -31,3 +31,12 @@ No production migration or deployment was performed by this feature implementati
 - `npm test`, API correlation, .NET formatting/build, web typecheck/build/tests/accessibility, contract, CI-contract, reliability, infrastructure synthesis/assertions, secret scan, dependency tree, license, and online advisory checks passed.
 - Migration rollback/reapply, immutable-row rejection, idempotent replay, ten-way CAS, staged/base drift, projection freshness/rebuild, canonical corruption quarantine, exact day-90 recovery, lifecycle holds, and two-parent merge rollback were exercised against PostgreSQL 18.
 - `git diff --check` passed. The repository-wide web Prettier command remains non-actionable on this Windows checkout because it reports CRLF style differences in thirteen untouched baseline web files; no unrelated formatting rewrite was included.
+
+## Post-master compatibility evidence — 2026-09-14
+
+- Merged and inspected all six commits after merge base `ba134a93ac08fa0f572fcba2a3442cd10a80a65f`, including the non-production scheduler and its three deployment hotfixes. The two textual conflicts preserve both the restricted runtime-role tests and all three embedded migrations, plus the current deployment assertions and Feature 006 integrity alarms.
+- API Gateway synthesis admits `if-match` and `x-client-id`. The API task synthesizes with 2048 MiB memory while worker and migration sizing remains unchanged.
+- Scheduled/manual shutdown disables only the version-control missing-heartbeat alarm actions after requesting API desired count zero. Stable manual start and successful non-production deployment restore actions. The generated alarm name and resource-scoped enable/disable IAM policy are asserted.
+- The exact PostgreSQL/capacity mode passed with 1,000,000 persisted entries and 100,000 assets: 10,000-node lineage p95 198 ms, asset-state p95 4.3 ms, entry-index p95 4.2 ms, storage-backed 100-entry commit p95 260 ms, and the in-memory million-entry model in 0.55 s.
+- The full PostgreSQL/MinIO ingest suite passed, including runtime-role migration/rehearsal, exact-byte retrieval, lifecycle, reconstruction, HTTP isolation, retries, quarantine, and atomic fault coverage.
+- `npm run test:backend`, `npm run test:release-evidence`, `npm run test:reliability`, `npm run test:ci-contract`, `npm run test:contract`, infrastructure TypeScript/CDK synthesis and assertions, .NET format/build, and API publish passed. Only the existing CDK `addDependency` deprecation warnings remain; no remote CI run is claimed.

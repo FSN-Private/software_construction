@@ -13,16 +13,18 @@ if (args is ["--verify-manifest", var trusted, var recovered, var objects])
 if (args is ["--migrate"])
 {
     var migrationBuilder = Host.CreateApplicationBuilder(args);
-    var migrationConnection = migrationBuilder.Configuration.GetConnectionString("Ingest") ?? throw new InvalidOperationException("ConnectionStrings:Ingest is required.");
+    var migrationConnection = IngestDatabaseConfiguration.ResolveConnectionString(migrationBuilder.Configuration.GetConnectionString("Ingest"), key => migrationBuilder.Configuration[key]) ?? throw new InvalidOperationException("Ingest database configuration is required.");
+    var runtimeUsername = migrationBuilder.Configuration["Ingest:RuntimeDatabase:Username"] ?? throw new InvalidOperationException("Ingest runtime database username is required.");
+    var runtimePassword = migrationBuilder.Configuration["Ingest:RuntimeDatabase:Password"] ?? throw new InvalidOperationException("Ingest runtime database password is required.");
     await using var migrationDataSource = NpgsqlDataSource.Create(migrationConnection);
-    await DatabaseMigrator.ApplyAsync(migrationDataSource, CancellationToken.None);
+    await DatabaseMigrator.ApplyAsync(migrationDataSource, runtimeUsername, runtimePassword, CancellationToken.None);
     return;
 }
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
-var connectionString = builder.Configuration.GetConnectionString("Ingest") ?? throw new InvalidOperationException("ConnectionStrings:Ingest is required.");
+var connectionString = IngestDatabaseConfiguration.ResolveConnectionString(builder.Configuration.GetConnectionString("Ingest"), key => builder.Configuration[key]) ?? throw new InvalidOperationException("Ingest database configuration is required.");
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
