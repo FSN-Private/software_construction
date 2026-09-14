@@ -70,6 +70,6 @@ The 2026-09-14 compatibility audit covers all six commits added to `master` sinc
 
 API Gateway CORS admits the existing version-control precondition headers `X-Client-Id` and `If-Match`. The API Fargate task uses 2 GiB memory, the largest native memory choice available with its existing 0.25 vCPU allocation, to accommodate full verification of the persisted million-entry reference fixture without adding code or dependencies. The worker and migration tasks remain unchanged.
 
-Rollback is a commit revert followed by the normal CDK deployment. Before rollback, manually enable the heartbeat alarm if the API is running; after rollback, scheduled shutdowns no longer suppress it and operators must expect the former false notification behavior.
+Rollback is a commit revert followed by the normal CDK deployment. Enable the heartbeat alarm only when a verifier-capable Feature 006 API is running; keep it suppressed if rollback restores the pre-Feature 006 binary, which cannot emit that signal. After reverting the lifecycle integration, operators must explicitly manage the alarm until a reviewed replacement is deployed.
 
 Because CDK owns CORS, task sizing, alarm IAM, and the generated output, rollout is infrastructure-first. The release gate captures the current healthy API/worker task definitions and desired counts, applies the reviewed CDK change, restores that exact rollback pair across CDK's bootstrap task revisions, configures the generated alarm name, and verifies the synthesized settings before merge permits automatic application deployment.

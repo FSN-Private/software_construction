@@ -21,9 +21,9 @@ Run these steps from the exact green PR head using an authenticated non-producti
 3. Run `cdk deploy --outputs-file <protected-temporary-path>` with the same contexts. The new non-production heartbeat alarm starts with actions disabled, preventing a false page while CDK services use zero desired count.
 4. Immediately update the API and worker services back to the task-definition ARNs and desired counts captured in step 1; wait for stability when either count is nonzero. Verify both services reference the captured task definitions so subsequent deployment rollback cannot select CDK's unrunnable `bootstrap` images.
 5. Read `VersionControlHeartbeatAlarmName` from the protected outputs file and set only `AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM` in the GitHub `nonprod` environment. Delete the temporary output file after recording non-secret output evidence.
-6. Verify the live API task family reports 2048 MiB, API Gateway CORS includes `if-match` and `x-client-id`, and the deployment role's alarm enable/disable policy is scoped to the generated heartbeat alarm. If the restored API desired count is nonzero, enable alarm actions and require the next integrity heartbeat before merge; otherwise leave actions disabled.
+6. Verify the live API task family reports 2048 MiB, API Gateway CORS includes `if-match` and `x-client-id`, and the deployment role's alarm enable/disable policy is scoped to the generated heartbeat alarm. Leave the new heartbeat alarm actions disabled before merge even if the restored pre-Feature 006 API is running, because that binary does not emit the new heartbeat. The post-merge Feature 006 deployment enables actions only after the verifier-capable API is healthy; require its heartbeat during the rollout observation window.
 
-Observable preparation evidence is the reviewed CDK diff, successful stack event, captured/restored task-definition pair and counts, configured GitHub variable name, live CORS/task-memory/IAM values, and alarm action state matching API desired count. Do not include credentials, Cognito secrets, or XMP data in evidence.
+Observable preparation evidence is the reviewed CDK diff, successful stack event, captured/restored task-definition pair and counts, configured GitHub variable name, live CORS/task-memory/IAM values, and the new heartbeat alarm remaining suppressed until the verifier-capable deployment. Do not include credentials, Cognito secrets, or XMP data in evidence.
 
 ## Rollout and observation
 
@@ -36,7 +36,7 @@ No production promotion or tag creation is authorized by this plan.
 
 ## Rollback and recovery
 
-If CI or release evidence fails, do not deploy; fix forward through a new reviewed PR. If non-production deployment fails, rely on the deployment script's paired ECS rollback and retain all additive database objects and lifecycle holds. Do not drop `vc_*` tables or delete retained storage. If healthy services are running but heartbeat actions were not restored, run `aws cloudwatch enable-alarm-actions --alarm-names "$AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM"` through the protected operator path, then verify the next heartbeat interval.
+If CI or release evidence fails, do not deploy; fix forward through a new reviewed PR. If non-production deployment fails, rely on the deployment script's paired ECS rollback and retain all additive database objects and lifecycle holds. Do not drop `vc_*` tables or delete retained storage. Enable heartbeat actions only after confirming the running task definition contains the Feature 006 verifier; then verify its next heartbeat interval. Keep actions disabled when paired rollback restores the pre-Feature 006 task definition, which cannot emit the signal.
 
 For a post-deployment application regression, revert the PR through a separately reviewed commit while retaining migration 006 data. The rollback owner is the project maintainer. Escalate immediately on integrity failure, missing immutable content, an unexpected task definition, or a health failure lasting five minutes after ECS reports stable.
 
