@@ -78,7 +78,9 @@ if (!resources.some((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && 
 for (const metric of ['IntegrityFailures', 'IntegrityHeartbeats']) {
   if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === metric)) throw new Error(`Version-control operations require the ${metric} metric filter.`);
 }
-if (!resources.some((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && resource.Properties?.TreatMissingData === 'breaching')) throw new Error('Version-control heartbeat loss must alert within fifteen minutes and link its runbook.');
+const versionControlHeartbeatAlarm = resources.find((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && resource.Properties?.TreatMissingData === 'breaching');
+if (!versionControlHeartbeatAlarm) throw new Error('Version-control heartbeat loss must alert within fifteen minutes and link its runbook.');
+if (versionControlHeartbeatAlarm.Properties.ActionsEnabled !== false) throw new Error('Non-production heartbeat actions must stay disabled until a healthy application deployment enables them.');
 const budget = resources.find((resource) => resource.Type === 'AWS::Budgets::Budget');
 if (budget?.Properties?.NotificationsWithSubscribers?.length !== 2) throw new Error('Budget must alert at 80% and 100%.');
 

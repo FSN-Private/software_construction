@@ -72,6 +72,7 @@
 - [x] T041 Suppress only missing-heartbeat alarm actions during intentional non-production shutdown, restore them after stable start/deployment, scope IAM/output configuration, and add lifecycle/workflow tests (AC-014, NFR-002/003/007/012/013/015). — Mocked lifecycle, release, reliability, IAM, output, and runbook contracts pass.
 - [x] T042 Raise and assert the API task memory ceiling to 2 GiB for full reference-scale integrity verification without changing worker/migration capacity (AC-015, NFR-001/013/016). — Synthesized API memory is 2048 MiB and the production-shaped capacity suite passes.
 - [x] T043 Run Feature 006 unit/integration/capacity and infrastructure/release/reliability validation, record compatibility evidence, and commit the remediation milestone (AC-013/014/015, NFR-006/007/009/011/015/016). — All local required-CI equivalents pass; milestone commit follows this task update.
+- [x] T044 Enforce infrastructure-first rollout, preserve the deployed rollback task pair across CDK bootstrap revisions, and initialize non-production heartbeat actions safely per F006-C01 (AC-013/014/015, NFR-003/007/011/012/015/016). — The release plan blocks merge until CDK/output evidence exists; synthesized alarms start suppressed and healthy application deployment enables them.
 
 ## Traceability
 
@@ -80,3 +81,5 @@ FR-001–009: T005/T007–T012; FR-010: T012/T014; FR-011–012: T012–T014; FR
 Remediation traceability: F006-01/02 → T024; F006-03 → T025; F006-04 → T026; F006-05 → T027; F006-06/07 → T028; F006-08/10 → T029; F006-09 → T030; F006-11/12 → T031; final convergence/review record → T032. These tasks extend FR-001/003/005/006/008/011/012/016–018/020–023, AC-001/004/006–012, SC-005, and NFR-001/003/007/009/012/015/016 without renumbering the approved plan.
 
 Post-master compatibility traceability: AC-013 → T040/T043; AC-014 → T041/T043; AC-015 → T042/T043; NFR-002/003/007/012/013/015 → T041/T043; NFR-001/013/016 → T042/T043; NFR-006/008/009/011 → T039/T040/T043.
+
+Rollout review traceability: F006-C01 and AC-013/014/015 → T044; NFR-003/007/011/012/015/016 → T044.
