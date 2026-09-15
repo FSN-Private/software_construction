@@ -15,6 +15,7 @@
     "test:backend": "dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj && dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj && node tests/unit/release-manifest.mjs && node tests/integration/api-correlation.mjs",
     "test": "dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj && dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj && node tests/unit/release-manifest.mjs && node tests/integration/api-correlation.mjs && npm --prefix apps/web run test && npm --prefix apps/web run test:accessibility",
     "test:version-control": "dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj",
+    "test:windows-sync": "dotnet run --project tests/windows-sync/Platform.WindowsSync.Tests.csproj --no-restore",
     "test:integration": "node tests/integration/api-correlation.mjs",
     "test:ingest": "node tests/integration/ingest/run.mjs",
     "test:phase5-contract": "node tests/integration/phase5-contract.mjs",
@@ -31,6 +32,7 @@
     "package:web-container": "docker build --file apps/web/Dockerfile --tag software-construction-web:local .",
     "package:infrastructure-container": "docker build --file packages/infrastructure/Dockerfile --tag software-construction-infrastructure:local .",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/api/packaging/windows/package.ps1",
+    "package:windows-sync": "powershell -NoProfile -ExecutionPolicy Bypass -File apps/windows-sync/Installer/package.ps1",
     "validate:infrastructure": "npm --prefix packages/infrastructure run validate",
     "validate:security": "node scripts/audit-dependencies.mjs && npm --prefix packages/infrastructure run scan:secrets && npm --prefix packages/infrastructure run validate:dependencies && npm --prefix packages/infrastructure run validate:licenses"
   }

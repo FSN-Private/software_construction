@@ -1,0 +1,41 @@
+name: Windows sync trusted integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-sync-e2e
+  cancel-in-progress: false
+
+jobs:
+  trusted-windows-sync:
+    name: windows sync / trusted e2e
+    environment: windows-sync-e2e
+    runs-on: [self-hosted, Windows, X64, windows-sync-e2e]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - run: dotnet restore tests/windows-sync/Platform.WindowsSync.Tests.csproj --locked-mode
+      - name: Run resettable Windows 11 Cloud Files and darktable checks
+        shell: powershell
+        env:
+          WINDOWS_SYNC_TRUSTED_HOST: '1'
+          WINDOWS_SYNC_TEST_ROOT: ${{ vars.WINDOWS_SYNC_TEST_ROOT }}
+          WINDOWS_SYNC_STATE: ${{ vars.WINDOWS_SYNC_STATE }}
+          WINDOWS_SYNC_SMOKE_IMAGE: ${{ vars.WINDOWS_SYNC_SMOKE_IMAGE }}
+          WINDOWS_SYNC_SMOKE_XMP: ${{ vars.WINDOWS_SYNC_SMOKE_XMP }}
+          WINDOWS_SYNC_IMAGE_SHA256: ${{ vars.WINDOWS_SYNC_IMAGE_SHA256 }}
+          WINDOWS_SYNC_XMP_SHA256: ${{ vars.WINDOWS_SYNC_XMP_SHA256 }}
+          WINDOWS_SYNC_DARKTABLE_CLI: ${{ vars.WINDOWS_SYNC_DARKTABLE_CLI }}
+          PLATFORM_SYNC_API: ${{ vars.PLATFORM_SYNC_API }}
+          PLATFORM_SYNC_LIBRARY: ${{ vars.PLATFORM_SYNC_LIBRARY }}
+          PLATFORM_SYNC_DEVICE: ${{ vars.PLATFORM_SYNC_DEVICE }}
+          PLATFORM_SYNC_BRANCH: ${{ vars.PLATFORM_SYNC_BRANCH }}
+          PLATFORM_SYNC_TOKEN: ${{ secrets.PLATFORM_SYNC_TOKEN }}
+        run: ./tests/windows-sync/integration/run-trusted.ps1
