@@ -27,6 +27,10 @@ Review date: 2026-09-06. Owner: platform maintainer. Scope: Feature 004 deployab
 
 No unresolved high/critical finding is accepted for the npm/NuGet inputs covered by recorded audits. Before deployment, revalidate action provenance/maintenance, package advisories and patches, image advisories/digests, licenses, and SBOM/provenance. Remove unused inputs and review every upgrade narrowly.
 
+## Feature 007 Windows sync provider
+
+Review date: 2026-09-15. `Microsoft.Data.Sqlite` 10.0.12 and `System.Security.Cryptography.ProtectedData` 10.0.12 are Microsoft-owned, MIT-licensed stable packages from NuGet. SQLite supplies the required crash-safe local replay journal; ProtectedData is the supported .NET wrapper over Windows DPAPI for current-user token custody. Both direct versions and their transitive closures are fixed in `apps/windows-sync/packages.lock.json`; locked restore and vulnerability inspection are release gates. The provider otherwise uses .NET 10 and Windows 11 native `cldapi.dll`, `makeappx.exe`, and `signtool.exe`, avoiding a Cloud Files wrapper, installer framework, UI framework, or signing dependency. Native API boundaries follow the installed Windows SDK 10.0.26100 contract and are exercised only on the isolated trusted Windows host. Remove either NuGet package only if the SQLite journal or DPAPI custody requirement is replaced by an approved ADR.
+
 ## Feature 006 graph and manifest implementation
 
 Feature 006 adds no executable dependency. Canonical JSON uses the .NET 10 `System.Text.Json` runtime library, commit identities use `System.Security.Cryptography.SHA256`, graph traversal uses generic collections, and persistence reuses the already locked and reviewed Npgsql 10.0.3 package. This avoids a second serializer or graph library, keeps manifest encoding under direct compatibility fixtures, and adds no license, advisory, install-script, or transitive-package exposure (NFR-003, NFR-014). Reconsider only if measured graph workloads cannot meet NFR-001/NFR-016 with the PostgreSQL indexes and bounded traversal implementation.

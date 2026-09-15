@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-02
 
-**Status**: Draft — awaiting product-owner approval
+**Status**: Approved — 2026-09-15
 
 **Owner**: Project maintainer
 

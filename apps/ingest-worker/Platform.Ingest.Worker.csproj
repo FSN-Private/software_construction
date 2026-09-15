@@ -15,5 +15,6 @@
     <EmbeddedResource Include="../api/Database/Migrations/005_ingest_storage.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.005_ingest_storage.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/005_ingest_workflows.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.005_ingest_workflows.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/006_xmp_version_control.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.006_xmp_version_control.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/007_windows_cloud_files_sync.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.007_windows_cloud_files_sync.sql" />
   </ItemGroup>
 </Project>
