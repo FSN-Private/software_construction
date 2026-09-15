@@ -18,6 +18,7 @@ using Platform.Api.Features.VersionControl.Rewrite;
 using Platform.Api.Features.VersionControl.Visibility;
 using Platform.Api.Features.VersionControl.MergePublishing;
 using Platform.Api.Features.VersionControl.Projection;
+using Platform.Api.Features.WindowsSync;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,6 +55,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<VisibilityService>();
     builder.Services.AddSingleton<MergeService>();
     builder.Services.AddSingleton<ProjectionService>();
+    builder.Services.AddSingleton<WindowsSyncService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
@@ -76,6 +78,7 @@ IngestEndpoints.Map(app);
 Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
+WindowsSyncEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>

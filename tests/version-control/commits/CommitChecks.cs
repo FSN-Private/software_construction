@@ -343,7 +343,7 @@ internal static class CommitChecks
         await using var connection = await db.OpenConnectionAsync();
         await using (var rollback = await connection.BeginTransactionAsync())
         {
-            foreach (var file in new[] { "005_ingest_storage.sql", "005_ingest_workflows.sql", "006_xmp_version_control.sql" }) await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/" + file), default);
+            foreach (var file in new[] { "005_ingest_storage.sql", "005_ingest_workflows.sql", "006_xmp_version_control.sql", "007_windows_cloud_files_sync.sql" }) await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/" + file), default);
             await rollback.RollbackAsync();
         }
         var rolledBackTable = await ScalarAsync(connection, "SELECT to_regclass(current_schema()||'.vc_commits')::text", default);
