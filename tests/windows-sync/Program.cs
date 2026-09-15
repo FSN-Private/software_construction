@@ -5,6 +5,7 @@ using Platform.WindowsSync.State;
 await FoundationChecks.RunAsync();
 await ContractChecks.RunAsync();
 await HydrationChecks.RunAsync();
+await OfflineChecks.RunAsync();
 Console.WriteLine("Windows sync checks passed.");
 
 static class FoundationChecks
