@@ -1,13 +1,13 @@
 # Implementation Plan: Windows Cloud Files Synchronization
 
 **Branch**: `feature/007-windows-cloud-files-sync` | **Date**: 2026-09-03 | **Spec**: [spec.md](spec.md)
-**Status**: Proposed — pending approval
+**Status**: Implemented — 2026-09-15
 
 ## Summary
 
 Deliver a .NET 10 Windows 11 sync provider using the Cloud Files API. One registered sync root per owner/device materializes branch-scoped opaque-identity placeholders, hydrates only verified content on demand, journals durable local operations in SQLite, and uploads stable XMP changes through feature-006 expected-base/idempotent working-state APIs. Filesystem deletion, dehydration, and local edit are distinct operations; no automatic commit or overwrite is permitted.
 
-The Cloud Files adapter/journal boundary is recorded in proposed [ADR-0007](../../architecture/decisions/0007-windows-cloud-files-provider-and-journal.md).
+The Cloud Files adapter/journal boundary is recorded in accepted [ADR-0007](../../architecture/decisions/0007-windows-cloud-files-provider-and-journal.md).
 
 ## Technical Context
 
@@ -24,9 +24,9 @@ The Cloud Files adapter/journal boundary is recorded in proposed [ADR-0007](../.
 ## Constitution Check
 
 - **PASS**: feature consumes platform/storage/version contracts and does not recreate their authority.
-- **PASS**: branch is correct, 46 ahead/0 behind `master`; no history reconciliation occurs.
+- **PASS**: branch was recreated from refreshed `origin/master` at 0 behind/0 ahead, then the two approved planning commits were applied; no history reconciliation occurred.
 - **PASS**: native calls are adapter-isolated; durable journal/replay, scoped credentials, exact hydration, conflict preservation, and signed distribution are explicit.
-- **GATE**: trusted signing, device registration, Windows 11 host, and external deployment remain unauthorized.
+- **GATE**: production signing, protected Windows 11/darktable-host execution, and external deployment remain release-only and were not performed by local implementation.
 
 ## Design
 
