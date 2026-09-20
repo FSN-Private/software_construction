@@ -29,7 +29,7 @@ public sealed class ConflictCoordinator(string root, SyncJournal journal, IRemot
 
         var identity = new PlaceholderIdentity(incoming.AssetId, incoming.EditId, incoming.ContentId, incoming.Sha256, incoming.Length);
         var encoded = Convert.ToBase64String(identity.Encode());
-        await journal.ReplaceItemAsync(current.Identity, current with { Identity = encoded, Sha256 = incoming.Sha256, Length = incoming.Length, BaseSha256 = incoming.Sha256, State = SyncItemState.OnlineOnly }, cancellationToken);
+        await journal.ReplaceItemAsync(current.Identity, current with { Identity = encoded, Sha256 = incoming.Sha256, Length = incoming.Length, BaseSha256 = incoming.Sha256, State = SyncItemState.OnlineOnly, AssetVersion = incoming.AssetVersion, EditVersion = incoming.EditVersion }, cancellationToken);
         await new HydrationService(root, journal, remote).HydrateAsync(encoded, cancellationToken);
         return true;
     }

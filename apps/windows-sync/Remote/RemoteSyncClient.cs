@@ -5,11 +5,11 @@ using System.Text.Json;
 
 namespace Platform.WindowsSync.Remote;
 
-public sealed record RemoteItem(Guid AssetId, Guid? EditId, Guid ContentId, string Path, string Sha256, long Length, string? Lifecycle = null);
+public sealed record RemoteItem(Guid AssetId, Guid? EditId, Guid ContentId, string Path, string Sha256, long Length, string? Lifecycle = null, long AssetVersion = 1, long? EditVersion = null);
 public sealed record RemotePage(IReadOnlyList<RemoteItem> Items, string? Cursor, bool HasMore);
 public sealed record RemoteMutation(string OperationId, string State, long Version, string? ContentSha256 = null, string? ConflictCode = null);
 public sealed record CheckoutResult(string OperationId, string Branch, long Version, Guid? StashId);
-public sealed record DeviceRegistration(string DeviceId, string LibraryId, string Branch, string? Cursor, long Version, bool Revoked, string OperationId);
+public sealed record DeviceRegistration(string DeviceId, string LibraryId, string Branch, string? Cursor, long Version, long CheckoutVersion, bool Revoked, string OperationId);
 
 public interface IRemoteSyncClient
 {
@@ -18,7 +18,7 @@ public interface IRemoteSyncClient
     Task<RemotePage> EnumerateAsync(string library, string branch, string? cursor, CancellationToken cancellationToken);
     Task<Stream> DownloadAsync(string library, Guid contentId, CancellationToken cancellationToken);
     Task<RemoteMutation> UploadWorkingAsync(string library, string branch, string idempotencyKey, RemoteItem item, string? baseSha256, Stream content, CancellationToken cancellationToken);
-    Task<RemoteMutation> ApplyLifecycleAsync(string kind, Guid identity, string idempotencyKey, long expectedVersion, string? destination, CancellationToken cancellationToken);
+    Task<RemoteMutation> ApplyLifecycleAsync(string kind, Guid assetId, Guid? editId, string idempotencyKey, long expectedVersion, string? destination, CancellationToken cancellationToken);
     Task<CheckoutResult> CheckoutAsync(string library, string branch, string dirtyAction, bool confirmDiscard, long expectedVersion, string idempotencyKey, CancellationToken cancellationToken);
 }
 
@@ -44,7 +44,12 @@ public sealed class RemoteSyncClient(HttpClient http, string deviceId, Func<stri
     {
         using var request = Request(HttpMethod.Get, $"v1/libraries/{Uri.EscapeDataString(library)}/windows-sync/content/{contentId}");
         var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (!response.IsSuccessStatusCode) { response.Dispose(); throw await ProblemAsync(response, cancellationToken); }
+        if (!response.IsSuccessStatusCode)
+        {
+            var problem = await ProblemAsync(response, cancellationToken);
+            response.Dispose();
+            throw problem;
+        }
         return new OwnedResponseStream(response, await response.Content.ReadAsStreamAsync(cancellationToken));
     }
 
@@ -61,14 +66,16 @@ public sealed class RemoteSyncClient(HttpClient http, string deviceId, Func<stri
         return await SendAsync<RemoteMutation>(request, cancellationToken);
     }
 
-    public async Task<RemoteMutation> ApplyLifecycleAsync(string kind, Guid identity, string idempotencyKey, long expectedVersion, string? destination, CancellationToken cancellationToken)
+    public async Task<RemoteMutation> ApplyLifecycleAsync(string kind, Guid assetId, Guid? editId, string idempotencyKey, long expectedVersion, string? destination, CancellationToken cancellationToken)
     {
         var method = kind == "move" ? HttpMethod.Patch : kind == "delete" ? HttpMethod.Delete : HttpMethod.Post;
-        var route = kind switch { "move" => $"v1/assets/{identity}/path", "delete" => $"v1/assets/{identity}", "restore" => $"v1/assets/{identity}/restore", _ => throw new ArgumentException("invalid_lifecycle_kind", nameof(kind)) };
+        var target = editId.HasValue && kind != "move" ? $"edits/{editId.Value}" : $"assets/{assetId}";
+        var route = kind switch { "move" => $"v1/assets/{assetId}/path", "delete" => $"v1/{target}", "restore" => $"v1/{target}/restore", _ => throw new ArgumentException("invalid_lifecycle_kind", nameof(kind)) };
         using var request = Request(method, route, idempotencyKey);
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{expectedVersion}\"");
         if (method != HttpMethod.Delete) request.Content = JsonContent.Create(new { Path = destination }, options: Json);
-        return await SendAsync<RemoteMutation>(request, cancellationToken);
+        var result = await SendAsync<LifecycleResponse>(request, cancellationToken);
+        return new("remote-lifecycle", result.State, result.LifecycleVersion);
     }
 
     public async Task<CheckoutResult> CheckoutAsync(string library, string branch, string dirtyAction, bool confirmDiscard, long expectedVersion, string idempotencyKey, CancellationToken cancellationToken)
@@ -76,14 +83,15 @@ public sealed class RemoteSyncClient(HttpClient http, string deviceId, Func<stri
         using var request = Request(HttpMethod.Post, $"v1/libraries/{Uri.EscapeDataString(library)}/version-control/checkout", idempotencyKey);
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{expectedVersion}\"");
         request.Content = JsonContent.Create(new { Branch = branch, DirtyAction = dirtyAction, ConfirmDiscard = confirmDiscard, ExpectedVersion = expectedVersion }, options: Json);
-        return await SendAsync<CheckoutResult>(request, cancellationToken);
+        var result = await SendAsync<CheckoutResponse>(request, cancellationToken);
+        return new(result.OperationId, result.RefName ?? branch, result.Version ?? throw new InvalidDataException("checkout_version_missing"), result.StashId);
     }
 
-    private Task<T> SendAsync<T>(HttpMethod method, string route, string? idempotencyKey, object? body, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(HttpMethod method, string route, string? idempotencyKey, object? body, CancellationToken cancellationToken)
     {
         using var request = Request(method, route, idempotencyKey);
         if (body is not null) request.Content = JsonContent.Create(body, options: Json);
-        return SendAsync<T>(request, cancellationToken);
+        return await SendAsync<T>(request, cancellationToken);
     }
 
     private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -120,6 +128,8 @@ public sealed class RemoteSyncClient(HttpClient http, string deviceId, Func<stri
     }
 
     private sealed record Problem(string? Code);
+    private sealed record CheckoutResponse(string OperationId, string? RefName, long? Version, Guid? StashId);
+    private sealed record LifecycleResponse(Guid Id, string State, long LifecycleVersion, DateTime? DeletedUntil, string? Path);
 }
 
 public sealed class RemoteSyncException(string code, HttpStatusCode status, string? operationId) : Exception(code)

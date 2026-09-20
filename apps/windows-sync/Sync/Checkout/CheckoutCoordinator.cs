@@ -33,8 +33,9 @@ public sealed class CheckoutCoordinator(string root, SyncJournal journal, IRemot
 
         var key = $"checkout:{device.DeviceId}:{device.Branch}:{branch}:{device.Cursor}:{action}";
         var result = await remote.CheckoutAsync(device.LibraryId, branch, action.ToString().ToLowerInvariant(), confirmDiscard, device.Version, key, cancellationToken);
+        var registration = await remote.RegisterDeviceAsync(device.LibraryId, branch, cancellationToken);
         if (unsafeState) await journal.ClearUnsafeStateAsync(cancellationToken);
-        await journal.SaveDeviceAsync(device with { Branch = branch, Cursor = null, Health = DeviceHealth.Online, Version = result.Version }, cancellationToken);
-        return new(branch, result.Version, localStash ?? result.StashId);
+        await journal.SaveDeviceAsync(device with { Branch = registration.Branch, Cursor = registration.Cursor, Health = DeviceHealth.Online, Version = registration.CheckoutVersion }, cancellationToken);
+        return new(registration.Branch, registration.CheckoutVersion, localStash ?? result.StashId);
     }
 }

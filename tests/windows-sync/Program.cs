@@ -55,6 +55,13 @@ static class FoundationChecks
                 await upgraded.InitializeAsync();
                 Check((await upgraded.PendingAsync()) is [{ IdempotencyKey: "legacy-key", ExpectedVersion: 0 }], "Journal v1 must upgrade in place without losing pending operations.");
             }
+            await using (var migrated = new SqliteConnection("Data Source=" + legacyDatabase + ";Pooling=False"))
+            {
+                await migrated.OpenAsync();
+                await using var command = migrated.CreateCommand();
+                command.CommandText = "PRAGMA user_version";
+                Check(Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) == 4, "Journal v1 must advance to schema v4.");
+            }
             var credentials = new CredentialStore(Path.Combine(directory.FullName, "credential.dat"));
             try
             {

@@ -31,6 +31,7 @@ public sealed class HydrationService(string root, SyncJournal journal, IRemoteSy
                 var actual = Convert.ToHexString(await SHA256.HashDataAsync(completed, cancellationToken)).ToLowerInvariant();
                 if (!string.Equals(actual, identity.Sha256, StringComparison.Ordinal)) throw new InvalidDataException("checksum_mismatch");
             }
+            ProviderMutationTracker.Suppress(destination);
             File.Move(temporary, destination, true);
             await journal.SetItemStateAsync(identityValue, item.Pinned ? SyncItemState.Pinned : SyncItemState.Available, sha256: identity.Sha256, cancellationToken: cancellationToken);
         }

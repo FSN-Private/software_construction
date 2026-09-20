@@ -10,7 +10,7 @@ public sealed class DeviceService(SyncJournal journal, IRemoteSyncClient? remote
     {
         var device = await journal.GetDeviceAsync(cancellationToken) ?? throw new InvalidOperationException("device_not_registered");
         var registration = remote is null ? null : await remote.RevokeDeviceAsync(device.LibraryId, cancellationToken);
-        await journal.SaveDeviceAsync(device with { Revoked = true, Health = DeviceHealth.Revoked, Version = registration?.Version ?? device.Version }, cancellationToken);
+        await journal.SaveDeviceAsync(device with { Revoked = true, Health = DeviceHealth.Revoked, Version = registration?.CheckoutVersion ?? device.Version }, cancellationToken);
     }
 
     public async Task PauseForAuthenticationAsync(CancellationToken cancellationToken = default)

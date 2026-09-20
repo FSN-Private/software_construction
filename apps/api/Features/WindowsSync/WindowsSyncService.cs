@@ -50,8 +50,10 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         await ExecuteAsync(connection, "INSERT INTO windows_sync_content_ids(content_sha256) SELECT DISTINCT content_sha256 FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3 AND content_sha256 IS NOT NULL ON CONFLICT DO NOTHING", cancellationToken, owner, library, branch);
         await ExecuteAsync(connection, "INSERT INTO windows_sync_device_content(owner_id,library_id,device_id,content_id) SELECT $1,$2,$3,i.content_id FROM vc_materialized_state s JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256 WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$4 ON CONFLICT DO NOTHING", cancellationToken, owner, library, device, branch);
         await using var command = Command(connection, """
-            SELECT s.asset_id,s.edit_id,i.content_id,s.display_path,s.content_sha256,o.byte_length,s.lifecycle_state
+            SELECT s.asset_id,s.edit_id,i.content_id,s.display_path,s.content_sha256,o.byte_length,s.lifecycle_state,a.lifecycle_version,e.lifecycle_version
             FROM vc_materialized_state s
+            JOIN assets a ON a.id=s.asset_id
+            LEFT JOIN edit_identities e ON e.id=s.edit_id
             JOIN content_objects o ON o.sha256=s.content_sha256 AND o.integrity_state='authoritative'
             JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256
             WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3 AND s.display_path IS NOT NULL
@@ -60,11 +62,11 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
             LIMIT $6
             """, owner, library, branch, cursor?.AssetId, cursor?.EditId, limit + 1);
         var result = new List<WindowsSyncNamespaceItem>(limit + 1);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4).Trim(), reader.GetInt64(5), reader.IsDBNull(6) ? null : reader.GetString(6)));
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4).Trim(), reader.GetInt64(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8)));
         var hasMore = result.Count > limit;
         if (hasMore) result.RemoveAt(result.Count - 1);
-        var next = hasMore && result.Count > 0 ? WindowsSyncCursor.Encode(new(head, result[^1].AssetId, result[^1].EditId)) : null;
+        var next = result.Count > 0 ? WindowsSyncCursor.Encode(new(head, result[^1].AssetId, result[^1].EditId)) : cursorValue ?? WindowsSyncCursor.Encode(new(head, Guid.Empty, null));
         await ExecuteAsync(connection, "UPDATE windows_sync_devices SET cursor=$4,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device, next);
         return new(result, next, hasMore);
     }
@@ -153,10 +155,10 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
 
     private static async Task<WindowsSyncDeviceView> DeviceAsync(NpgsqlConnection connection, string owner, string library, string device, string operationId, CancellationToken cancellationToken)
     {
-        await using var command = Command(connection, "SELECT device_id,library_id,normalized_ref,cursor,version,revoked FROM windows_sync_devices WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", owner, library, device);
+        await using var command = Command(connection, "SELECT d.device_id,d.library_id,d.normalized_ref,d.cursor,d.version,COALESCE(c.version,0),d.revoked FROM windows_sync_devices d LEFT JOIN vc_checkouts c ON c.owner_id=d.owner_id AND c.library_id=d.library_id AND c.client_id=d.device_id WHERE d.owner_id=$1 AND d.library_id=$2 AND d.device_id=$3", owner, library, device);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new VersionControlProblem("device_not_found", 404);
-        return new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetInt64(4), reader.GetBoolean(5), operationId);
+        return new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6), operationId);
     }
 
     internal static Guid StableId(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
