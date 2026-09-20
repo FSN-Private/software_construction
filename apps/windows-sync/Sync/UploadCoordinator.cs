@@ -53,7 +53,7 @@ public sealed class UploadCoordinator(string root, SyncJournal journal, IRemoteS
                 var local = Path.Combine(root, item.LocalPath.Replace('/', Path.DirectorySeparatorChar));
                 var preserved = Path.Combine(root, ".conflicts", Guid.NewGuid().ToString("N") + ".local.xmp");
                 Directory.CreateDirectory(Path.GetDirectoryName(preserved)!);
-                File.Copy(local, preserved, false);
+                if (File.Exists(local)) File.Copy(local, preserved, false);
                 await journal.SaveConflictAsync(new(Guid.NewGuid(), item.Identity, operation.BaseSha256, operation.CurrentSha256 ?? item.Sha256, "remote", preserved, error.Code, false), cancellationToken);
                 await journal.SetItemStateAsync(item.Identity, SyncItemState.Conflicted, cancellationToken: cancellationToken);
             }

@@ -7,7 +7,7 @@
 
 Deliver a .NET 10 Windows 11 sync provider using the Cloud Files API. One registered sync root per owner/device materializes branch-scoped opaque-identity placeholders, hydrates only verified content on demand, journals durable local operations in SQLite, and uploads stable XMP changes through feature-006 expected-base/idempotent working-state APIs. Filesystem deletion, dehydration, and local edit are distinct operations; no automatic commit or overwrite is permitted.
 
-The Cloud Files adapter/journal boundary is recorded in accepted [ADR-0007](../../architecture/decisions/0007-windows-cloud-files-provider-and-journal.md).
+The Cloud Files adapter/journal boundary is recorded in accepted [ADR-0007](../../architecture/decisions/0007-windows-cloud-files-provider-and-journal.md). Authoritative lifecycle projection and cursor invalidation are recorded in accepted [ADR-0008](../../architecture/decisions/0008-authoritative-lifecycle-windows-namespace.md).
 
 ## Technical Context
 

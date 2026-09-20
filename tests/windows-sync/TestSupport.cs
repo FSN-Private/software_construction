@@ -88,6 +88,7 @@ sealed class FakeRemoteSyncClient : IRemoteSyncClient
     public Task<RemoteMutation> ApplyLifecycleAsync(string kind, Guid assetId, Guid? editId, string idempotencyKey, long expectedVersion, string? destination, CancellationToken cancellationToken)
     {
         RequireOnline();
+        if (ConflictCode is not null) throw new RemoteSyncException(ConflictCode, System.Net.HttpStatusCode.Conflict, "fake-operation");
         Mutations.Add(kind + ":" + idempotencyKey);
         LifecycleCalls.Add((kind, assetId, editId, expectedVersion));
         return Task.FromResult(new RemoteMutation("fake-operation", kind, expectedVersion + 1));

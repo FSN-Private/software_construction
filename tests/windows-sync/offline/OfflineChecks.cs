@@ -63,6 +63,13 @@ static class OfflineChecks
                 TestAssert.That(remote.Mutations.Count(value => value.StartsWith("restore:", StringComparison.Ordinal)) == 1, "Offline restore must replay after its delete.");
                 TestAssert.That(remote.LifecycleCalls is [{ Kind: "delete", EditId: not null, ExpectedVersion: 4 }, { Kind: "restore", EditId: not null, ExpectedVersion: 5 }], "Edit lifecycle replay must target the edit identity and chain authoritative versions in journal order.");
                 TestAssert.That((await reopened.PendingAsync()).Count == 0, "Acknowledged operations must leave no pending replay.");
+
+                File.Delete(local);
+                remote.ConflictCode = "lifecycle_conflict";
+                await new LifecycleCoordinator(reopened).RecordAsync(identity, JournalOperationKind.Delete, null);
+                await replay.ReplayAsync();
+                TestAssert.That((await reopened.GetItemAsync(identity))?.State == SyncItemState.Conflicted && (await reopened.ListConflictsAsync()).Any(conflict => conflict.Reason == "lifecycle_conflict"), "A lifecycle conflict after local deletion must remain visible even when there are no local bytes to copy.");
+                remote.ConflictCode = null;
             }
 
             await using (var quotaJournal = new SyncJournal(Path.Combine(directory.FullName, "quota.db")))

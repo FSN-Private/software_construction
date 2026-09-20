@@ -44,29 +44,38 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await EnsureDeviceAsync(connection, owner, library, device, branch, cancellationToken);
         var head = ((string?)await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch))?.Trim() ?? throw new VersionControlProblem("ref_not_found", 404);
+        var lifecycleRevision = Convert.ToInt64(await ScalarAsync(connection, "SELECT COALESCE((SELECT revision FROM windows_sync_owner_revisions WHERE owner_id=$1),0)", cancellationToken, owner), System.Globalization.CultureInfo.InvariantCulture);
+        var snapshot = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{head}\n{lifecycleRevision}")));
         var cursor = WindowsSyncCursor.Decode(cursorValue);
-        if (cursor is not null && cursor.Head != head) throw new VersionControlProblem("cursor_expired");
+        if (cursor is not null && cursor.Head != snapshot) throw new VersionControlProblem("cursor_expired");
 
         await ExecuteAsync(connection, "INSERT INTO windows_sync_content_ids(content_sha256) SELECT DISTINCT content_sha256 FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3 AND content_sha256 IS NOT NULL ON CONFLICT DO NOTHING", cancellationToken, owner, library, branch);
         await ExecuteAsync(connection, "INSERT INTO windows_sync_device_content(owner_id,library_id,device_id,content_id) SELECT $1,$2,$3,i.content_id FROM vc_materialized_state s JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256 WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$4 ON CONFLICT DO NOTHING", cancellationToken, owner, library, device, branch);
         await using var command = Command(connection, """
-            SELECT s.asset_id,s.edit_id,i.content_id,s.display_path,s.content_sha256,o.byte_length,s.lifecycle_state,a.lifecycle_version,e.lifecycle_version
+            SELECT s.asset_id,s.edit_id,i.content_id,p.display_path,s.content_sha256,o.byte_length,COALESCE(e.state,a.state),a.lifecycle_version,e.lifecycle_version,e.duplicate_ordinal
             FROM vc_materialized_state s
             JOIN assets a ON a.id=s.asset_id
             LEFT JOIN edit_identities e ON e.id=s.edit_id
+            JOIN LATERAL(SELECT display_path FROM asset_paths WHERE asset_id=s.asset_id AND active ORDER BY effective_from DESC,id DESC LIMIT 1) p ON true
             JOIN content_objects o ON o.sha256=s.content_sha256 AND o.integrity_state='authoritative'
             JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256
-            WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3 AND s.display_path IS NOT NULL
+            WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3
+              AND a.state IN ('active','restored') AND (s.edit_id IS NULL OR e.state IN ('active','restored'))
               AND ($4::uuid IS NULL OR (s.asset_id,COALESCE(s.edit_id,'00000000-0000-0000-0000-000000000000'::uuid)) > ($4,COALESCE($5::uuid,'00000000-0000-0000-0000-000000000000'::uuid)))
             ORDER BY s.asset_id,COALESCE(s.edit_id,'00000000-0000-0000-0000-000000000000'::uuid)
             LIMIT $6
             """, owner, library, branch, cursor?.AssetId, cursor?.EditId, limit + 1);
         var result = new List<WindowsSyncNamespaceItem>(limit + 1);
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-            while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4).Trim(), reader.GetInt64(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8)));
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var edit = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
+                var path = edit.HasValue ? SidecarPath(reader.GetString(3), reader.GetInt32(9)) : reader.GetString(3);
+                result.Add(new(reader.GetGuid(0), edit, reader.GetGuid(2), path, reader.GetString(4).Trim(), reader.GetInt64(5), reader.GetString(6), reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8)));
+            }
         var hasMore = result.Count > limit;
         if (hasMore) result.RemoveAt(result.Count - 1);
-        var next = result.Count > 0 ? WindowsSyncCursor.Encode(new(head, result[^1].AssetId, result[^1].EditId)) : cursorValue ?? WindowsSyncCursor.Encode(new(head, Guid.Empty, null));
+        var next = result.Count > 0 ? WindowsSyncCursor.Encode(new(snapshot, result[^1].AssetId, result[^1].EditId)) : cursorValue ?? WindowsSyncCursor.Encode(new(snapshot, Guid.Empty, null));
         await ExecuteAsync(connection, "UPDATE windows_sync_devices SET cursor=$4,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device, next);
         return new(result, next, hasMore);
     }
@@ -162,6 +171,14 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
     }
 
     internal static Guid StableId(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
+    internal static string SidecarPath(string assetPath, int ordinal)
+    {
+        if (ordinal == 0) return assetPath + ".xmp";
+        var slash = assetPath.LastIndexOf('/');
+        var dot = assetPath.LastIndexOf('.');
+        if (dot <= slash) dot = assetPath.Length;
+        return assetPath.Insert(dot, $"_{ordinal:D2}") + ".xmp";
+    }
     private static bool ValidSha256(string value) => value is { Length: 64 } && value.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 }
 
