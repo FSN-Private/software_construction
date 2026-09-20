@@ -101,14 +101,59 @@ public sealed class SyncProviderHost : IAsyncDisposable
         if (!ProviderMutationTracker.Consume(oldPath) && !ProviderMutationTracker.Consume(newPath)) _ = RecordRenameAsync(oldPath, newPath);
     }
 
-    private async Task RecordRenameAsync(string oldPath, string newPath)
+    internal async Task RecordRenameAsync(string oldPath, string newPath)
     {
         var oldRelative = Path.GetRelativePath(root, oldPath).Replace('\\', '/');
         var item = (await journal.ListItemsAsync()).SingleOrDefault(candidate => string.Equals(candidate.LocalPath, oldRelative, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
         var destination = Path.GetRelativePath(root, newPath).Replace('\\', '/');
+        var identity = PlaceholderIdentity.Decode(Convert.FromBase64String(item.Identity));
+        if (!identity.EditId.HasValue)
+        {
+            await RecordAssetRenameAsync(item, destination);
+            return;
+        }
+
+        var original = (await journal.ListItemsAsync()).SingleOrDefault(candidate =>
+        {
+            var candidateIdentity = PlaceholderIdentity.Decode(Convert.FromBase64String(candidate.Identity));
+            return candidateIdentity.AssetId == identity.AssetId && !candidateIdentity.EditId.HasValue;
+        });
+        if (original is not null && TryAssetDestination(original.LogicalPath, item.LogicalPath, destination, out var assetDestination) && File.Exists(Path.Combine(root, assetDestination.Replace('/', Path.DirectorySeparatorChar))))
+        {
+            await RecordAssetRenameAsync(original, assetDestination);
+            return;
+        }
+
+        await journal.SaveConflictAsync(new(Guid.NewGuid(), item.Identity, item.BaseSha256, item.Sha256, item.Sha256, newPath, "sidecar_rename_requires_asset", false));
+        await journal.SetItemStateAsync(item.Identity, SyncItemState.Conflicted);
+    }
+
+    private async Task RecordAssetRenameAsync(SyncItem item, string destination)
+    {
+        if (string.Equals(item.LocalPath, destination, StringComparison.OrdinalIgnoreCase)) return;
         await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Move, destination);
         await journal.SetItemPathAsync(item.Identity, destination, destination);
+    }
+
+    private static bool TryAssetDestination(string assetPath, string sidecarPath, string destination, out string assetDestination)
+    {
+        assetDestination = string.Empty;
+        var assetSlash = assetPath.LastIndexOf('/');
+        var assetName = assetPath[(assetSlash + 1)..];
+        var dot = assetName.LastIndexOf('.');
+        if (dot <= 0) return false;
+        var prefix = assetName[..dot];
+        var extension = assetName[dot..];
+        var sidecarName = sidecarPath[(sidecarPath.LastIndexOf('/') + 1)..];
+        if (!sidecarName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        var suffix = sidecarName[prefix.Length..];
+        if (!suffix.EndsWith(extension + ".xmp", StringComparison.OrdinalIgnoreCase)) return false;
+        var destinationSlash = destination.LastIndexOf('/');
+        var destinationName = destination[(destinationSlash + 1)..];
+        if (!destinationName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) || destinationName.Length == suffix.Length) return false;
+        assetDestination = destination[..(destinationSlash + 1)] + destinationName[..^suffix.Length] + extension;
+        return true;
     }
 
     private void QueueDelete(string fullPath)
