@@ -119,6 +119,11 @@ public sealed class SyncProviderHost : IAsyncDisposable
             var candidateIdentity = PlaceholderIdentity.Decode(Convert.FromBase64String(candidate.Identity));
             return candidateIdentity.AssetId == identity.AssetId && !candidateIdentity.EditId.HasValue;
         });
+        if (original is not null && IsCanonicalSidecar(original.LogicalPath, destination))
+        {
+            await journal.SetItemPathAsync(item.Identity, destination, destination);
+            return;
+        }
         if (original is not null && TryAssetDestination(original.LogicalPath, item.LogicalPath, destination, out var assetDestination) && File.Exists(Path.Combine(root, assetDestination.Replace('/', Path.DirectorySeparatorChar))))
         {
             await RecordAssetRenameAsync(original, assetDestination);
@@ -154,6 +159,22 @@ public sealed class SyncProviderHost : IAsyncDisposable
         if (!destinationName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) || destinationName.Length == suffix.Length) return false;
         assetDestination = destination[..(destinationSlash + 1)] + destinationName[..^suffix.Length] + extension;
         return true;
+    }
+
+    private static bool IsCanonicalSidecar(string assetPath, string sidecarPath)
+    {
+        var assetSlash = assetPath.LastIndexOf('/');
+        var sidecarSlash = sidecarPath.LastIndexOf('/');
+        if (!string.Equals(assetPath[..(assetSlash + 1)], sidecarPath[..(sidecarSlash + 1)], StringComparison.OrdinalIgnoreCase)) return false;
+        var assetName = assetPath[(assetSlash + 1)..];
+        var dot = assetName.LastIndexOf('.');
+        if (dot <= 0) return false;
+        var prefix = assetName[..dot];
+        var suffix = assetName[dot..] + ".xmp";
+        var sidecarName = sidecarPath[(sidecarSlash + 1)..];
+        if (!sidecarName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !sidecarName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return false;
+        var ordinal = sidecarName[prefix.Length..^suffix.Length];
+        return ordinal.Length == 0 || ordinal.Length >= 3 && ordinal[0] == '_' && ordinal[1..].All(char.IsDigit);
     }
 
     private void QueueDelete(string fullPath)

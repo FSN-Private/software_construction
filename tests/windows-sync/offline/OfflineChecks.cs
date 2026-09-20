@@ -97,6 +97,28 @@ static class OfflineChecks
                 await replay.ReplayAsync();
                 TestAssert.That(remote.LifecycleCalls.Any(call => call.Kind == "move" && call.AssetId == renameAsset && call.EditId is null), "Coordinated sidecar rename replay must target only the asset lifecycle endpoint.");
 
+                var orderedAsset = Guid.NewGuid();
+                var orderedEdit = Guid.NewGuid();
+                var orderedOriginalIdentity = Convert.ToBase64String(new PlaceholderIdentity(orderedAsset, null, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                var orderedEditIdentity = Convert.ToBase64String(new PlaceholderIdentity(orderedAsset, orderedEdit, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                await reopened.SaveItemAsync(new(orderedOriginalIdentity, "ordered/photo.dng", "ordered/photo.dng", Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 1));
+                await reopened.SaveItemAsync(new(orderedEditIdentity, "ordered/photo.dng.xmp", "ordered/photo.dng.xmp", Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 1, 1));
+                var orderedOldOriginal = Path.Combine(directory.FullName, "ordered", "photo.dng");
+                var orderedOldSidecar = Path.Combine(directory.FullName, "ordered", "photo.dng.xmp");
+                var orderedNewOriginal = Path.Combine(directory.FullName, "ordered", "photo2.dng");
+                var orderedNewSidecar = Path.Combine(directory.FullName, "ordered", "photo2.dng.xmp");
+                Directory.CreateDirectory(Path.GetDirectoryName(orderedOldOriginal)!);
+                await File.WriteAllBytesAsync(orderedOldOriginal, original);
+                await File.WriteAllBytesAsync(orderedOldSidecar, original);
+                File.Move(orderedOldOriginal, orderedNewOriginal);
+                File.Move(orderedOldSidecar, orderedNewSidecar);
+                await using (var host = new SyncProviderHost(directory.FullName, reopened, remote, cloud))
+                {
+                    await host.RecordRenameAsync(orderedOldOriginal, orderedNewOriginal);
+                    await host.RecordRenameAsync(orderedOldSidecar, orderedNewSidecar);
+                }
+                TestAssert.That((await reopened.PendingAsync()).Count(operation => operation.Kind == JournalOperationKind.Move && operation.Identity == orderedOriginalIdentity) == 1 && (await reopened.GetItemAsync(orderedEditIdentity)) is { LocalPath: "ordered/photo2.dng.xmp", State: not SyncItemState.Conflicted }, "Original-first and sidecar-first watcher ordering must converge on one asset move without a sidecar conflict.");
+
                 var orphanAsset = Guid.NewGuid();
                 var orphanEdit = Guid.NewGuid();
                 var orphanOriginalIdentity = Convert.ToBase64String(new PlaceholderIdentity(orphanAsset, null, Guid.NewGuid(), Digest(original), original.Length).Encode());

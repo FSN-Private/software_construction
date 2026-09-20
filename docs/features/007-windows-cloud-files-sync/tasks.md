@@ -1,6 +1,6 @@
 # Tasks: Windows Cloud Files Synchronization
 
-**Status**: Round 3 remediation complete — independent re-review pending 2026-09-20; trusted-host/signing evidence remains a release gate.
+**Status**: Round 4 remediation complete — independent re-review pending 2026-09-20; trusted-host/signing evidence remains a release gate.
 
 ## Phase 1: Foundations
 
@@ -51,7 +51,7 @@
 - [X] T024 Correct asynchronous HTTP request lifetime/error parsing, align device/checkout response contracts, and keep the API routable when Windows Sync storage is unconfigured (FR-001/002/017, T005/T013).
 - [X] T025 Derive namespace path/visibility from authoritative asset/edit lifecycle state and invalidate cursors with an owner-scoped lifecycle revision; verify cross-device move/delete/restore convergence (B-005; FR-012/019, AC-005/009, T011/T013/T023).
 - [X] T026 Preserve conflict metadata when a delete lifecycle replay conflicts after the local file is already absent (FR-010/019, AC-007/009, T011/T012).
-- [X] T027 Translate a coordinated original/sidecar rename into one asset move and preserve edit-only sidecar renames as explicit conflicts (B-006; FR-012/019, AC-005/007, T011/T012).
+- [X] T027 Translate either watcher order for a coordinated original/sidecar rename into one asset move and preserve edit-only sidecar renames as explicit conflicts (B-006; FR-012/019, AC-005/007, T011/T012).
 
 ## Traceability
 
