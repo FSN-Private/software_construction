@@ -70,6 +70,42 @@ static class OfflineChecks
                 await replay.ReplayAsync();
                 TestAssert.That((await reopened.GetItemAsync(identity))?.State == SyncItemState.Conflicted && (await reopened.ListConflictsAsync()).Any(conflict => conflict.Reason == "lifecycle_conflict"), "A lifecycle conflict after local deletion must remain visible even when there are no local bytes to copy.");
                 remote.ConflictCode = null;
+
+                var renameAsset = Guid.NewGuid();
+                var renameEdit = Guid.NewGuid();
+                var renameOriginal = "rename/photo.dng";
+                var renameSidecar = "rename/photo_01.dng.xmp";
+                var renamedOriginal = "rename/photo2.dng";
+                var renamedSidecar = "rename/photo2_01.dng.xmp";
+                var renameOriginalIdentity = Convert.ToBase64String(new PlaceholderIdentity(renameAsset, null, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                var renameEditIdentity = Convert.ToBase64String(new PlaceholderIdentity(renameAsset, renameEdit, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                await reopened.SaveItemAsync(new(renameOriginalIdentity, renameOriginal, renameOriginal, Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 4));
+                await reopened.SaveItemAsync(new(renameEditIdentity, renameSidecar, renameSidecar, Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 4, 4));
+                var oldOriginal = Path.Combine(directory.FullName, renameOriginal.Replace('/', Path.DirectorySeparatorChar));
+                var oldSidecar = Path.Combine(directory.FullName, renameSidecar.Replace('/', Path.DirectorySeparatorChar));
+                var newOriginal = Path.Combine(directory.FullName, renamedOriginal.Replace('/', Path.DirectorySeparatorChar));
+                var newSidecar = Path.Combine(directory.FullName, renamedSidecar.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(oldOriginal)!);
+                await File.WriteAllBytesAsync(oldOriginal, original);
+                await File.WriteAllBytesAsync(oldSidecar, original);
+                File.Move(oldOriginal, newOriginal);
+                File.Move(oldSidecar, newSidecar);
+                await using (var host = new SyncProviderHost(directory.FullName, reopened, remote, cloud))
+                    await host.RecordRenameAsync(oldSidecar, newSidecar);
+                var renameMove = (await reopened.PendingAsync()).Single(operation => operation.Kind == JournalOperationKind.Move && operation.Identity == renameOriginalIdentity);
+                TestAssert.That(renameMove.Destination == renamedOriginal && !((await reopened.PendingAsync()).Any(operation => operation.Identity == renameEditIdentity && operation.Kind == JournalOperationKind.Move)), "A coordinated sidecar rename must produce exactly one asset move using the original image path.");
+                await replay.ReplayAsync();
+                TestAssert.That(remote.LifecycleCalls.Any(call => call.Kind == "move" && call.AssetId == renameAsset && call.EditId is null), "Coordinated sidecar rename replay must target only the asset lifecycle endpoint.");
+
+                var orphanAsset = Guid.NewGuid();
+                var orphanEdit = Guid.NewGuid();
+                var orphanOriginalIdentity = Convert.ToBase64String(new PlaceholderIdentity(orphanAsset, null, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                var orphanEditIdentity = Convert.ToBase64String(new PlaceholderIdentity(orphanAsset, orphanEdit, Guid.NewGuid(), Digest(original), original.Length).Encode());
+                await reopened.SaveItemAsync(new(orphanOriginalIdentity, "orphan/photo.dng", "orphan/photo.dng", Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 1));
+                await reopened.SaveItemAsync(new(orphanEditIdentity, "orphan/photo.dng.xmp", "orphan/photo.dng.xmp", Digest(original), original.Length, SyncItemState.Available, false, Digest(original), 0, 1, 1));
+                await using (var host = new SyncProviderHost(directory.FullName, reopened, remote, cloud))
+                    await host.RecordRenameAsync(Path.Combine(directory.FullName, "orphan", "photo.dng.xmp"), Path.Combine(directory.FullName, "orphan", "sidecar-only.dng.xmp"));
+                TestAssert.That((await reopened.GetItemAsync(orphanEditIdentity))?.State == SyncItemState.Conflicted && (await reopened.ListConflictsAsync()).Any(conflict => conflict.Identity == orphanEditIdentity && conflict.Reason == "sidecar_rename_requires_asset") && !(await reopened.PendingAsync()).Any(operation => operation.Identity == orphanEditIdentity && operation.Kind == JournalOperationKind.Move), "An edit-only sidecar rename must preserve a visible conflict and never move the asset.");
             }
 
             await using (var quotaJournal = new SyncJournal(Path.Combine(directory.FullName, "quota.db")))
