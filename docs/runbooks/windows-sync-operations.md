@@ -18,9 +18,11 @@ Unpin clean content first. Only clean, unpinned, non-pending, non-conflicted fil
 
 An expired branch cursor is reset and the opaque identity namespace is enumerated again. Existing identical placeholders are retained. Dirty, pending, or conflicted local content must not be removed or overwritten. If reconciliation repeats, preserve the journal and conflict/stash folders and escalate the operation ID.
 
+Lifecycle-aware servers bind each cursor to both the branch head and the owner's authoritative lifecycle revision. A move, delete, or restore therefore expires device cursors even when no commit advances. Before enabling a lifecycle-aware API release, the dedicated migration task must apply checksum-pinned migration 008 and the isolated PostgreSQL check must pass its two-device move/delete/restore sequence. Abort before service update if the revision table or any of its three triggers is absent, the migration task fails, or the check exposes a stale path or deleted placeholder.
+
 ## Journal repair and rollback
 
-Stop the provider and copy the state directory before repair. SQLite WAL and full synchronization make acknowledged operations durable. Never edit operation acknowledgements manually. Restore a known-compatible state-directory backup, or export local files and register a new device/root. A binary rollback is allowed only while its journal and remote protocol readers support the current schema.
+Stop the provider and copy the state directory before repair. SQLite WAL and full synchronization make acknowledged operations durable. Never edit operation acknowledgements manually. Restore a known-compatible state-directory backup, or export local files and register a new device/root. A binary rollback is allowed only while its journal and remote protocol readers support the current schema. Migration 008 is additive and remains installed during application rollback; a pre-008 API does not understand lifecycle-aware cursors, so keep Windows Sync traffic paused until a compatible API is restored or lifecycle state has been reconciled explicitly. Do not drop the revision triggers/table as an application rollback step.
 
 ## Safe uninstall
 
