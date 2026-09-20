@@ -1,12 +1,12 @@
 # Validation: Windows Cloud Files synchronization
 
-**Date**: 2026-09-15
+**Date**: 2026-09-20
 
 ## Local automated rehearsal
 
-The locked .NET graph restores and builds with warnings as errors. The executable model tests cover opaque identity/path mapping, journal close/reopen, cursor-expiry reconciliation, exact SHA-256 hydration and partial cleanup, recursive pin/disk failure, stable offline XMP replay exactly once, lifecycle delete distinct from dehydration, dirty checkout preserve/block, remote divergence preservation, device revocation, accessible state text, five independent devices, and a 100,000-placeholder/no-content-transfer capacity run.
+The locked .NET graph restores and builds with warnings as errors. The executable model tests cover opaque identity/path mapping, journal close/reopen and v1-to-v4 migration, cursor-expiry and terminal-cursor reconciliation, exact SHA-256 hydration and partial cleanup, recursive pin/disk failure, stable offline XMP replay exactly once, edit delete/restore routing with chained authoritative lifecycle versions, clean and dirty branch reconciliation, deterministic selected-branch path collisions, device revocation, accessible state text, five independent devices, and a 100,000-placeholder/no-content-transfer capacity run.
 
-The final 2026-09-15 local run measured 0.175 seconds p95 across five independent 1,000-placeholder first listings and 19.635 seconds for the complete 100,000-placeholder capacity enumeration, with zero content bytes downloaded. These model results establish the implementation budget; native Explorer/darktable timing remains a trusted-host release gate.
+The final remediation run on 2026-09-20 measured 0.100 seconds p95 across five independent 1,000-placeholder first listings and 14.219 seconds for the complete 100,000-placeholder capacity enumeration, with zero content bytes downloaded. A follow-up poll made one empty page request from the terminal cursor rather than re-enumerating the namespace. These model results establish the implementation budget; native Explorer/darktable timing remains a trusted-host release gate.
 
 Run from the repository root:
 
@@ -15,9 +15,14 @@ dotnet restore tests/windows-sync/Platform.WindowsSync.Tests.csproj --locked-mod
 dotnet build tests/windows-sync/Platform.WindowsSync.Tests.csproj --no-restore
 dotnet run --project tests/windows-sync/Platform.WindowsSync.Tests.csproj --no-build
 node tests/infrastructure/ci-contract/validate-ci.mjs
+node tests/integration/api-correlation.mjs
 ```
 
-The journal upgrade/rollback rehearsal creates schema v1, upgrades it in place to schema v3, closes it, reopens it, and verifies device/pending state including the durable expected lifecycle/device versions. The schema changes are expand-only. The package and prior binary may share the root only while both understand the active journal/protocol version. The server migration runner applies migration 007 transactionally and checksum-pins all embedded migrations.
+The journal upgrade/rollback rehearsal creates schema v1, upgrades it in place to schema v4, closes it, reopens it, and verifies device/pending state including durable asset/edit lifecycle and checkout versions. The schema changes are expand-only. The package and prior binary may share the root only while both understand the active journal/protocol version. The server migration runner applies migration 007 transactionally and checksum-pins all embedded migrations.
+
+The remediation also adds an isolated PostgreSQL integration check to the existing ingest integration job. It enumerates a real namespace, verifies lifecycle metadata, updates the device cursor only after the Npgsql reader is disposed, and reuses the terminal cursor on an idle poll. The local Docker daemon was unavailable on 2026-09-20, so this database-backed check is compiled locally and remains assigned to the existing CI PostgreSQL/MinIO job. The unconfigured API liveness/correlation test passes, confirming that mapped Windows Sync routes no longer prevent startup when storage services are absent.
+
+The final local checks passed: locked restore, Windows sync and API builds with zero warnings, Windows sync executable checks, API foundation and version-control non-database checks, release-manifest checks, API correlation, CI contract validation, `git diff --check`, and the transitive NuGet vulnerability audit. No vulnerable package was reported.
 
 ## Trusted Windows 11 release gate
 
@@ -34,7 +39,7 @@ The trusted-host, ARM64, usability, 24-hour reliability, and production-signing 
 
 ## Convergence result
 
-The post-implementation convergence pass traced all 20 functional requirements, 10 acceptance criteria, 16 non-functional requirements, five measurable outcomes, the data model, contract, ADR, and constitution gates to code, tests, documentation, or an explicitly protected release-only exercise. It found and remediated three implementation gaps before closure: immutable content-ID hydration, durable device/lifecycle versions, and in-place remote-revision reconciliation with dirty-state conflict preservation. No additional unbuilt in-scope task remains.
+The post-implementation convergence pass traced all 20 functional requirements, 10 acceptance criteria, 16 non-functional requirements, five measurable outcomes, the data model, contract, ADR, and constitution gates to code, tests, documentation, or an explicitly protected release-only exercise. Its original three implementation gaps remain closed. Pre-push review Round 1 then found and remediated namespace-reader lifetime, terminal-cursor, branch-removal, authoritative lifecycle-version, edit-route, checkout-contract, and HTTP request-lifetime gaps. Broader regression validation also found and fixed unconfigured API startup. No additional unbuilt in-scope task remains.
 
 ## Rollback
 

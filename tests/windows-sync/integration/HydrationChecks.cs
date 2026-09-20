@@ -39,6 +39,7 @@ static class HydrationChecks
             var advanced = remoteItem with { ContentId = Guid.NewGuid(), Sha256 = Convert.ToHexString(SHA256.HashData(advancedBytes)).ToLowerInvariant(), Length = advancedBytes.Length };
             remote = new FakeRemoteSyncClient([advanced], new Dictionary<Guid, byte[]> { [advanced.ContentId] = advancedBytes });
             provider = new NamespaceProvider(directory.FullName, journal, cloud, remote);
+            await journal.SaveDeviceAsync((await journal.GetDeviceAsync())! with { Cursor = null });
             await provider.SynchronizeAsync();
             var advancedItem = (await journal.ListItemsAsync()).Single();
             TestAssert.That(advancedItem.LocalPath == item.LocalPath && (await File.ReadAllBytesAsync(local)).SequenceEqual(advancedBytes), "An eligible remote revision must update the same stable path when local state is clean.");
@@ -46,6 +47,7 @@ static class HydrationChecks
             var bad = remoteItem with { AssetId = Guid.NewGuid(), ContentId = Guid.NewGuid(), Sha256 = new string('0', 64), Path = "2026/trip/bad.dng" };
             remote = new FakeRemoteSyncClient([bad], new Dictionary<Guid, byte[]> { [bad.ContentId] = bytes });
             provider = new NamespaceProvider(directory.FullName, journal, cloud, remote);
+            await journal.SaveDeviceAsync((await journal.GetDeviceAsync())! with { Cursor = null });
             await provider.SynchronizeAsync();
             var badItem = (await journal.ListItemsAsync()).Single(candidate => candidate.LogicalPath.EndsWith("bad.dng", StringComparison.Ordinal));
             await TestAssertThrowsAsync<InvalidDataException>(() => new HydrationService(directory.FullName, journal, remote).HydrateAsync(badItem.Identity));

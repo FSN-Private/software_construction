@@ -65,7 +65,10 @@ public sealed class SyncProviderHost : IAsyncDisposable
         }
     }
 
-    private void QueueStableChange(string fullPath) => _ = RecordStableChangeAsync(fullPath);
+    private void QueueStableChange(string fullPath)
+    {
+        if (!ProviderMutationTracker.Consume(fullPath)) _ = RecordStableChangeAsync(fullPath);
+    }
 
     private async Task RecordStableChangeAsync(string fullPath)
     {
@@ -78,7 +81,10 @@ public sealed class SyncProviderHost : IAsyncDisposable
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or OperationCanceledException) { }
     }
 
-    private void QueueCreated(string fullPath) => _ = RecordCreatedAsync(fullPath);
+    private void QueueCreated(string fullPath)
+    {
+        if (!ProviderMutationTracker.Consume(fullPath)) _ = RecordCreatedAsync(fullPath);
+    }
 
     private async Task RecordCreatedAsync(string fullPath)
     {
@@ -86,11 +92,14 @@ public sealed class SyncProviderHost : IAsyncDisposable
         var item = (await journal.ListItemsAsync()).SingleOrDefault(candidate => string.Equals(candidate.LocalPath, relative, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
         if ((await journal.PendingAsync()).Any(operation => operation.Identity == item.Identity && operation.Kind == JournalOperationKind.Delete))
-            await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Restore, item.LogicalPath, item.LocalSequence);
+            await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Restore, item.LogicalPath);
         QueueStableChange(fullPath);
     }
 
-    private void QueueRename(string oldPath, string newPath) => _ = RecordRenameAsync(oldPath, newPath);
+    private void QueueRename(string oldPath, string newPath)
+    {
+        if (!ProviderMutationTracker.Consume(oldPath) && !ProviderMutationTracker.Consume(newPath)) _ = RecordRenameAsync(oldPath, newPath);
+    }
 
     private async Task RecordRenameAsync(string oldPath, string newPath)
     {
@@ -98,17 +107,20 @@ public sealed class SyncProviderHost : IAsyncDisposable
         var item = (await journal.ListItemsAsync()).SingleOrDefault(candidate => string.Equals(candidate.LocalPath, oldRelative, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
         var destination = Path.GetRelativePath(root, newPath).Replace('\\', '/');
-        await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Move, destination, item.LocalSequence);
+        await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Move, destination);
         await journal.SetItemPathAsync(item.Identity, destination, destination);
     }
 
-    private void QueueDelete(string fullPath) => _ = RecordDeleteAsync(fullPath);
+    private void QueueDelete(string fullPath)
+    {
+        if (!ProviderMutationTracker.Consume(fullPath)) _ = RecordDeleteAsync(fullPath);
+    }
 
     private async Task RecordDeleteAsync(string fullPath)
     {
         var relative = Path.GetRelativePath(root, fullPath).Replace('\\', '/');
         var item = (await journal.ListItemsAsync()).SingleOrDefault(candidate => string.Equals(candidate.LocalPath, relative, StringComparison.OrdinalIgnoreCase));
-        if (item is not null) await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Delete, null, item.LocalSequence);
+        if (item is not null) await lifecycle.RecordAsync(item.Identity, JournalOperationKind.Delete, null);
     }
 
     public ValueTask DisposeAsync()

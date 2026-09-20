@@ -1,6 +1,6 @@
 # Tasks: Windows Cloud Files Synchronization
 
-**Status**: Complete — implemented and validated 2026-09-15; trusted-host/signing evidence remains a release gate.
+**Status**: Implementation and Round 1 remediation complete — independent pre-push re-review pending 2026-09-20; trusted-host/signing evidence remains a release gate.
 
 ## Phase 1: Foundations
 
@@ -42,6 +42,13 @@
 - [X] T018 Rehearse journal/root-compatible upgrade and rollback, cursor reconciliation, and safe uninstall in `docs/features/007-windows-cloud-files-sync/validation.md` (NFR-011/012).
 - [X] T019 Measure 100k namespace, five devices, multiterabyte no-mirror, transfer accounting, reliability, and fault-matrix evidence in `tests/windows-sync/performance/` (NFR-001/013/016).
 - [X] T020 Obtain owner approval for the specification and ADR, then update `spec.md` and `docs/architecture/decisions/0007-windows-cloud-files-provider-and-journal.md`.
+
+## Phase 6: Pre-push remediation
+
+- [X] T021 Dispose PostgreSQL namespace readers before cursor mutation and preserve a terminal head cursor so idle polling does not re-enumerate 100,000 items (B-001; FR-003, AC-001, NFR-001/016).
+- [X] T022 Reconcile a complete branch snapshot by removing only clean absent placeholders, preserving unsafe bytes, and preventing stale-branch path collisions (B-003; FR-002/003/013/014, AC-005/006, T013/T016).
+- [X] T023 Carry authoritative asset/edit lifecycle versions through namespace, journal, replay, response handling, and routes (B-004; FR-010/012/019, AC-007/009, T011/T012).
+- [X] T024 Correct asynchronous HTTP request lifetime/error parsing, align device/checkout response contracts, and keep the API routable when Windows Sync storage is unconfigured (FR-001/002/017, T005/T013).
 
 ## Traceability
 

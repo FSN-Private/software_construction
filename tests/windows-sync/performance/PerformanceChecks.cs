@@ -44,6 +44,7 @@ static class PerformanceChecks
             var stopwatch = Stopwatch.StartNew();
             TestAssert.That(await provider.SynchronizeAsync() == 100_000, "The provider must enumerate a 100,000-image namespace.");
             TestAssert.That((await journal.ListItemsAsync()).Count == 100_000 && remote.DownloadedBytes == 0, "A multi-terabyte logical namespace must remain placeholder-only until accessed or pinned.");
+            TestAssert.That(await provider.SynchronizeAsync() == 0 && remote.Enumerations == 101, "An unchanged terminal cursor must poll once without re-enumerating the 100,000-item namespace.");
             Console.WriteLine($"Windows sync 100,000-placeholder capacity: {stopwatch.Elapsed.TotalSeconds:F3}s, downloaded bytes: {remote.DownloadedBytes}");
         }
         finally { capacityDirectory.Delete(true); }

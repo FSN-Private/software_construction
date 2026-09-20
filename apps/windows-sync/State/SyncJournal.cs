@@ -7,7 +7,7 @@ public enum SyncItemState { OnlineOnly, Hydrating, Available, Pinned, Dirty, Upl
 public enum JournalOperationKind { Upload, Move, Delete, Restore }
 
 public sealed record SyncDevice(string DeviceId, string LibraryId, string Branch, string? Cursor, DeviceHealth Health, bool Revoked, long Version = 0);
-public sealed record SyncItem(string Identity, string LogicalPath, string LocalPath, string Sha256, long Length, SyncItemState State, bool Pinned, string? BaseSha256, long LocalSequence);
+public sealed record SyncItem(string Identity, string LogicalPath, string LocalPath, string Sha256, long Length, SyncItemState State, bool Pinned, string? BaseSha256, long LocalSequence, long AssetVersion = 1, long? EditVersion = null);
 public sealed record JournalOperation(long Sequence, string IdempotencyKey, string Identity, JournalOperationKind Kind, string? BaseSha256, string? CurrentSha256, string? Destination, long ExpectedVersion, bool Acknowledged, int Attempts);
 public sealed record SyncConflict(Guid Id, string Identity, string? BaseSha256, string LocalSha256, string RemoteSha256, string PreservedPath, string Reason, bool Resolved);
 
@@ -29,14 +29,15 @@ public sealed class SyncJournal : IAsyncDisposable
         var version = Convert.ToInt32(await ScalarAsync("PRAGMA user_version;", cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
         if (version == 0) await ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS device(singleton INTEGER PRIMARY KEY CHECK(singleton=1), device_id TEXT NOT NULL, library_id TEXT NOT NULL, branch TEXT NOT NULL, cursor TEXT, health INTEGER NOT NULL, revoked INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0, schema_version INTEGER NOT NULL DEFAULT 1);
-            CREATE TABLE IF NOT EXISTS items(identity TEXT PRIMARY KEY, logical_path TEXT NOT NULL, local_path TEXT NOT NULL, sha256 TEXT NOT NULL, length INTEGER NOT NULL, state INTEGER NOT NULL, pinned INTEGER NOT NULL, base_sha256 TEXT, local_sequence INTEGER NOT NULL DEFAULT 0, collision_key TEXT NOT NULL UNIQUE);
+            CREATE TABLE IF NOT EXISTS items(identity TEXT PRIMARY KEY, logical_path TEXT NOT NULL, local_path TEXT NOT NULL, sha256 TEXT NOT NULL, length INTEGER NOT NULL, state INTEGER NOT NULL, pinned INTEGER NOT NULL, base_sha256 TEXT, local_sequence INTEGER NOT NULL DEFAULT 0, asset_version INTEGER NOT NULL DEFAULT 1, edit_version INTEGER, collision_key TEXT NOT NULL UNIQUE);
             CREATE TABLE IF NOT EXISTS operations(sequence INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE, identity TEXT NOT NULL, kind INTEGER NOT NULL, base_sha256 TEXT, current_sha256 TEXT, destination TEXT, expected_version INTEGER NOT NULL DEFAULT 0, acknowledged INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY, identity TEXT NOT NULL, base_sha256 TEXT, local_sha256 TEXT NOT NULL, remote_sha256 TEXT NOT NULL, preserved_path TEXT NOT NULL, reason TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0);
-            PRAGMA user_version=3;
+            PRAGMA user_version=4;
             """, cancellationToken);
-        else if (version == 1) await ExecuteAsync("ALTER TABLE operations ADD COLUMN expected_version INTEGER NOT NULL DEFAULT 0; ALTER TABLE device ADD COLUMN version INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3;", cancellationToken);
-        else if (version == 2) await ExecuteAsync("ALTER TABLE device ADD COLUMN version INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3;", cancellationToken);
-        else if (version != 3) throw new InvalidDataException($"unsupported_journal_version:{version}");
+        else if (version == 1) await ExecuteAsync("ALTER TABLE operations ADD COLUMN expected_version INTEGER NOT NULL DEFAULT 0; ALTER TABLE device ADD COLUMN version INTEGER NOT NULL DEFAULT 0; ALTER TABLE items ADD COLUMN asset_version INTEGER NOT NULL DEFAULT 1; ALTER TABLE items ADD COLUMN edit_version INTEGER; PRAGMA user_version=4;", cancellationToken);
+        else if (version == 2) await ExecuteAsync("ALTER TABLE device ADD COLUMN version INTEGER NOT NULL DEFAULT 0; ALTER TABLE items ADD COLUMN asset_version INTEGER NOT NULL DEFAULT 1; ALTER TABLE items ADD COLUMN edit_version INTEGER; PRAGMA user_version=4;", cancellationToken);
+        else if (version == 3) await ExecuteAsync("ALTER TABLE items ADD COLUMN asset_version INTEGER NOT NULL DEFAULT 1; ALTER TABLE items ADD COLUMN edit_version INTEGER; PRAGMA user_version=4;", cancellationToken);
+        else if (version != 4) throw new InvalidDataException($"unsupported_journal_version:{version}");
     }
 
     public Task SaveDeviceAsync(SyncDevice value, CancellationToken cancellationToken = default) => ExecuteAsync("""
@@ -58,9 +59,9 @@ public sealed class SyncJournal : IAsyncDisposable
     }
 
     public Task SaveItemAsync(SyncItem value, CancellationToken cancellationToken = default) => ExecuteAsync("""
-        INSERT INTO items(identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,collision_key) VALUES($identity,$logical,$local,$sha,$length,$state,$pinned,$base,$sequence,$collision)
-        ON CONFLICT(identity) DO UPDATE SET logical_path=excluded.logical_path,local_path=excluded.local_path,sha256=excluded.sha256,length=excluded.length,state=excluded.state,pinned=excluded.pinned,base_sha256=excluded.base_sha256,local_sequence=excluded.local_sequence,collision_key=excluded.collision_key
-        """, cancellationToken, ("$identity", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$sequence", value.LocalSequence), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()));
+        INSERT INTO items(identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,asset_version,edit_version,collision_key) VALUES($identity,$logical,$local,$sha,$length,$state,$pinned,$base,$sequence,$assetVersion,$editVersion,$collision)
+        ON CONFLICT(identity) DO UPDATE SET logical_path=excluded.logical_path,local_path=excluded.local_path,sha256=excluded.sha256,length=excluded.length,state=excluded.state,pinned=excluded.pinned,base_sha256=excluded.base_sha256,local_sequence=excluded.local_sequence,asset_version=excluded.asset_version,edit_version=excluded.edit_version,collision_key=excluded.collision_key
+        """, cancellationToken, ("$identity", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$sequence", value.LocalSequence), ("$assetVersion", value.AssetVersion), ("$editVersion", value.EditVersion), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()));
 
     public async Task SaveItemsAsync(IReadOnlyList<SyncItem> values, CancellationToken cancellationToken = default)
     {
@@ -74,10 +75,10 @@ public sealed class SyncJournal : IAsyncDisposable
                 await using var command = connection.CreateCommand();
                 command.Transaction = (SqliteTransaction)transaction;
                 command.CommandText = """
-                    INSERT INTO items(identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,collision_key) VALUES($identity,$logical,$local,$sha,$length,$state,$pinned,$base,$sequence,$collision)
-                    ON CONFLICT(identity) DO UPDATE SET logical_path=excluded.logical_path,local_path=excluded.local_path,sha256=excluded.sha256,length=excluded.length,state=excluded.state,pinned=excluded.pinned,base_sha256=excluded.base_sha256,local_sequence=excluded.local_sequence,collision_key=excluded.collision_key
+                    INSERT INTO items(identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,asset_version,edit_version,collision_key) VALUES($identity,$logical,$local,$sha,$length,$state,$pinned,$base,$sequence,$assetVersion,$editVersion,$collision)
+                    ON CONFLICT(identity) DO UPDATE SET logical_path=excluded.logical_path,local_path=excluded.local_path,sha256=excluded.sha256,length=excluded.length,state=excluded.state,pinned=excluded.pinned,base_sha256=excluded.base_sha256,local_sequence=excluded.local_sequence,asset_version=excluded.asset_version,edit_version=excluded.edit_version,collision_key=excluded.collision_key
                     """;
-                foreach (var parameter in new (string Name, object? Value)[] { ("$identity", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$sequence", value.LocalSequence), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()) })
+                foreach (var parameter in new (string Name, object? Value)[] { ("$identity", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$sequence", value.LocalSequence), ("$assetVersion", value.AssetVersion), ("$editVersion", value.EditVersion), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()) })
                     command.Parameters.AddWithValue(parameter.Name, parameter.Value ?? DBNull.Value);
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
@@ -92,7 +93,7 @@ public sealed class SyncJournal : IAsyncDisposable
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence FROM items WHERE identity=$identity";
+            command.CommandText = "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,asset_version,edit_version FROM items WHERE identity=$identity";
             command.Parameters.AddWithValue("$identity", identity);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             return await reader.ReadAsync(cancellationToken) ? ReadItem(reader) : null;
@@ -106,7 +107,7 @@ public sealed class SyncJournal : IAsyncDisposable
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = localPrefix is null ? "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence FROM items ORDER BY local_path" : "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence FROM items WHERE local_path=$prefix OR local_path LIKE $child ORDER BY local_path";
+            command.CommandText = localPrefix is null ? "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,asset_version,edit_version FROM items ORDER BY local_path" : "SELECT identity,logical_path,local_path,sha256,length,state,pinned,base_sha256,local_sequence,asset_version,edit_version FROM items WHERE local_path=$prefix OR local_path LIKE $child ORDER BY local_path";
             if (localPrefix is not null) { command.Parameters.AddWithValue("$prefix", localPrefix); command.Parameters.AddWithValue("$child", localPrefix.TrimEnd('/', '\\') + "/%"); }
             var result = new List<SyncItem>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -121,6 +122,8 @@ public sealed class SyncJournal : IAsyncDisposable
         cancellationToken, ("$state", (int)state), ("$pinned", pinned.HasValue ? pinned.Value ? 1 : 0 : null), ("$sha", sha256), ("$identity", identity));
     public Task SetItemBaseAsync(string identity, string sha256, CancellationToken cancellationToken = default) => ExecuteAsync("UPDATE items SET sha256=$sha,base_sha256=$sha WHERE identity=$identity", cancellationToken, ("$sha", sha256), ("$identity", identity));
     public Task SetItemPathAsync(string identity, string logicalPath, string localPath, CancellationToken cancellationToken = default) => ExecuteAsync("UPDATE items SET logical_path=$logical,local_path=$local,collision_key=$collision,local_sequence=local_sequence+1 WHERE identity=$identity", cancellationToken, ("$logical", logicalPath), ("$local", localPath), ("$collision", localPath.Normalize().ToUpperInvariant()), ("$identity", identity));
+    public Task SetItemRemoteVersionAsync(string identity, bool edit, long version, CancellationToken cancellationToken = default) => ExecuteAsync(edit ? "UPDATE items SET edit_version=$version WHERE identity=$identity" : "UPDATE items SET asset_version=$version WHERE identity=$identity", cancellationToken, ("$version", version), ("$identity", identity));
+    public Task DeleteItemAsync(string identity, CancellationToken cancellationToken = default) => ExecuteAsync("DELETE FROM items WHERE identity=$identity", cancellationToken, ("$identity", identity));
 
     public async Task<long> QueueAsync(string idempotencyKey, string identity, JournalOperationKind kind, string? baseSha256, string? currentSha256, string? destination, CancellationToken cancellationToken = default, long expectedVersion = 0)
     {
@@ -163,11 +166,11 @@ public sealed class SyncJournal : IAsyncDisposable
         finally { gate.Release(); }
     }
 
-    public Task ReplaceItemAsync(string oldIdentity, SyncItem value, CancellationToken cancellationToken = default) => ExecuteAsync("UPDATE items SET identity=$new,logical_path=$logical,local_path=$local,sha256=$sha,length=$length,state=$state,pinned=$pinned,base_sha256=$base,collision_key=$collision WHERE identity=$old", cancellationToken, ("$new", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()), ("$old", oldIdentity));
+    public Task ReplaceItemAsync(string oldIdentity, SyncItem value, CancellationToken cancellationToken = default) => ExecuteAsync("UPDATE items SET identity=$new,logical_path=$logical,local_path=$local,sha256=$sha,length=$length,state=$state,pinned=$pinned,base_sha256=$base,asset_version=$assetVersion,edit_version=$editVersion,collision_key=$collision WHERE identity=$old", cancellationToken, ("$new", value.Identity), ("$logical", value.LogicalPath), ("$local", value.LocalPath), ("$sha", value.Sha256), ("$length", value.Length), ("$state", (int)value.State), ("$pinned", value.Pinned ? 1 : 0), ("$base", value.BaseSha256), ("$assetVersion", value.AssetVersion), ("$editVersion", value.EditVersion), ("$collision", value.LocalPath.Normalize().ToUpperInvariant()), ("$old", oldIdentity));
     public Task ClearUnsafeStateAsync(CancellationToken cancellationToken = default) => ExecuteAsync("UPDATE operations SET acknowledged=1 WHERE acknowledged=0; UPDATE conflicts SET resolved=1 WHERE resolved=0; UPDATE items SET state=$online,pinned=0 WHERE state IN ($dirty,$uploading,$conflicted)", cancellationToken, ("$online", (int)SyncItemState.OnlineOnly), ("$dirty", (int)SyncItemState.Dirty), ("$uploading", (int)SyncItemState.Uploading), ("$conflicted", (int)SyncItemState.Conflicted));
     public async Task<bool> HasUnsafeStateAsync(CancellationToken cancellationToken = default) => Convert.ToInt64(await ScalarAsync("SELECT (SELECT count(*) FROM operations WHERE acknowledged=0)+(SELECT count(*) FROM conflicts WHERE resolved=0)+(SELECT count(*) FROM items WHERE state IN ($dirty,$uploading,$conflicted))", cancellationToken, ("$dirty", (int)SyncItemState.Dirty), ("$uploading", (int)SyncItemState.Uploading), ("$conflicted", (int)SyncItemState.Conflicted)), System.Globalization.CultureInfo.InvariantCulture) > 0;
 
-    private static SyncItem ReadItem(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), (SyncItemState)reader.GetInt32(5), reader.GetBoolean(6), reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetInt64(8));
+    private static SyncItem ReadItem(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt64(4), (SyncItemState)reader.GetInt32(5), reader.GetBoolean(6), reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetInt64(8), reader.GetInt64(9), reader.IsDBNull(10) ? null : reader.GetInt64(10));
 
     private async Task ExecuteAsync(string sql, CancellationToken cancellationToken, params (string Name, object? Value)[] parameters)
     {

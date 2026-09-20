@@ -16,7 +16,7 @@ static class OfflineChecks
         var updated = "offline xmp change"u8.ToArray();
         var asset = Guid.NewGuid();
         var edit = Guid.NewGuid();
-        var item = new RemoteItem(asset, edit, Guid.NewGuid(), "project/photo.dng.xmp", Digest(original), original.Length);
+        var item = new RemoteItem(asset, edit, Guid.NewGuid(), "project/photo.dng.xmp", Digest(original), original.Length, EditVersion: 4);
         var remote = new FakeRemoteSyncClient([item], new Dictionary<Guid, byte[]> { [item.ContentId] = original });
         var cloud = new FakeCloudFilesAdapter();
         var directory = Directory.CreateTempSubdirectory("windows-sync-offline-");
@@ -42,7 +42,10 @@ static class OfflineChecks
                 remote.Online = false;
                 await File.WriteAllBytesAsync(local, updated);
                 await new UploadCoordinator(directory.FullName, journal, remote, TimeSpan.FromMilliseconds(5)).RecordStableChangeAsync(identity, local);
-                await new LifecycleCoordinator(journal).RecordAsync(identity, JournalOperationKind.Delete, null, 1);
+                var lifecycle = new LifecycleCoordinator(journal);
+                var deleteSequence = await lifecycle.RecordAsync(identity, JournalOperationKind.Delete, null);
+                TestAssert.That(await lifecycle.RecordAsync(identity, JournalOperationKind.Delete, null) == deleteSequence, "Duplicate lifecycle notifications must reuse the pending operation.");
+                await lifecycle.RecordAsync(identity, JournalOperationKind.Restore, item.Path);
                 var beforeDehydrate = (await journal.PendingAsync()).Count;
                 TestAssert.That(!await availability.TryDehydrateAsync(identity), "Dirty or pending content must not dehydrate.");
                 TestAssert.That((await journal.PendingAsync()).Count == beforeDehydrate, "Dehydration must never create delete intent.");
@@ -57,6 +60,8 @@ static class OfflineChecks
                 await replay.ReplayAsync();
                 TestAssert.That(remote.Mutations.Count(value => value.StartsWith("upload:", StringComparison.Ordinal)) == 1, "Restart replay must publish a stable edit exactly once.");
                 TestAssert.That(remote.Mutations.Count(value => value.StartsWith("delete:", StringComparison.Ordinal)) == 1, "Offline delete must replay as a distinct lifecycle mutation.");
+                TestAssert.That(remote.Mutations.Count(value => value.StartsWith("restore:", StringComparison.Ordinal)) == 1, "Offline restore must replay after its delete.");
+                TestAssert.That(remote.LifecycleCalls is [{ Kind: "delete", EditId: not null, ExpectedVersion: 4 }, { Kind: "restore", EditId: not null, ExpectedVersion: 5 }], "Edit lifecycle replay must target the edit identity and chain authoritative versions in journal order.");
                 TestAssert.That((await reopened.PendingAsync()).Count == 0, "Acknowledged operations must leave no pending replay.");
             }
 

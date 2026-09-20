@@ -11,6 +11,7 @@ public sealed class UploadCoordinator(string root, SyncJournal journal, IRemoteS
         var item = await journal.GetItemAsync(identity, cancellationToken) ?? throw new FileNotFoundException("placeholder_not_found");
         if (!path.EndsWith(".xmp", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("only_xmp_is_writable");
         var stable = await StableWriteDetector.WaitAsync(path, stabilityInterval, cancellationToken);
+        if (string.Equals(stable.Sha256, item.BaseSha256, StringComparison.Ordinal)) return 0;
         var fingerprint = System.Text.Encoding.UTF8.GetBytes(identity + "\n" + stable.Sha256);
         var key = $"upload:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fingerprint)).ToLowerInvariant()}";
         var sequence = await journal.QueueAsync(key, identity, JournalOperationKind.Upload, item.BaseSha256, stable.Sha256, null, cancellationToken);
@@ -42,7 +43,8 @@ public sealed class UploadCoordinator(string root, SyncJournal journal, IRemoteS
                 else
                 {
                     var identity = PlaceholderIdentity.Decode(Convert.FromBase64String(item.Identity));
-                    await remote.ApplyLifecycleAsync(operation.Kind.ToString().ToLowerInvariant(), identity.AssetId, operation.IdempotencyKey, operation.ExpectedVersion, operation.Destination, cancellationToken);
+                    var result = await remote.ApplyLifecycleAsync(operation.Kind.ToString().ToLowerInvariant(), identity.AssetId, identity.EditId, operation.IdempotencyKey, operation.ExpectedVersion, operation.Destination, cancellationToken);
+                    await journal.SetItemRemoteVersionAsync(item.Identity, identity.EditId.HasValue && operation.Kind != JournalOperationKind.Move, result.Version, cancellationToken);
                 }
                 await journal.AcknowledgeAsync(operation.Sequence, cancellationToken);
             }
