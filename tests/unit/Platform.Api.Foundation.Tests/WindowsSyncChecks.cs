@@ -50,7 +50,8 @@ internal static class WindowsSyncChecks
             editOrdinal = 0;
             await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'windows-sync-fixture'); INSERT INTO asset_paths(id,asset_id,owner_id,display_path,collision_key,active) VALUES($6,$1,$2,$7,$8,true)", default, asset, owner, assetDigest, edit, editDigest, Guid.NewGuid(), originalPath, originalPath.ToUpperInvariant());
 
-            var at = DateTimeOffset.UtcNow;
+            var now = DateTimeOffset.UtcNow;
+            var at = new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero);
             var entries = new VersionControlEntry[]
             {
                 new(asset, null, "added", null, assetDigest, originalPath),
