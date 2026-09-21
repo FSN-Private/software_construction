@@ -25,30 +25,30 @@ internal static class WindowsSyncChecks
         await using (var connection = await db.OpenConnectionAsync())
         {
             await using (var command = Command(connection, """
-                SELECT a.id,e.id,a.original_sha256,e.xmp_sha256,oa.byte_length,oe.byte_length,a.lifecycle_version,e.lifecycle_version,e.duplicate_ordinal,p.display_path
+                SELECT a.original_sha256,e.xmp_sha256,oa.byte_length,oe.byte_length
                 FROM assets a
                 JOIN edit_identities e ON e.asset_id=a.id AND e.state IN ('active','restored')
                 JOIN content_objects oa ON oa.sha256=a.original_sha256 AND oa.integrity_state='authoritative'
                 JOIN content_objects oe ON oe.sha256=e.xmp_sha256 AND oe.integrity_state='authoritative'
-                JOIN asset_paths p ON p.asset_id=a.id AND p.active
                 WHERE a.owner_id=$1 AND a.state IN ('active','restored')
-                  AND NOT EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND (h.expires_at IS NULL OR h.expires_at>now()))
                 LIMIT 1
                 """, owner))
             await using (var reader = await command.ExecuteReaderAsync())
             {
-                IngestChecks.Check(await reader.ReadAsync(), "Windows sync integration requires one authoritative asset/edit pair.");
-                asset = reader.GetGuid(0);
-                edit = reader.GetGuid(1);
-                assetDigest = reader.GetString(2).Trim();
-                editDigest = reader.GetString(3).Trim();
-                assetLength = reader.GetInt64(4);
-                editLength = reader.GetInt64(5);
-                assetVersion = reader.GetInt64(6);
-                editVersion = reader.GetInt64(7);
-                editOrdinal = reader.GetInt32(8);
-                originalPath = reader.GetString(9);
+                IngestChecks.Check(await reader.ReadAsync(), "Windows sync integration requires authoritative original and XMP content.");
+                assetDigest = reader.GetString(0).Trim();
+                editDigest = reader.GetString(1).Trim();
+                assetLength = reader.GetInt64(2);
+                editLength = reader.GetInt64(3);
             }
+
+            asset = Guid.NewGuid();
+            edit = Guid.NewGuid();
+            originalPath = $"windows-sync-fixture/{asset:N}.dng";
+            assetVersion = 1;
+            editVersion = 1;
+            editOrdinal = 0;
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'windows-sync-fixture'); INSERT INTO asset_paths(id,asset_id,owner_id,display_path,collision_key,active) VALUES($6,$1,$2,$7,$8,true)", default, asset, owner, assetDigest, edit, editDigest, Guid.NewGuid(), originalPath, originalPath.ToUpperInvariant());
 
             var at = DateTimeOffset.UtcNow;
             var entries = new VersionControlEntry[]

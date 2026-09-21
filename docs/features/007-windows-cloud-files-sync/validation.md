@@ -28,7 +28,7 @@ The PR backend workflow found a stale Feature 006 migration rehearsal after Feat
 
 T028 builds successfully and the version-control executable's non-database contract suite passes locally. Docker is unavailable on this workstation, so the PostgreSQL migration replay itself will be verified by the PR backend job after the fix is pushed.
 
-The first rerun passed the migration replay but exposed test-order coupling: an earlier lifecycle test holds one active asset, which the Windows Sync convergence test must not mutate. T029 selects only active, unheld fixture assets; PR CI remains the PostgreSQL/MinIO execution environment.
+The first rerun passed the migration replay but exposed test-order coupling: an earlier lifecycle test holds one active asset, which the Windows Sync convergence test must not mutate. T029 creates its own active asset/edit identity using existing authoritative content, so lifecycle mutation coverage is isolated from shared fixture state; PR CI remains the PostgreSQL/MinIO execution environment.
 
 ## Trusted Windows 11 release gate
 
