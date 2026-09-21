@@ -1,6 +1,6 @@
 # Feature 007 Adversarial Review Record
 
-**Status**: CI remediation code gate passed; PR validation pending
+**Status**: Dedicated CI fixture remediation code gate passed; PR validation pending
 **Reviewer model**: gpt-5.5  
 **Review date**: 2026-09-03  
 **Base**: `feature/003-darktable-version-control`  
@@ -133,3 +133,31 @@ The alternate reviewer found no material blocker. It confirmed that the transact
 **CI remediation code gate: PASS.**
 
 The prior B-002 destination authority is resolved: the user authorized and the branch was pushed to fresh ref `feature/007-windows-cloud-files-sync-implementation`; no existing remote history was overwritten. PR #25 remains the final PostgreSQL/MinIO validation gate.
+
+### CI rerun follow-up
+
+The first remediation rerun passed the five-migration Version Control replay and capacity checks, then failed in the Feature 007 PostgreSQL convergence scenario. `WindowsSyncChecks` selected the first active asset, which could be the retained fixture created earlier by lifecycle coverage; its intended move correctly returned `retention_hold`.
+
+**Candidate remediation**: `49153c4` (`test(007): isolate lifecycle convergence fixture`)
+
+T029 excludes an asset with an active lifecycle hold from the convergence fixture query. The API foundation build and non-database executable pass locally; Docker remains unavailable locally.
+
+### Round 7
+
+**Reviewer model**: gpt-5.5
+**Reviewed source range**: `ded95df..49153c4`
+
+The reviewer found B-007: excluding held fixtures could leave no active, unheld asset/edit pair because the shared ingest scenario mutates or deletes every suitable pair. The predicate itself was owner-safe but insufficient to guarantee the convergence test precondition.
+
+**Candidate remediation**: `3c6f901` (`test(007): isolate convergence fixture state`)
+
+T029 now creates a unique active asset/edit/path fixture using already-authoritative original and XMP content. Its lifecycle state is independent of earlier shared fixtures and it supplies the same dedicated pair to the version-control namespace/convergence assertions.
+
+### Round 8
+
+**Reviewer model**: gpt-5.5
+**Reviewed source range**: `49153c4..3c6f901`
+
+The alternate reviewer accepted B-007 as fixed. It confirmed the fresh asset/edit/path fixture satisfies schema defaults and uniqueness, is created before cursor registration, invokes migration 008 revisions for its lifecycle mutations, and removes shared-lifecycle-state coupling while retaining authoritative immutable content. No material blocker was found in schema, lifecycle, cursor, test isolation, or resource integrity.
+
+**Dedicated CI fixture code gate: PASS.**
