@@ -343,14 +343,14 @@ internal static class CommitChecks
         await using var connection = await db.OpenConnectionAsync();
         await using (var rollback = await connection.BeginTransactionAsync())
         {
-            foreach (var file in new[] { "005_ingest_storage.sql", "005_ingest_workflows.sql", "006_xmp_version_control.sql", "007_windows_cloud_files_sync.sql" }) await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/" + file), default);
+            foreach (var file in new[] { "005_ingest_storage.sql", "005_ingest_workflows.sql", "006_xmp_version_control.sql", "007_windows_cloud_files_sync.sql", "008_windows_sync_lifecycle_revision.sql" }) await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/" + file), default);
             await rollback.RollbackAsync();
         }
         var rolledBackTable = await ScalarAsync(connection, "SELECT to_regclass(current_schema()||'.vc_commits')::text", default);
         Check(rolledBackTable is null or DBNull, "Injected migration rollback must leave no partial Feature 006 schema.");
         await DatabaseMigrator.ApplyAsync(db, default);
         await DatabaseMigrator.ApplyAsync(db, default);
-        Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM platform_schema_migrations", default))! == 3, "Repeated migration must retain one checksum record per release migration.");
+        Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM platform_schema_migrations", default))! == 5, "Repeated migration must retain one checksum record per release migration.");
     }
 
     private static async Task SeedAsync(NpgsqlDataSource db, int count)
