@@ -1,6 +1,6 @@
 # Feature 007 Adversarial Review Record
 
-**Status**: Dedicated CI fixture remediation code gate passed; PR validation pending
+**Status**: Post-merge CI repair code gate passed; repair-PR validation pending
 **Reviewer model**: gpt-5.5  
 **Review date**: 2026-09-03  
 **Base**: `feature/003-darktable-version-control`  
@@ -161,3 +161,23 @@ T029 now creates a unique active asset/edit/path fixture using already-authorita
 The alternate reviewer accepted B-007 as fixed. It confirmed the fresh asset/edit/path fixture satisfies schema defaults and uniqueness, is created before cursor registration, invokes migration 008 revisions for its lifecycle mutations, and removes shared-lifecycle-state coupling while retaining authoritative immutable content. No material blocker was found in schema, lifecycle, cursor, test isolation, or resource integrity.
 
 **Dedicated CI fixture code gate: PASS.**
+
+## Post-merge CI repair review — 2026-09-21
+
+After Feature 007 merged, `master` CI run `35556452195` failed only in the backend ingest suite. PostgreSQL correctly rejected the Windows Sync test fixture with `23514: normalized page index must match canonical commit evidence`. The fixture serialized a `DateTimeOffset.UtcNow` value with 100-nanosecond precision into the manifest, while PostgreSQL stores the normalized commit timestamp at microsecond precision.
+
+**Candidate remediation**: `00d1f83` (`test(007): normalize sync fixture timestamp`)
+
+T029's dedicated fixture now normalizes its timestamp to the same 10-tick precision already used by `CommitService`, before using it for the canonical manifest and normalized database rows. The API foundation build completed with zero warnings; its non-database executable and `git diff --check` passed. Docker is unavailable locally, so the exact PostgreSQL trigger path remains the repair PR's CI gate.
+
+### Round 9
+
+**Reviewer model**: gpt-5.5
+
+**Reviewed source range**: `origin/master..00d1f83`, plus this review-record update in the pending push
+
+**Pending destination**: `fix/007-windows-sync-timestamp-normalization`
+
+The alternate reviewer found no material blocker. It confirmed that migration 006's deferred normalization trigger compares canonical manifest `receivedAt` with `vc_commits.received_at`, the codec retains seven fractional timestamp digits, and the test now uses one microsecond-aligned value for both representations. Production commit creation already applies this exact normalization. No regression was found in migration compatibility, codec behavior, production parity, or the CI unblock path.
+
+**Post-merge CI repair gate: PASS.**
