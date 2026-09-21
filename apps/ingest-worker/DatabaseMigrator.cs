@@ -10,6 +10,9 @@ public static class DatabaseMigrator
     [
         "005_ingest_storage.sql",
         "005_ingest_workflows.sql",
+        "006_xmp_version_control.sql",
+        "007_windows_cloud_files_sync.sql",
+        "008_windows_sync_lifecycle_revision.sql",
         "008_rendering.sql",
     ];
 

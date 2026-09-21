@@ -50,6 +50,7 @@ function run(action, databaseState = 'available', finalCount = '1', failMatch = 
       ECS_CLUSTER: 'cluster-1',
       ECS_SERVICE: 'api-service',
       WORKER_SERVICE: 'worker-service',
+      VERSION_CONTROL_HEARTBEAT_ALARM: 'version-control-heartbeat',
     },
   });
   return { ...result, calls: readFileSync(logPath, 'utf8').trim().split(/\r?\n/).filter(Boolean) };
@@ -76,6 +77,9 @@ try {
   const firstServiceStart = started.calls.findIndex((call) => call.includes('ecs update-service') && call.includes('--desired-count 1'));
   assert.ok(databaseAvailable >= 0 && firstServiceStart > databaseAvailable, 'RDS must become available before ECS starts.');
   assert.equal(started.calls.filter((call) => call.includes('ecs update-service') && call.includes('--desired-count 1')).length, 2);
+  const servicesStable = started.calls.findIndex((call) => call.startsWith('ecs wait services-stable'));
+  const heartbeatEnabled = started.calls.findIndex((call) => call.startsWith('cloudwatch enable-alarm-actions'));
+  assert.ok(servicesStable >= 0 && heartbeatEnabled > servicesStable, 'Heartbeat notifications must resume only after services are stable.');
   assert.match(started.stdout, /action=start database=available api=1 worker=1/);
 
   const stopped = run('stop', 'available', '0');
@@ -84,6 +88,10 @@ try {
   const databaseStop = stopped.calls.findIndex((call) => call.startsWith('rds stop-db-instance'));
   assert.ok(serviceStop >= 0 && databaseStop > serviceStop, 'ECS must stop before RDS.');
   assert.equal(stopped.calls.filter((call) => call.includes('ecs update-service') && call.includes('--desired-count 0')).length, 2);
+  const apiStop = stopped.calls.findIndex((call) => call.includes('ecs update-service') && call.includes('api-service') && call.includes('--desired-count 0'));
+  const heartbeatDisabled = stopped.calls.findIndex((call) => call.startsWith('cloudwatch disable-alarm-actions'));
+  const workerStop = stopped.calls.findIndex((call) => call.includes('ecs update-service') && call.includes('worker-service') && call.includes('--desired-count 0'));
+  assert.ok(apiStop >= 0 && heartbeatDisabled > apiStop && workerStop > heartbeatDisabled, 'Heartbeat notifications must be suppressed immediately after the API is intentionally stopped.');
   assert.match(stopped.stdout, /action=stop database=stopped api=0 worker=0/);
 
   const alreadyStopped = run('stop', 'stopped', '0');

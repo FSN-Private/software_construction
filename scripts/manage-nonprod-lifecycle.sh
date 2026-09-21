@@ -18,6 +18,7 @@ if test "$ACTION" = start || test "$ACTION" = stop; then
   require ECS_CLUSTER
   require ECS_SERVICE
   require WORKER_SERVICE
+  require VERSION_CONTROL_HEARTBEAT_ALARM
 fi
 
 database_state() {
@@ -119,10 +120,12 @@ case "$ACTION" in
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --desired-count 1 >/dev/null
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --desired-count 1 >/dev/null
     timeout --foreground 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
+    aws cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"
     report_state "$ACTION"
     ;;
   stop)
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --desired-count 0 >/dev/null
+    aws cloudwatch disable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --desired-count 0 >/dev/null
     timeout --foreground 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
     stop_database

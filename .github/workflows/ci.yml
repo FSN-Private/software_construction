@@ -35,6 +35,11 @@ jobs:
       - run: npm run test:backend
       - name: Start isolated ingest dependencies
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
+      - name: Run Feature 006 PostgreSQL and capacity checks
+        env:
+          VERSION_CONTROL_INTEGRATION: '1'
+          VERSION_CONTROL_CAPACITY: '1'
+        run: dotnet run --no-build --project tests/version-control/Platform.VersionControl.Tests.csproj
       - run: npm run test:ingest
       - name: Stop isolated ingest dependencies
         if: always()
@@ -69,6 +74,9 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - run: dotnet restore tests/windows-sync/Platform.WindowsSync.Tests.csproj --locked-mode
+      - run: dotnet build tests/windows-sync/Platform.WindowsSync.Tests.csproj --no-restore --nologo
+      - run: dotnet run --no-build --project tests/windows-sync/Platform.WindowsSync.Tests.csproj
       - run: dotnet build apps/api/Platform.Api.csproj --nologo
       - run: dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output artifacts/api
 

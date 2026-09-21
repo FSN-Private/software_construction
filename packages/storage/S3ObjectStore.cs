@@ -65,6 +65,15 @@ public sealed partial class S3ObjectStore(IAmazonS3 s3, string bucket, string km
         if (string.IsNullOrWhiteSpace(existing.VersionId)) throw new InvalidDataException("authoritative_version_missing");
         return existing.VersionId;
     }
+
+    public async Task VerifyStoredAsync(string key, string version, ContentAddress address, CancellationToken cancellationToken = default)
+    {
+        if (!address.IsValid || string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(version)) throw new ArgumentException("invalid_storage_reference");
+        var existing = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest { BucketName = bucket, Key = key, VersionId = version, ChecksumMode = ChecksumMode.ENABLED }, cancellationToken);
+        if (existing.ContentLength != address.Length || existing.ChecksumSHA256 != Convert.ToBase64String(Convert.FromHexString(address.Sha256))) throw new InvalidDataException("authoritative_content_mismatch");
+        if (string.IsNullOrWhiteSpace(existing.VersionId)) throw new InvalidDataException("authoritative_version_missing");
+    }
+
     public string StagingKey(Guid session) => $"staging/{session:N}";
     public string QuarantineKey(Guid session) => $"quarantine/{session:N}";
 }

@@ -20,6 +20,9 @@ internal static class MigrationChecks
         await using (var migrate = await connection.BeginTransactionAsync())
         {
             await ExecuteAsync(connection, expand, default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/006_xmp_version_control.sql"), default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/007_windows_cloud_files_sync.sql"), default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/008_windows_sync_lifecycle_revision.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/008_rendering.sql"), default);
             await migrate.CommitAsync();
         }

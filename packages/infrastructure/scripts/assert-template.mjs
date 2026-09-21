@@ -12,6 +12,8 @@ if (resources.filter((resource) => resource.Type === 'AWS::S3::Bucket').length <
 if (resources.filter((resource) => resource.Type === 'AWS::ECR::Repository').length !== 2) throw new Error('API and ingest worker require separate ECR repositories.');
 const taskDefinitions = resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition');
 if (taskDefinitions.length !== 3 || resources.filter((resource) => resource.Type === 'AWS::ECS::Service').length !== 2) throw new Error('API, worker, and dedicated migration tasks plus paired runtime services are required.');
+const apiTask = taskDefinitions.find((task) => task.Properties.ContainerDefinitions[0].Name === 'api');
+if (Number(apiTask?.Properties?.Memory) < 2048) throw new Error('The API task requires at least 2 GiB memory for reference-scale integrity verification.');
 if (resources.some((resource) => resource.Type === 'AWS::EC2::NatGateway' || resource.Type === 'AWS::ElasticLoadBalancingV2::LoadBalancer')) throw new Error('The low-budget non-production runtime must not provision fixed-cost NAT gateways or load balancers.');
 if (resources.filter((resource) => resource.Type === 'AWS::ECS::Service').some((resource) => resource.Properties.DesiredCount !== 0)) throw new Error('Bootstrap services must stay at zero tasks until verified images are published.');
 const database = resources.find((resource) => resource.Type === 'AWS::RDS::DBInstance');
@@ -31,16 +33,20 @@ for (const task of runtimeTasks) {
 }
 const migrationSecretNames = (migrationTask.Properties.ContainerDefinitions[0].Secrets ?? []).map(({ Name }) => Name);
 if (!['Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__RuntimeDatabase__Username', 'Ingest__RuntimeDatabase__Password'].every((name) => migrationSecretNames.includes(name))) throw new Error('The migration task must receive admin and runtime credentials for schema migration and runtime-role provisioning.');
-for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId', 'DatabaseInstanceIdentifier']) {
+for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId', 'DatabaseInstanceIdentifier', 'VersionControlHeartbeatAlarmName']) {
   if (!template.Outputs?.[output]) throw new Error(`Missing deployment configuration output ${output}.`);
 }
 const iamPolicies = Object.entries(template.Resources).filter(([, resource]) => resource.Type === 'AWS::IAM::Policy');
 const deploymentPolicies = iamPolicies.flatMap(([, resource]) => resource.Properties.PolicyDocument.Statement);
-for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole', 'rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance']) {
+for (const action of ['ecr:PutImage', 'ecr:DescribeImages', 'ecs:RegisterTaskDefinition', 'ecs:UpdateService', 'ecs:RunTask', 'ecs:StopTask', 'iam:PassRole', 'rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance', 'cloudwatch:DisableAlarmActions', 'cloudwatch:EnableAlarmActions']) {
   if (!deploymentPolicies.some((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes(action))) throw new Error(`The deployment role is missing ${action}.`);
 }
+const describeTaskDefinitionPolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('ecs:DescribeTaskDefinition'));
+if (describeTaskDefinitionPolicy?.Resource !== '*') throw new Error('ECS DescribeTaskDefinition does not support task-definition resource scoping and must use Resource "*".');
 const rdsLifecyclePolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('rds:StopDBInstance'));
 if (!JSON.stringify(rdsLifecyclePolicy?.Resource).includes('IngestDatabase')) throw new Error('RDS lifecycle permissions must target the non-production database instance.');
+const heartbeatLifecyclePolicy = deploymentPolicies.find((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).includes('cloudwatch:DisableAlarmActions'));
+if (!JSON.stringify(heartbeatLifecyclePolicy?.Resource).includes('VersionControlIntegrityHeartbeatAlarm')) throw new Error('Alarm lifecycle permissions must target only the version-control heartbeat alarm.');
 const deleteStatements = deploymentPolicies.filter((statement) => (Array.isArray(statement.Action) ? statement.Action : [statement.Action]).some((action) => action === 's3:DeleteObject' || action === 's3:DeleteObjectVersion'));
 if (deleteStatements.some((statement) => statement.Effect === 'Allow' && !JSON.stringify(statement.Resource).includes('staging/*') && !JSON.stringify(statement.Resource).includes('quarantine/*'))) throw new Error('Runtime S3 deletion must be limited to staging or quarantine objects.');
 if (deleteStatements.filter((statement) => statement.Effect === 'Deny' && JSON.stringify(statement.Resource).includes('sha256/*')).length < 2) throw new Error('Both runtime task roles must explicitly deny deletion of authoritative sha256 objects and versions.');
@@ -56,16 +62,25 @@ if (workerPutResources.length !== 1 || !workerPutResources[0].includes('/sha256/
 const keyPolicies = resources.filter((resource) => resource.Type === 'AWS::KMS::Key').flatMap((resource) => resource.Properties.KeyPolicy.Statement);
 const logsPolicy = keyPolicies.find((statement) => JSON.stringify(statement.Principal).includes('logs.'));
 if (!logsPolicy || !JSON.stringify(logsPolicy.Condition).includes(':log-group:*') || JSON.stringify(logsPolicy.Condition).includes(':log-group/*')) throw new Error('CloudWatch Logs KMS access must use the colon-form log-group ARN pattern.');
-if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').length < 6) throw new Error('Operations require service, ingest, deployment, authentication, CI, and backup-age alarms.');
+if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').length < 8) throw new Error('Operations require service, ingest, version-control integrity, deployment, authentication, CI, and backup-age alarms.');
 if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === 'AuthenticationFailures' && resource.Properties?.FilterPattern?.includes('$.State.AuditEventType'))) throw new Error('Authentication anomaly alarms must derive a metric from the API JSON authorization-denial audit event.');
 if (!resources.some((resource) => resource.Type === 'AWS::Cognito::UserPoolClient' && resource.Properties?.AllowedOAuthScopes?.includes('openid'))) throw new Error('The owner web client must permit the OpenID scope requested by the Hosted UI.');
+const apiGateway = resources.find((resource) => resource.Type === 'AWS::ApiGatewayV2::Api');
+if (!['if-match', 'x-client-id'].every((header) => apiGateway?.Properties?.CorsConfiguration?.AllowHeaders?.includes(header))) throw new Error('API browser preflight must allow version-control precondition headers.');
 const canonicalRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
 const ingestRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/ingest-storage.md';
-if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').some((resource) => !resource.Properties?.AlarmDescription?.includes(canonicalRunbook) && !resource.Properties?.AlarmDescription?.includes(ingestRunbook))) throw new Error('Every operations alarm must identify its canonical recovery runbook.');
+const versionControlRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/version-control-integrity.md';
+if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').some((resource) => !resource.Properties?.AlarmDescription?.includes(canonicalRunbook) && !resource.Properties?.AlarmDescription?.includes(ingestRunbook) && !resource.Properties?.AlarmDescription?.includes(versionControlRunbook))) throw new Error('Every operations alarm must identify its canonical recovery runbook.');
 for (const metric of ['Quarantined', 'Repairs', 'IntegrityDrift']) {
   if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === metric)) throw new Error(`Ingest operations require the ${metric} metric filter.`);
 }
 if (!resources.some((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(ingestRunbook))) throw new Error('Ingest alarms must link their dedicated runbook.');
+for (const metric of ['IntegrityFailures', 'IntegrityHeartbeats']) {
+  if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === metric)) throw new Error(`Version-control operations require the ${metric} metric filter.`);
+}
+const versionControlHeartbeatAlarm = resources.find((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && resource.Properties?.TreatMissingData === 'breaching');
+if (!versionControlHeartbeatAlarm) throw new Error('Version-control heartbeat loss must alert within fifteen minutes and link its runbook.');
+if (versionControlHeartbeatAlarm.Properties.ActionsEnabled !== false) throw new Error('Non-production heartbeat actions must stay disabled until a healthy application deployment enables them.');
 const budget = resources.find((resource) => resource.Type === 'AWS::Budgets::Budget');
 if (budget?.Properties?.NotificationsWithSubscribers?.length !== 2) throw new Error('Budget must alert at 80% and 100%.');
 

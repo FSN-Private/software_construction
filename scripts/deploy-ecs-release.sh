@@ -11,7 +11,10 @@ docker load --input "$RELEASE_DIR/api.tar"
 docker load --input "$RELEASE_DIR/ingest-worker.tar"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 publish_immutable() {
-  local source="$1" repository="$2" target="$ECR_REGISTRY/$repository:$SOURCE_REVISION" digest
+  local source="$1"
+  local repository="$2"
+  local target="$ECR_REGISTRY/$repository:$SOURCE_REVISION"
+  local digest
   if digest="$(aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$SOURCE_REVISION" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)"; then
     docker pull "$target" >/dev/null
     test "$(docker inspect --format='{{.Id}}' "$source")" = "$(docker inspect --format='{{.Id}}' "$target")" || { echo "Immutable ECR tag contains different image bytes: $target"; return 1; }
@@ -47,9 +50,9 @@ done
 API_UPDATED="$(printf '%s' "$API_TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "Authentication__CognitoAuthority" and .name != "Authentication__CognitoClientId" and .name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"Authentication__CognitoAuthority",value:$authority},{name:"Authentication__CognitoClientId",value:$client},{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
 WORKER_UPDATED="$(printf '%s' "$WORKER_TASK" | jq --arg image "$WORKER_IMAGE" --arg name "$ECS_WORKER_CONTAINER" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
 MIGRATION_UPDATED="$(printf '%s' "$MIGRATION_TASK_BASE" | jq --arg image "$WORKER_IMAGE" --arg name "$ECS_MIGRATION_CONTAINER" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
-API_TASK_ARN="$(printf '%s' "$API_UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
-WORKER_TASK_ARN="$(printf '%s' "$WORKER_UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
-MIGRATION_TASK_ARN="$(printf '%s' "$MIGRATION_UPDATED" | aws ecs register-task-definition --cli-input-json file:///dev/stdin --query taskDefinition.taskDefinitionArn --output text)"
+API_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$API_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
+WORKER_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$WORKER_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
+MIGRATION_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$MIGRATION_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
 PREVIOUS_API_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
 PREVIOUS_WORKER_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].taskDefinition' --output text)"
 PREVIOUS_API_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)"
