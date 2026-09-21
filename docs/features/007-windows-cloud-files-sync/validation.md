@@ -24,6 +24,10 @@ The remediation also adds an isolated PostgreSQL integration check to the existi
 
 The final local checks passed: locked restore, Windows sync and API builds with zero warnings, Windows sync executable checks (1,000-placeholder p95 0.147 s; 100,000-placeholder enumeration 17.448 s; zero downloaded bytes), API foundation and version-control non-database checks, release-manifest checks, API correlation, CI contract validation, `git diff --check`, and the transitive NuGet vulnerability audit. No vulnerable package was reported. The offline suite verifies both watcher orders for a coordinated original/sidecar rename (one asset move using the original path) and an edit-only sidecar rename (a visible local conflict with no asset mutation).
 
+The PR backend workflow found a stale Feature 006 migration rehearsal after Feature 007 added migrations 007 and 008. T028 extends its rollback input and repeated-run count to the five checksum-pinned migrations; the isolated PostgreSQL/MinIO CI job is the execution environment for that verification.
+
+T028 builds successfully and the version-control executable's non-database contract suite passes locally. Docker is unavailable on this workstation, so the PostgreSQL migration replay itself will be verified by the PR backend job after the fix is pushed.
+
 ## Trusted Windows 11 release gate
 
 Dispatch `.github/workflows/windows-sync-e2e.yml` only through the protected `windows-sync-e2e` environment. The resettable x64 host must set `WINDOWS_SYNC_TRUSTED_HOST=1` and use an NTFS `WINDOWS_SYNC_TEST_ROOT`. Repeat on ARM64 before distribution. Record:
