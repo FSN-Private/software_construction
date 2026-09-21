@@ -20,10 +20,12 @@ internal static class MigrationChecks
         await using (var migrate = await connection.BeginTransactionAsync())
         {
             await ExecuteAsync(connection, expand, default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/008_rendering.sql"), default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after expansion");
         Check(await ScalarAsync(connection, "SELECT handoff_id IS NOT NULL FROM assets WHERE id=$1", default, id) is true, "New recovery metadata is added without replacing identity");
+        Check(await ScalarAsync(connection, "SELECT to_regclass('render_requests') IS NOT NULL AND to_regclass('render_provenance') IS NOT NULL", default) is true, "Rendering schema is an additive migration beside source identity tables");
         await ExecuteAsync(connection, "DELETE FROM assets WHERE id=$1 AND owner_id='migration-fixture'", default, id);
         Console.WriteLine("Migration rehearsal passed: transactional failure rollback, expansion, old-reader compatibility, stable identity.");
     }

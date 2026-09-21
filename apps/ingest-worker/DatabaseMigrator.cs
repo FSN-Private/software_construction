@@ -10,6 +10,7 @@ public static class DatabaseMigrator
     [
         "005_ingest_storage.sql",
         "005_ingest_workflows.sql",
+        "008_rendering.sql",
     ];
 
     public static Task ApplyAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) => ApplyAsync(dataSource, null, null, cancellationToken);

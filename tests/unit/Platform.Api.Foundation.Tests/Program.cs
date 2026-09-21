@@ -82,6 +82,7 @@ var generatedConnection = new NpgsqlConnectionStringBuilder(IngestDatabaseConfig
 Assert(generatedConnection.Host == "database.internal" && generatedConnection.Port == 5433 && generatedConnection.Database == "platform" && generatedConnection.Username == "platform_owner" && generatedConnection.Password == "test-only-password" && generatedConnection.SslMode == SslMode.Require, "ECS database fields must produce an encrypted PostgreSQL connection string in memory.");
 Assert(IngestDatabaseConfiguration.ResolveConnectionString("Host=explicit", _ => null) == "Host=explicit", "An explicit local connection string must take precedence.");
 Assert(IngestDatabaseConfiguration.ResolveConnectionString(null, _ => null) is null, "Incomplete database settings must keep ingest disabled.");
+RenderingChecks.Run();
 
 try { await IngestChecks.RunAsync(); }
 catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
