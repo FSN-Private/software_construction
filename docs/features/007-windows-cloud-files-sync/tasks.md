@@ -53,6 +53,7 @@
 - [X] T026 Preserve conflict metadata when a delete lifecycle replay conflicts after the local file is already absent (FR-010/019, AC-007/009, T011/T012).
 - [X] T027 Translate either watcher order for a coordinated original/sidecar rename into one asset move and preserve edit-only sidecar renames as explicit conflicts (B-006; FR-012/019, AC-005/007, T011/T012).
 - [X] T028 Align the Feature 006 PostgreSQL migration rollback/replay rehearsal with the five embedded release migrations (CI backend failure; migration integrity).
+- [X] T029 Select an active, unheld lifecycle fixture for the Windows Sync PostgreSQL convergence scenario (CI backend failure; FR-012/019, AC-005/009).
 
 ## Traceability
 

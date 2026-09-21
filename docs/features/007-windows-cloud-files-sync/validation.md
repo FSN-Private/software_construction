@@ -28,6 +28,8 @@ The PR backend workflow found a stale Feature 006 migration rehearsal after Feat
 
 T028 builds successfully and the version-control executable's non-database contract suite passes locally. Docker is unavailable on this workstation, so the PostgreSQL migration replay itself will be verified by the PR backend job after the fix is pushed.
 
+The first rerun passed the migration replay but exposed test-order coupling: an earlier lifecycle test holds one active asset, which the Windows Sync convergence test must not mutate. T029 selects only active, unheld fixture assets; PR CI remains the PostgreSQL/MinIO execution environment.
+
 ## Trusted Windows 11 release gate
 
 Dispatch `.github/workflows/windows-sync-e2e.yml` only through the protected `windows-sync-e2e` environment. The resettable x64 host must set `WINDOWS_SYNC_TRUSTED_HOST=1` and use an NTFS `WINDOWS_SYNC_TEST_ROOT`. Repeat on ARM64 before distribution. Record:
