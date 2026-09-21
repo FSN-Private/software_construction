@@ -1,6 +1,6 @@
 # Feature 007 Adversarial Review Record
 
-**Status**: Independent code gate passed; destination authority pending
+**Status**: CI remediation code gate passed; PR validation pending
 **Reviewer model**: gpt-5.5  
 **Review date**: 2026-09-03  
 **Base**: `feature/003-darktable-version-control`  
@@ -114,3 +114,22 @@ The alternate reviewer found no unresolved material code blocker. It accepted B-
 **PASS for code** at `c2d366b`.
 
 **Implementation final gate result: BLOCKED** — code is approved, but B-002 requires a destination decision before any remote mutation.
+
+## CI remediation review — 2026-09-21
+
+PR #25 backend CI failed after the first push, while Windows, web, security, and infrastructure passed. The failure was deterministic: `tests/version-control/commits/CommitChecks.cs` expected three migration ledger records although `DatabaseMigrator` now embeds five migrations, including 007 and 008. Its rollback rehearsal also did not execute migration 008.
+
+**Candidate remediation**: `a645e3a` (`test(007): align migration rehearsal`)
+
+T028 adds migration 008 to the transactional rollback input and expects five checksum-pinned ledger records after two migrator passes. The targeted build and version-control non-database executable passed locally. Docker is unavailable on the workstation, so the PostgreSQL/MinIO replay remains assigned to PR CI.
+
+### Round 6
+
+**Reviewer model**: gpt-5.5
+**Reviewed source range**: `c2d366b..a645e3a`
+
+The alternate reviewer found no material blocker. It confirmed that the transactional rollback rehearsal includes migration 008 and that the repeated migration ledger expects the five migrations embedded by `DatabaseMigrator`. Migration ordering, rollback/replay coverage, checksum behavior, documentation/task traceability, and prior B-001 through B-006 dispositions remain sound.
+
+**CI remediation code gate: PASS.**
+
+The prior B-002 destination authority is resolved: the user authorized and the branch was pushed to fresh ref `feature/007-windows-cloud-files-sync-implementation`; no existing remote history was overwritten. PR #25 remains the final PostgreSQL/MinIO validation gate.
