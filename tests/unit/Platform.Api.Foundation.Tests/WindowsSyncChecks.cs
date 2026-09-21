@@ -31,7 +31,9 @@ internal static class WindowsSyncChecks
                 JOIN content_objects oa ON oa.sha256=a.original_sha256 AND oa.integrity_state='authoritative'
                 JOIN content_objects oe ON oe.sha256=e.xmp_sha256 AND oe.integrity_state='authoritative'
                 JOIN asset_paths p ON p.asset_id=a.id AND p.active
-                WHERE a.owner_id=$1 AND a.state IN ('active','restored') LIMIT 1
+                WHERE a.owner_id=$1 AND a.state IN ('active','restored')
+                  AND NOT EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND (h.expires_at IS NULL OR h.expires_at>now()))
+                LIMIT 1
                 """, owner))
             await using (var reader = await command.ExecuteReaderAsync())
             {
