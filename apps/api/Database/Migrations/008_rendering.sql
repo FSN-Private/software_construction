@@ -14,6 +14,7 @@ CREATE TABLE rendering_compatibility (
 CREATE TABLE render_requests (
     id uuid PRIMARY KEY,
     owner_id text NOT NULL,
+    library_id text NOT NULL,
     request_key char(64) NOT NULL CHECK (request_key ~ '^[0-9a-f]{64}$'),
     asset_id uuid NOT NULL REFERENCES assets(id),
     edit_id uuid NOT NULL REFERENCES edit_identities(id),
@@ -26,7 +27,7 @@ CREATE TABLE render_requests (
     state text NOT NULL CHECK (state IN ('pending', 'running', 'completed', 'unavailable', 'failed', 'retryable', 'cancelled')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(owner_id, request_key)
+    UNIQUE(owner_id, library_id, request_key)
 );
 
 CREATE TABLE render_attempts (
@@ -71,6 +72,7 @@ CREATE TABLE render_provenance (
 CREATE TABLE render_events (
     id uuid PRIMARY KEY,
     owner_id text NOT NULL,
+    library_id text NOT NULL,
     request_id uuid NOT NULL REFERENCES render_requests(id),
     attempt_id uuid REFERENCES render_attempts(id),
     event_type text NOT NULL CHECK (event_type IN ('requested', 'cache_used', 'queued', 'completed', 'failed', 'retried', 'compatibility_rejected', 'intake_paused', 'cancelled')),
@@ -80,4 +82,4 @@ CREATE TABLE render_events (
 
 CREATE INDEX render_request_work ON render_requests(state, created_at);
 CREATE INDEX render_attempt_recovery ON render_attempts(state, started_at);
-CREATE INDEX render_event_owner ON render_events(owner_id, request_id, created_at);
+CREATE INDEX render_event_owner ON render_events(owner_id, library_id, request_id, created_at);

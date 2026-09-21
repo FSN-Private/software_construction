@@ -9,6 +9,7 @@ All routes require the authenticated library owner. IDs and hashes are opaque st
 ```json
 {
   "assetId": "uuid",
+  "libraryId": "opaque library identity",
   "editId": "uuid",
   "selectedVersion": "current | feature-006 version identity",
   "rendition": "thumbnail-512 | preview-2048",
@@ -47,4 +48,4 @@ Response is `202 Accepted` for new or coalesced work and `200 OK` for an exact c
 }
 ```
 
-The same fields form the cache key input. Consumers must display provenance text alongside a completed rendition and must not infer a missing field.
+The owner, library identity, and every provenance field form the cache key input. Consumers must display provenance text alongside a completed rendition and must not infer a missing field.

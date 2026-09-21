@@ -9,6 +9,7 @@ public enum RenderState { Pending, Running, Completed, Unavailable, Failed, Retr
 
 public sealed record RenditionRequest(
     string OwnerId,
+    string LibraryId,
     Guid AssetId,
     Guid EditId,
     string SelectedVersion,
@@ -23,14 +24,14 @@ public sealed record RenditionRequest(
         get
         {
             Validate();
-            var canonical = string.Join("\n", ["rendering-v1", OwnerId, AssetId.ToString("D"), EditId.ToString("D"), SelectedVersion, Rendition.ToString(), Profile, RendererRelease, RendererArtifactDigest, CompatibilityMatrix]);
+            var canonical = string.Join("\n", ["rendering-v1", OwnerId, LibraryId, AssetId.ToString("D"), EditId.ToString("D"), SelectedVersion, Rendition.ToString(), Profile, RendererRelease, RendererArtifactDigest, CompatibilityMatrix]);
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         }
     }
 
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(OwnerId) || AssetId == Guid.Empty || EditId == Guid.Empty || string.IsNullOrWhiteSpace(SelectedVersion) || string.IsNullOrWhiteSpace(Profile) || string.IsNullOrWhiteSpace(RendererRelease) || string.IsNullOrWhiteSpace(CompatibilityMatrix))
+        if (string.IsNullOrWhiteSpace(OwnerId) || string.IsNullOrWhiteSpace(LibraryId) || AssetId == Guid.Empty || EditId == Guid.Empty || string.IsNullOrWhiteSpace(SelectedVersion) || string.IsNullOrWhiteSpace(Profile) || string.IsNullOrWhiteSpace(RendererRelease) || string.IsNullOrWhiteSpace(CompatibilityMatrix))
             throw new ArgumentException("invalid_render_request");
         if (RendererArtifactDigest is not "unapproved" && !IsDigest(RendererArtifactDigest)) throw new ArgumentException("invalid_renderer_artifact_digest");
     }
@@ -105,5 +106,5 @@ public sealed record SelectedVersionResolution(bool IsAvailable, string? Version
 
 public interface ISelectedVersionResolver
 {
-    Task<SelectedVersionResolution> ResolveAsync(string ownerId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default);
+    Task<SelectedVersionResolution> ResolveAsync(string ownerId, string libraryId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default);
 }

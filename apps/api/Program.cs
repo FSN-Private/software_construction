@@ -50,6 +50,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton(sp => new CommitService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
     builder.Services.AddSingleton<RefService>();
     builder.Services.AddSingleton<QueryService>();
+    builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
     builder.Services.AddSingleton<OperationService>();
     builder.Services.AddSingleton<RewriteService>();
     builder.Services.AddSingleton<VisibilityService>();

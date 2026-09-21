@@ -2,7 +2,7 @@
 
 | Entity | Immutable fields | Mutable/state fields | Rules |
 |---|---|---|---|
-| Render request | `id`, owner/library, request key, asset identity, selected edit/version identity, rendition, profile, renderer/matrix version | `state`, latest attempt, created/updated timestamps | One active request per owner and request key; completed requests are reused only on exact key match. |
+| Render request | `id`, owner/library, request key, asset identity, selected edit/version identity, rendition, profile, renderer/matrix version | `state`, latest attempt, created/updated timestamps | One active request per owner, library, and request key; completed requests are reused only on exact key match. |
 | Render attempt | `id`, request, attempt number, input identities, worker policy version | queued/running/completed/failed/cancelled/retryable state, timestamps, safe category | Retry creates a new attempt; terminal rows never change input identity. |
 | Rendition | `id`, request key, output SHA-256, byte length, type, private object version | completion time, retention eligibility | Exists only with matching provenance. |
 | Preview provenance | rendition, source SHA-256, XMP SHA-256, selected version, renderer digest/release, profile/matrix version | completion time | Stored atomically with a rendition; fields are language-neutral. |

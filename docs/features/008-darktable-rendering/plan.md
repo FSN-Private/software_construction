@@ -47,7 +47,7 @@ Each milestone has its own coherent commit after its listed validation passes. N
 
 ## Interfaces and behavior
 
-1. The API canonicalizes the owner, source asset, selected edit/version, rendition, profile, and renderer compatibility version into a SHA-256 request key.
+1. The API canonicalizes the owner, library, source asset, selected edit/version, rendition, profile, and renderer compatibility version into a SHA-256 request key.
 2. It returns an existing completed rendition only if every key/provenance field matches. It otherwise creates or joins one pending request.
 3. The worker resolves an immutable source pair. A current request uses the active feature-005 edit; a historical request requires feature 006. Failure to resolve means `unavailable`, not a fallback.
 4. The worker writes temporary input/output only below a unique workspace, validates the output byte stream, writes a private derivative, and commits the rendition and provenance in one database transaction.

@@ -33,8 +33,8 @@
 
 **Independent test**: Select two committed XMP identities, request previews, and verify distinct hashes/provenance; request an unavailable version and observe no derivative.
 
-- [ ] T011 [P] [US2] Add selected-version, unavailable-without-fallback, and exact historical-provenance tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-002/005/007/013, AC-002/005/009, NFR-004/011).
-- [ ] T012 [US2] Implement the feature-006 selected-version adapter and historical request path in `apps/api/Features/Rendering/VersionControlSelectedVersionResolver.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-002/013, AC-002/005/009). — BLOCKED: feature 006 has no current implementation or stable runtime contract.
+- [x] T011 [P] [US2] Add library-scoped selected-version, unavailable-without-fallback, and exact historical-provenance tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-002/005/007/013, AC-002/005/009, NFR-004/011). — Validated by rendering and Version Control unit suites on 2026-09-21.
+- [ ] T012 [US2] Implement the feature-006 selected-version adapter and historical request path in `apps/api/Features/Rendering/VersionControlSelectedVersionResolver.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-002/013, AC-002/005/009). — IN PROGRESS: adapter complete; request-path integration follows T008.
 - [ ] T013 [US2] Add current-plus-three-historical-XMP native corpus assertions in `tests/rendering/corpus/` (FR-005/015, AC-002/009, NFR-007/011). — BLOCKED: depends on T003 and T012.
 
 ## Phase 5: User Story 3 — Understand rendering failures (P2)
@@ -59,7 +59,7 @@
 - T001–T002 are complete design prerequisites.
 - T004–T006 unblock US1 and US3 model implementation.
 - T007–T010 deliver current previews; their native validation waits for T003.
-- T011–T013 cannot complete historical preview until feature 006 provides an exact selected-version contract.
+- T011–T013 use Feature 006's merged library-scoped selected-version contract.
 - T014–T016 may run after T004–T006 and operate without historical resolution.
 - T017–T019 depend on the approved renderer artifact; T020 runs after every unblocked task and again after each blocker resolves.
 
@@ -85,4 +85,4 @@
 
 ## Implementation strategy
 
-Implement and commit the render-model/containment milestone first, then current-preview and failure slices. Do not mark a native-rendered acceptance criterion complete without trusted-runner evidence. Do not begin the historical slice until feature 006 supplies its runtime contract; retain `version_resolution_unavailable` as the safe outcome in the meantime.
+Implement and commit the render-model/containment milestone first, then current-preview and failure slices. Do not mark a native-rendered acceptance criterion complete without trusted-runner evidence. Historical resolution uses Feature 006's library-scoped runtime contract and retains `version_resolution_unavailable` for outages or unavailable selected states.

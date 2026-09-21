@@ -1,15 +1,18 @@
 using Platform.Contracts.Rendering;
+using Platform.Contracts.VersionControl;
+using Platform.Api.Features.Rendering;
 using Platform.Render.Worker;
 
 internal static class RenderingChecks
 {
     public static void Run()
     {
-        var request = new RenditionRequest("owner-1", Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"), "current", RenditionKind.Thumbnail512, "render-v1", "5.6.1", "unapproved", "rendering-v1");
+        var request = new RenditionRequest("owner-1", "library-1", Guid.Parse("11111111-1111-1111-1111-111111111111"), Guid.Parse("22222222-2222-2222-2222-222222222222"), "current", RenditionKind.Thumbnail512, "render-v1", "5.6.1", "unapproved", "rendering-v1");
         var same = request with { };
         var historical = request with { SelectedVersion = "commit-123" };
         Check(request.Key == same.Key, "Identical render-affecting inputs must have one canonical key.");
         Check(request.Key != historical.Key, "Selected XMP version must affect the rendition key.");
+        Check(request.Key != (request with { LibraryId = "library-2" }).Key, "Library scope must affect the rendition key.");
         Check(request.Key.Length == 64 && request.Key.All(char.IsAsciiHexDigit), "Rendition keys must be SHA-256 values.");
 
         var pending = new RenderAttempt(Guid.NewGuid(), 1, RenderState.Pending);
@@ -23,6 +26,15 @@ internal static class RenderingChecks
         var unavailable = SelectedVersionResolution.Unavailable("version_resolution_unavailable");
         Check(!unavailable.IsAvailable && unavailable.XmpSha256 is null, "Missing version resolution must not substitute a current XMP hash.");
         Check(!RenderFailureCodes.IsSafe("C:\\private\\token"), "Raw paths must never be accepted as render failure codes.");
+
+        var selectedVersion = new string('c', 64);
+        var historicalState = new Dictionary<string, ChangeView>
+        {
+            [$"{request.AssetId:D}/{request.EditId:D}"] = new(request.AssetId, request.EditId, "modified", null, new string('d', 64), null, null),
+        };
+        var historicalResolution = VersionControlSelectedVersionResolver.FromState(selectedVersion, selectedVersion, historicalState, request.AssetId, request.EditId);
+        Check(historicalResolution.IsAvailable && historicalResolution.XmpSha256 == new string('d', 64), "Historical resolution must return only the exact selected commit's XMP identity.");
+        Check(!VersionControlSelectedVersionResolver.FromState(selectedVersion, new string('e', 64), historicalState, request.AssetId, request.EditId).IsAvailable, "A resolver must not substitute another commit for the selected version.");
 
         new RenderResourcePolicy(30, 1024, 2048, 2).Validate();
         AssertThrows(() => new RenderResourcePolicy(0, 1024, 2048, 2).Validate(), "Render policies must bound execution time.");
