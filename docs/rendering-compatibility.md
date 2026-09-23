@@ -4,7 +4,7 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | Candidate local manifest `sha256:01b582e0f7ac9446c7911007db985dccb5d11e058cfee1f6dfa5a304a59ce362` (not registry-published) | `render-v1` | Pending trusted-runner corpus | Blocked: SBOM/CVE evidence and owner approval outstanding |
+| `rendering-v1` | 5.6.1 | Candidate local manifest `sha256:01b582e0f7ac9446c7911007db985dccb5d11e058cfee1f6dfa5a304a59ce362` (not registry-published) | `render-v1` | Four-state candidate corpus passed on Ubuntu 24.04; [candidate evidence](../tests/rendering/corpus/candidate-evidence.md) | Blocked: SBOM/CVE evidence, registry digest, and owner approval outstanding |
 
 Changing any release, digest, profile, or output format creates a new matrix row. Existing derivatives retain their original provenance and are never relabelled.
 
