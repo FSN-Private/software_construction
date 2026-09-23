@@ -1,7 +1,7 @@
 # Candidate native corpus evidence
 
-**Date**: 2026-09-23  
-**Runner**: configured Ubuntu 24.04 trusted Linux runner  
+**Date**: 2026-09-23
+**Runner**: configured Ubuntu 24.04 trusted Linux runner
 **Renderer**: local `platform/darktable-renderer:5.6.1-candidate`, manifest `sha256:01b582e0f7ac9446c7911007db985dccb5d11e058cfee1f6dfa5a304a59ce362`
 
 `run-native.sh` verified the CR2 checksum, used the renderer's non-root UID against a disposable writable workspace, and produced four distinct 512px JPEG outputs.
