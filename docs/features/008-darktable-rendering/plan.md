@@ -25,6 +25,7 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 - [API contract](contracts/rendering-v1.md) specifies safe owner-visible states and provenance.
 - [Quickstart](quickstart.md) separates model validation from the trusted native-renderer gate.
 - [ADR-0007](../../architecture/decisions/0007-isolated-darktable-rendering-provenance.md) records the enduring containment boundary.
+- [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md) limits the accepted renderer digest to non-production until every accepted lower-severity finding is remediated.
 
 ## Constitution Check
 
@@ -33,7 +34,7 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 | Matching branch and feature directory | PASS | `feature/008-darktable-rendering` and `docs/features/008-darktable-rendering/` |
 | Specification source of truth | PASS | `spec.md`, this plan, and `tasks.md` are the sole feature artifacts |
 | Testable and secure design | PASS with release gates | Model tests run locally; native corpus, image digest, and compatibility approval block release use |
-| Dependencies and supply chain | PASS with gate | darktable artifact source, digest, license, SBOM, and vulnerability scan are required before a worker image is accepted |
+| Dependencies and supply chain | PASS for non-production with production gate | darktable artifact source, digest, license, SBOM, and vulnerability scan are required before a worker image is accepted; the accepted 48 medium and 18 low findings prohibit production promotion until remediated |
 | Feature dependency | BLOCKED for US2 | Feature 006 has no implementation on this baseline; selected historical versions must return unavailable, never substitute current state |
 
 ## Delivery slices and milestones
@@ -60,6 +61,7 @@ Each milestone has its own coherent commit after its listed validation passes. N
 - The worker limits CPU, memory, ephemeral storage, process time, concurrency, and queue visibility. On restart, active attempts become retryable or terminal within ten minutes.
 - Intake pause/drain/cancel operates on pending work only. Completed derivative/provenance pairs are immutable and remain readable according to retention policy.
 - The release plan must pin the darktable image by digest, retain SBOM/provenance and corpus evidence, define alert thresholds, and rehearse queue-drain rollback before deployment.
+- Compatibility approval is environment-scoped: the 2026-09-23 approval permits the documented digest only for non-production. Production must use a replacement digest whose vulnerability evidence contains none of the 66 accepted medium/low findings; no waiver can bypass this gate.
 
 ## Alternatives considered
 

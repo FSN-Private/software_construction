@@ -38,6 +38,11 @@
 - Digest-qualified Trivy evidence records 294 components, no critical/high finding, 48 medium findings, and 18 low findings. ECR's scan-on-push setting is enabled, but its `DescribeImageScanFindings` response was `ScanNotFound`; independent Trivy evidence remains the release gate.
 - No ECS task/service, GitHub environment value, database, queue, storage, or network resource changed. Compatibility approval remains required before renderer intake can be enabled.
 
+## 2026-09-23 non-production compatibility approval
+
+- Fredrik Snårbacka accepted the exact ECR digest for new non-production `rendering-v1` derivatives at 17:32:00 UTC, accepting the 48 medium and 18 low findings in the digest-qualified Trivy report.
+- This approval is not a production deployment authorization. [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md) blocks production until a replacement digest eliminates all 66 accepted findings and a digest-qualified scan proves their absence. No production waiver is permitted.
+
 ## Rollout and rollback
 
 1. Apply the additive migration and verify the migration ledger.
@@ -45,4 +50,4 @@
 3. Enable a small owner-scoped current-preview canary and observe queue age, failure categories, cache reuse, duration, and private-object access for 30 minutes.
 4. Enable normal intake only if cached and uncached targets hold and no unsafe failure data appears.
 
-Abort on source mutation, cross-library access, provenance mismatch, unbounded queue age, or any critical/high dependency finding. Roll back by pausing intake and restoring the last approved matrix; do not delete completed derivatives or source/history data during rollback.
+Abort on source mutation, cross-library access, provenance mismatch, unbounded queue age, any critical/high dependency finding, or any attempt to use the non-production-approved digest in production. Roll back by pausing intake and restoring the last approved matrix; do not delete completed derivatives or source/history data during rollback.

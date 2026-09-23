@@ -1,6 +1,6 @@
 # Tasks: Darktable Rendering and Preview Provenance
 
-**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [rendering-v1 contract](contracts/rendering-v1.md), and [ADR-0007](../../architecture/decisions/0007-isolated-darktable-rendering-provenance.md).
+**Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [rendering-v1 contract](contracts/rendering-v1.md), [ADR-0007](../../architecture/decisions/0007-isolated-darktable-rendering-provenance.md), and [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md).
 
 **Tests**: The specification requires automated model, integration, corpus, failure, resource-limit, and performance coverage. Native rendering evidence is a trusted-runner release gate; it cannot be represented by a fake successful CLI execution.
 
@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: the source-verified, minimized 5.6.1 runtime image is published by immutable ECR digest and passed the four-state CC0 CR2/XMP corpus on the trusted Ubuntu 24.04 runner. Its digest-qualified Trivy CycloneDX/SARIF evidence has 294 components and no high/critical finding (48 medium, 18 low). Blocked only on explicit owner approval accepting the remaining medium/low findings for the exact ECR digest.
+- [x] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — Validated by the immutable ECR digest, digest-qualified Trivy SBOM/SARIF (294 components; 0 critical/high, 48 medium, 18 low), and four-state CR2/XMP corpus. Fredrik Snårbacka approved it for non-production derivatives at 2026-09-23T17:32:00Z; ADR-0009 prohibits production until all 66 accepted findings are remediated.
 
 ## Phase 2: Shared rendering foundation
 
@@ -25,7 +25,7 @@
 - [x] T007 [P] [US1] Add current-preview request, cache-hit, duplicate-coalescing, output/provenance atomicity, and owner-isolation tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-003/005–009, AC-001/003/004/007, NFR-001/002/004/011). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
 - [x] T008 [US1] Implement owner-authorized current-edit source resolution, canonical cache lookup, request creation, and status response in `apps/api/Features/Rendering/RenderingService.cs` and `apps/api/Features/Rendering/RenderingEndpoints.cs` (FR-002/003/005–008/013, AC-001/003/004/005, NFR-001/004/008). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
 - [x] T009 [US1] Implement queue dispatch, idempotent claim, private workspace cleanup, output validation, private derivative publication, and atomic completed provenance in `apps/render-worker/RenderWorker.cs` (FR-004/007–011/014/017, AC-003/004/007, NFR-002–005/009/014). — Validated by worker/API builds and `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
-- [ ] T010 [US1] Add PostgreSQL/MinIO current-preview integration coverage and a trusted-runner current RAW/XMP render gate in `tests/rendering/current/` (AC-001/003/004/007, NFR-001/002/005/011/017). — IN PROGRESS: the trusted runner and published renderer digest are available and the corpus passes, but the current-preview integration test and compatibility approval remain outstanding.
+- [ ] T010 [US1] Add PostgreSQL/MinIO current-preview integration coverage and a trusted-runner current RAW/XMP render gate in `tests/rendering/current/` (AC-001/003/004/007, NFR-001/002/005/011/017). — IN PROGRESS: the trusted runner and non-production-approved renderer digest are available and the corpus passes, but the current-preview integration test remains outstanding.
 
 ## Phase 4: User Story 2 — Inspect a historical version (P1)
 
@@ -35,7 +35,7 @@
 
 - [x] T011 [P] [US2] Add library-scoped selected-version, unavailable-without-fallback, and exact historical-provenance tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-002/005/007/013, AC-002/005/009, NFR-004/011). — Validated by rendering and Version Control unit suites on 2026-09-21.
 - [x] T012 [US2] Implement the feature-006 selected-version adapter and historical request path in `apps/api/Features/Rendering/VersionControlSelectedVersionResolver.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-002/013, AC-002/005/009). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
-- [ ] T013 [US2] Add current-plus-three-historical-XMP native corpus assertions in `tests/rendering/corpus/` (FR-005/015, AC-002/009, NFR-007/011). — IN PROGRESS: the CC0 CR2 fixture, current plus three historical XMP states, checksum-enforcing native harness, and trusted-runner ECR-digest evidence are present. T003 compatibility approval is still required before the reference records can be accepted.
+- [x] T013 [US2] Add current-plus-three-historical-XMP native corpus assertions in `tests/rendering/corpus/` (FR-005/015, AC-002/009, NFR-007/011). — Validated by the CC0 CR2 fixture, current plus three historical XMP states, checksum-enforcing native harness, published ECR-digest evidence, and non-production compatibility approval on 2026-09-23.
 
 ## Phase 5: User Story 3 — Understand rendering failures (P2)
 
@@ -49,10 +49,11 @@
 
 ## Phase 6: Operations and release readiness
 
-- [ ] T017 Configure the renderer worker image, SQS/DLQ, restrictive IAM, resource limits, queue drain/cancel, restart recovery, private retention, metrics, and alerts in `packages/infrastructure/` (FR-008/010/011/014/017, NFR-003/005/009/012–014/017). — IN PROGRESS: the CDK stack now declares the separate immutable, scan-on-push, retained renderer repository and exports it for protected non-production configuration. On 2026-09-23, the live account/repository posture and template-only diff were read-verified, then the owner-approved CDK deployment created the repository with immutable tags and scan-on-push; it changed no task/service, storage, database, queue, or network resource. Worker runtime resources remain blocked on T003's approved renderer artifact.
+- [ ] T017 Configure the renderer worker image, SQS/DLQ, restrictive IAM, resource limits, queue drain/cancel, restart recovery, private retention, metrics, and alerts in `packages/infrastructure/` (FR-008/010/011/014/017, NFR-003/005/009/012–014/017). — IN PROGRESS: the CDK stack declares the separate immutable, scan-on-push, retained renderer repository and exports it for protected non-production configuration. The owner-approved CDK deployment created that repository without changing runtime resources. The non-production-approved artifact now unblocks worker infrastructure implementation; T021's production gate must be enforced before any production promotion.
 - [x] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
-- [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for release evidence: T003 approval and T010 current-preview integration.
+- [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for current-preview integration and worker infrastructure: T010 and T017.
 - [ ] T020 Run Spec Kit convergence, resolve appended tasks, validate all non-blocked requirements, and record feature review evidence in `docs/features/008-darktable-rendering/` (all FR/AC/NFR).
+- [ ] T021 Enforce the non-production-only compatibility scope and production scan-diff gate in deployment configuration and release validation; remediate all 48 medium and 18 low findings in a replacement digest before any production promotion (AC-010, NFR-018, ADR-0009).
 
 ## Dependencies and execution order
 
@@ -62,6 +63,7 @@
 - T011–T013 use Feature 006's merged library-scoped selected-version contract.
 - T014–T016 may run after T004–T006 and operate without historical resolution.
 - T017–T019 depend on the approved renderer artifact; T020 runs after every unblocked task and again after each blocker resolves.
+- T021 blocks every production renderer promotion until its remediation and replacement-digest scan requirements are satisfied.
 
 ## Traceability
 
@@ -79,9 +81,11 @@
 | AC-001–004 | T007–T010 |
 | AC-005–007 | T006, T008–T009, T011–T012, T014–T016 |
 | AC-008–009 | T003, T011–T013, T018–T019 |
+| AC-010 | T021 |
 | NFR-001–004 | T004–T005, T007–T010, T014–T019 |
 | NFR-005–009 | T003, T006, T010, T014–T019 |
 | NFR-010–017 | T003–T005, T010, T013–T020 |
+| NFR-018 | T021 |
 
 ## Implementation strategy
 

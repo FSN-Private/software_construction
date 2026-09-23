@@ -13,7 +13,7 @@ The Dockerfile verifies the official darktable 5.6.1 archive SHA-256 before buil
 | `darktable-5.6.1-ecr.cdx.json` | `7164a479a6feb811fa2e8f47f49ba56b9f1202fbfb1d48b1e1e581f474ce78e5` | CycloneDX 1.7 SBOM scanned from the published ECR digest, with 294 components |
 | `darktable-5.6.1-ecr.sarif` | `ceb04af6e6042a87e75b3b3e9c5b5ae51a194b5718e63c7cdc25931f56227a38` | 0 critical, 0 high, 48 medium, and 18 low unique findings scanned from the published ECR digest |
 
-The security gate permits no unresolved critical or high finding. The remaining medium/low findings are recorded for the compatibility owner to accept or reject with the ECR-digest approval.
+The security gate permits no unresolved critical or high finding. Fredrik Snårbacka accepted the remaining 48 medium and 18 low findings for the exact digest's non-production use at `2026-09-23T17:32:00Z`. Production use is prohibited until a replacement digest eliminates all 66 accepted findings and a digest-qualified scan proves that result.
 
 Reproduce from the repository root after building the exact local tag:
 
@@ -22,4 +22,4 @@ TRIVY_CACHE_DIR=/tmp/trivy-008-cache /path/to/trivy image --scanners vuln --form
 TRIVY_CACHE_DIR=/tmp/trivy-008-cache /path/to/trivy image --scanners vuln --format sarif --output docs/features/008-darktable-rendering/evidence/darktable-5.6.1-runtime-candidate.sarif platform/darktable-renderer:5.6.1-runtime-candidate
 ```
 
-The image is published as `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb`. Its ECR-digest corpus evidence is [recorded with the corpus](../../../../tests/rendering/corpus/ecr-evidence.md). Explicit owner compatibility approval is still required before new derivatives use it.
+The image is published as `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb`. Its ECR-digest corpus evidence is [recorded with the corpus](../../../../tests/rendering/corpus/ecr-evidence.md). It is approved for non-production derivatives only; production is prohibited by [ADR-0009](../../../architecture/decisions/0009-production-renderer-vulnerability-gate.md).

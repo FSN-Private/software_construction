@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feature/008-darktable-rendering`  
 **Created**: 2026-09-03  
-**Status**: Approved for implementation by product-owner request on 2026-09-21
+**Status**: Approved for implementation by product-owner request on 2026-09-21; the reviewed renderer digest is approved for non-production derivatives only on 2026-09-23
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 
 ## Problem and Scope
@@ -101,6 +101,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **AC-007**: Render execution cannot alter source objects, working changes, commits, or branch references.
 - **AC-008**: Every supported-release change passes the approved regression corpus before use for new requests.
 - **AC-009**: One RAW fixture with its current XMP state and at least three distinct historical XMP revisions renders with traceable provenance for every rendition.
+- **AC-010**: Production promotion is refused while any of the 48 medium or 18 low findings accepted for the non-production 5.6.1 digest remains in its digest-qualified vulnerability report.
 
 ## Non-Functional Requirements
 
@@ -121,6 +122,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **NFR-015 Localization**: User-visible statuses and failure messages MUST be localizable; stored provenance identifiers remain language-neutral.
 - **NFR-016 Compliance**: Preview retention and deletion MUST honor the parent program's library deletion and recovery policy.
 - **NFR-017 Freshness**: Under the reference 100,000-image workload, 99% of supported images MUST have a usable gallery thumbnail within 5 minutes of completed upload, excluding visible retryable failures.
+- **NFR-018 Production supply-chain security**: A non-production owner may accept lower-severity findings for an exact compatibility digest, but production deployment MUST remain blocked until every finding accepted for that digest is remediated and a digest-qualified scan proves those findings absent. There is no production waiver. Verification: compare the production-candidate scan against the retained 2026-09-24 ECR SARIF evidence and fail promotion if any of its 48 medium or 18 low findings remains.
 
 ## Assumptions and Dependencies
 
@@ -129,6 +131,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - Feature 006 supplies the approved library-scoped selected-version resolution contract. Historical-version rendering MUST use that exact resolver and return unavailable on a missing or mismatched selected state; it MUST not substitute a branch head or synthetic history.
 - Gallery and lineage interfaces in features 009 and 010 consume this feature's rendition and provenance contract.
 - Rendering derivatives are reproducible aids, not authoritative replacements for originals or XMP history.
+- Fredrik Snårbacka approved the exact 5.6.1 ECR digest for new non-production `rendering-v1` derivatives at 2026-09-23T17:32:00Z, accepting 48 medium and 18 low findings. That acceptance does not authorize production use.
 
 ## Success Criteria
 
@@ -138,3 +141,4 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **SC-004**: Every approved darktable-release update passes the complete rendering regression corpus before it serves new derivatives.
 - **SC-005**: A current XMP state and at least three historical revisions of the same RAW fixture render with distinguishable, traceable provenance.
 - **SC-006**: 99% of supported images in the reference workload have usable thumbnails within five minutes of completed upload, excluding visible retryable failures.
+- **SC-007**: Production promotion of the renderer remains unavailable until a replacement digest eliminates the 66 lower-severity findings accepted only for non-production use.

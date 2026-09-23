@@ -4,7 +4,7 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` | `render-v1` | Four-state ECR-digest corpus passed on Ubuntu 24.04; [ECR corpus evidence](../tests/rendering/corpus/ecr-evidence.md) | Pending owner approval; Trivy SBOM/SARIF has no high/critical finding; 48 medium and 18 low findings require acceptance |
+| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` | `render-v1` | Four-state ECR-digest corpus passed on Ubuntu 24.04; [ECR corpus evidence](../tests/rendering/corpus/ecr-evidence.md) | Approved for non-production by Fredrik Snårbacka at 2026-09-23T17:32:00Z; 48 medium and 18 low findings accepted. Production is blocked until all 66 are remediated and absent from a replacement digest scan. |
 
 Changing any release, digest, profile, or output format creates a new matrix row. Existing derivatives retain their original provenance and are never relabelled.
 
@@ -51,6 +51,10 @@ Fill this only after every checklist item has immutable evidence. A local Docker
 | Registry image | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:<digest>` |
 | Security evidence | SBOM reference and completed CVE report; no unresolved critical/high finding |
 | Corpus evidence | Trusted-runner run URL/ID and the four XMP/output provenance records |
-| Approval | Owner name, UTC timestamp, and explicit statement: “Approve this exact digest for new `rendering-v1` derivatives.” |
+| Approval | Fredrik Snårbacka, 2026-09-23T17:32:00Z: accepts 48 medium and 18 low findings and approves this exact digest for non-production `rendering-v1` derivatives. Production is blocked until all 66 findings are remediated and absent from a replacement-digest scan. |
 
 Any change to the digest, profile, output encoding, or darktable release invalidates this record and requires a new matrix row and approval.
+
+## Recorded approval
+
+Fredrik Snårbacka accepted 48 medium and 18 low findings and approved `sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` for new non-production `rendering-v1` derivatives at 2026-09-23T17:32:00Z. This acceptance does not authorize production deployment: every one of the 66 findings must be remediated and absent from a digest-qualified scan of a replacement artifact before production promotion.
