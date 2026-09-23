@@ -51,6 +51,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<RefService>();
     builder.Services.AddSingleton<QueryService>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
+    builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
     builder.Services.AddSingleton<OperationService>();
     builder.Services.AddSingleton<RewriteService>();
     builder.Services.AddSingleton<VisibilityService>();
@@ -80,6 +81,7 @@ Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
 WindowsSyncEndpoints.Map(app);
+Platform.Api.Features.Rendering.RenderingEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>
