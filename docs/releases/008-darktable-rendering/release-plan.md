@@ -25,6 +25,12 @@
 - CDK's template-only comparison against the live stack reports exactly one new `AWS::ECR::Repository`, the `RendererRepositoryName` output, and deployment-role permissions scoped to that repository (`ecr:DescribeImages` and pull/push actions). It reports no storage, database, queue, network, task, service, or replacement change.
 - No deployment ran and no CloudFormation change set remains. Creating the repository, updating the deployment role/output, and updating protected GitHub configuration still require explicit external-mutation authorization.
 
+## 2026-09-23 approved registry deployment
+
+- The owner explicitly approved the reviewed non-production CDK diff. CloudFormation updated `PlatformFoundation-nonprod` from 15:40:45 UTC and reached `UPDATE_COMPLETE`.
+- The new repository is `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker`. Post-deployment verification confirmed immutable tags and scan-on-push enabled.
+- No renderer image was published, no ECS task/service was changed, and no GitHub environment variable or secret was changed. Image publication remains blocked on T003 security/corpus evidence; the protected GitHub configuration change remains separately approval-gated.
+
 ## Rollout and rollback
 
 1. Apply the additive migration and verify the migration ledger.
