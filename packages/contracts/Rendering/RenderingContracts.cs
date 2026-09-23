@@ -120,7 +120,7 @@ public sealed record RenderPublication(string ObjectKey, string ObjectVersion, s
 {
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(ObjectKey) || string.IsNullOrWhiteSpace(ObjectVersion) || !IsSha256(OutputSha256) || ByteLength < 1 || MediaType is not ("image/jpeg" or "image/png"))
+        if (string.IsNullOrWhiteSpace(ObjectKey) || ObjectKey.StartsWith('/') || ObjectKey.Contains('\\') || ObjectKey.Split('/').Any(static segment => segment is "" or "." or "..") || string.IsNullOrWhiteSpace(ObjectVersion) || !IsSha256(OutputSha256) || ByteLength < 1 || MediaType is not ("image/jpeg" or "image/png"))
             throw new ArgumentException("invalid_render_publication");
     }
 

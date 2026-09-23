@@ -48,6 +48,7 @@ internal static class RenderingChecks
         Check(ledger.Request(request with { OwnerId = "owner-2" }).RequestId != first.RequestId, "Owner scope must prevent cross-owner cache reuse.");
         var provenance = new RenderProvenance(new string('a', 64), new string('b', 64), "current", "5.6.1", "unapproved", "render-v1", "rendering-v1", DateTimeOffset.UtcNow);
         var publication = new RenderPublication("private/owner-1/rendition.jpg", "version-1", new string('e', 64), 32, "image/jpeg");
+        AssertThrows(() => new RenderPublication("C:\\private\\output.jpg", "version-1", new string('e', 64), 32, "image/jpeg").Validate(), "Derivative publication metadata must reject filesystem paths.");
         AssertThrows(() => ledger.Complete(first.RequestId, provenance with { SelectedVersion = "different" }, publication), "Completion must reject provenance that differs from the request.");
         var completedRequest = ledger.Complete(first.RequestId, provenance, publication);
         Check(completedRequest.State == RenderState.Completed && completedRequest.Provenance == provenance && completedRequest.Publication == publication, "A completed derivative and matching provenance must become visible together.");

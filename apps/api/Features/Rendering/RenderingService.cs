@@ -51,6 +51,24 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         return await StatusAsync(connection, owner, library, requestId, false, cancellationToken);
     }
 
+    public async Task<RenditionStatusView> RetryAsync(string owner, string library, Guid requestId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = Command(connection, "SELECT state FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 FOR UPDATE", requestId, owner, library);
+        var state = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (state is null) throw new RenderingProblem("rendition_not_found", 404);
+        if (state is not ("failed" or "retryable" or "unavailable")) throw new RenderingProblem("rendition_not_retryable");
+        var number = Convert.ToInt32(await ScalarAsync(connection, "SELECT COALESCE(MAX(attempt_number),0)+1 FROM render_attempts WHERE request_id=$1", cancellationToken, requestId), System.Globalization.CultureInfo.InvariantCulture);
+        var attempt = Guid.NewGuid();
+        await ExecuteAsync(connection, "INSERT INTO render_attempts(id,request_id,attempt_number,state,worker_policy_version) VALUES($1,$2,$3,'pending','render-policy-v1')", cancellationToken, attempt, requestId, number);
+        await ExecuteAsync(connection, "UPDATE render_requests SET state='pending',updated_at=now() WHERE id=$1", cancellationToken, requestId);
+        await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,$3,$4,$5,'retried'),($6,$2,$3,$4,$5,'queued')", cancellationToken, Guid.NewGuid(), owner, library, requestId, attempt, Guid.NewGuid());
+        var result = await StatusAsync(connection, owner, library, requestId, false, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
     private static async Task<RenditionStatusView> StatusAsync(NpgsqlConnection connection, string owner, string library, Guid requestId, bool existing, CancellationToken cancellationToken)
     {
         await using var command = Command(connection, "SELECT r.state,(SELECT id FROM render_attempts a WHERE a.request_id=r.id ORDER BY attempt_number DESC LIMIT 1),(SELECT failure_code FROM render_attempts a WHERE a.request_id=r.id ORDER BY attempt_number DESC LIMIT 1) FROM render_requests r WHERE r.id=$1 AND r.owner_id=$2 AND r.library_id=$3", requestId, owner, library);

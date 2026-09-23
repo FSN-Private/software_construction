@@ -43,8 +43,8 @@
 
 **Independent test**: Submit malformed, missing, unsupported, resource-limited, and corrected inputs; verify safe category, separate retry attempt, and no substituted result.
 
-- [ ] T014 [P] [US3] Add failure-category, retry, timeout, output-validation, workspace-cleanup, and no-path/no-secret tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-010–014/017, AC-005–007, NFR-003/006/011/014/015).
-- [ ] T015 [US3] Implement safe failure/status/retry API behavior, accessible text, and render audit events in `apps/api/Features/Rendering/RenderingEndpoints.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-006/012/014, AC-005/006, NFR-006/008/009/015).
+- [x] T014 [P] [US3] Add failure-category, retry, timeout, output-validation, workspace-cleanup, and no-path/no-secret tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-010–014/017, AC-005–007, NFR-003/006/011/014/015). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
+- [x] T015 [US3] Implement safe failure/status/retry API behavior, accessible text, and render audit events in `apps/api/Features/Rendering/RenderingEndpoints.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-006/012/014, AC-005/006, NFR-006/008/009/015). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
 - [ ] T016 [US3] Add malformed/missing/unsupported/resource/retry/cleanup integration and native runner checks in `tests/rendering/failures/` (FR-010–014/017, AC-005–007, NFR-003/009/011/014).
 
 ## Phase 6: Operations and release readiness

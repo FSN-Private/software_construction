@@ -14,6 +14,7 @@ public static class RenderingEndpoints
             return result.CacheHit ? Results.Ok(result) : Results.Accepted($"/v1/renditions/{result.RequestId:D}", result);
         });
         group.MapGet("/{requestId:guid}", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Ok(await Service(context).StatusAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken)));
+        group.MapPost("/{requestId:guid}/retry", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Accepted($"/v1/renditions/{requestId:D}", await Service(context).RetryAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken)));
     }
 
     private static RenderingService Service(HttpContext context) => context.RequestServices.GetService<RenderingService>() ?? throw new RenderingProblem("rendering_unavailable", 503);
