@@ -12,6 +12,7 @@ $variables = [ordered]@{
     AWS_NONPROD_ECR_REGISTRY = $outputs.EcrRegistry
     AWS_NONPROD_API_REPOSITORY = $outputs.ApiRepositoryName
     AWS_NONPROD_WORKER_REPOSITORY = $outputs.WorkerRepositoryName
+    AWS_NONPROD_RENDERER_REPOSITORY = $outputs.RendererRepositoryName
     AWS_NONPROD_ECS_CLUSTER = $outputs.EcsClusterName
     AWS_NONPROD_ECS_SERVICE = $outputs.ApiServiceName
     AWS_NONPROD_ECS_TASK_DEFINITION = $outputs.ApiTaskDefinitionFamily

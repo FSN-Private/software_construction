@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: trusted runner and a source-verified 5.6.1 local candidate are available; blocked on a successful SBOM/CVE report, native corpus evidence, immutable registry publication, and explicit owner approval.
+- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: trusted runner and a source-verified 5.6.1 local candidate are available. The existing CC0 `tests/fixtures/ingest/sample.dng` corpus input and the non-production ECR/approval evidence path are documented. Blocked on a successful SBOM/CVE report, native corpus evidence, immutable registry publication, and explicit owner approval.
 
 ## Phase 2: Shared rendering foundation
 
@@ -35,7 +35,7 @@
 
 - [x] T011 [P] [US2] Add library-scoped selected-version, unavailable-without-fallback, and exact historical-provenance tests in `tests/unit/Platform.Api.Foundation.Tests/RenderingChecks.cs` (FR-002/005/007/013, AC-002/005/009, NFR-004/011). — Validated by rendering and Version Control unit suites on 2026-09-21.
 - [x] T012 [US2] Implement the feature-006 selected-version adapter and historical request path in `apps/api/Features/Rendering/VersionControlSelectedVersionResolver.cs` and `apps/api/Features/Rendering/RenderingService.cs` (FR-002/013, AC-002/005/009). — Validated by `dotnet run --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` on 2026-09-23.
-- [ ] T013 [US2] Add current-plus-three-historical-XMP native corpus assertions in `tests/rendering/corpus/` (FR-005/015, AC-002/009, NFR-007/011). — BLOCKED: depends on T003 and T012.
+- [ ] T013 [US2] Add current-plus-three-historical-XMP native corpus assertions in `tests/rendering/corpus/` (FR-005/015, AC-002/009, NFR-007/011). — BLOCKED: the CC0 RAW input is already present, but T003 must supply the approved registry digest and trusted native-run evidence before reference XMP/output records can be accepted.
 
 ## Phase 5: User Story 3 — Understand rendering failures (P2)
 
@@ -49,7 +49,7 @@
 
 ## Phase 6: Operations and release readiness
 
-- [ ] T017 Configure the renderer worker image, SQS/DLQ, restrictive IAM, resource limits, queue drain/cancel, restart recovery, private retention, metrics, and alerts in `packages/infrastructure/` (FR-008/010/011/014/017, NFR-003/005/009/012–014/017). — BLOCKED: T003 provides the approved renderer artifact.
+- [ ] T017 Configure the renderer worker image, SQS/DLQ, restrictive IAM, resource limits, queue drain/cancel, restart recovery, private retention, metrics, and alerts in `packages/infrastructure/` (FR-008/010/011/014/017, NFR-003/005/009/012–014/017). — IN PROGRESS: the CDK stack now declares the separate immutable, scan-on-push, retained renderer repository and exports it for protected non-production configuration. Worker runtime resources remain blocked on T003's approved renderer artifact.
 - [x] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
 - [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for native evidence: T003 and T012.
 - [ ] T020 Run Spec Kit convergence, resolve appended tasks, validate all non-blocked requirements, and record feature review evidence in `docs/features/008-darktable-rendering/` (all FR/AC/NFR).

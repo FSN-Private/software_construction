@@ -9,7 +9,7 @@ for (const type of requiredTypes) {
   }
 }
 if (resources.filter((resource) => resource.Type === 'AWS::S3::Bucket').length < 2) throw new Error('Foundation and ingest require separate private versioned buckets.');
-if (resources.filter((resource) => resource.Type === 'AWS::ECR::Repository').length !== 2) throw new Error('API and ingest worker require separate ECR repositories.');
+if (resources.filter((resource) => resource.Type === 'AWS::ECR::Repository').length !== 3) throw new Error('API, ingest-worker, and renderer-worker require separate ECR repositories.');
 const taskDefinitions = resources.filter((resource) => resource.Type === 'AWS::ECS::TaskDefinition');
 if (taskDefinitions.length !== 3 || resources.filter((resource) => resource.Type === 'AWS::ECS::Service').length !== 2) throw new Error('API, worker, and dedicated migration tasks plus paired runtime services are required.');
 const apiTask = taskDefinitions.find((task) => task.Properties.ContainerDefinitions[0].Name === 'api');
@@ -33,7 +33,7 @@ for (const task of runtimeTasks) {
 }
 const migrationSecretNames = (migrationTask.Properties.ContainerDefinitions[0].Secrets ?? []).map(({ Name }) => Name);
 if (!['Ingest__Database__Username', 'Ingest__Database__Password', 'Ingest__RuntimeDatabase__Username', 'Ingest__RuntimeDatabase__Password'].every((name) => migrationSecretNames.includes(name))) throw new Error('The migration task must receive admin and runtime credentials for schema migration and runtime-role provisioning.');
-for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId', 'DatabaseInstanceIdentifier', 'VersionControlHeartbeatAlarmName']) {
+for (const output of ['AwsRegion', 'EcrRegistry', 'ApiRepositoryName', 'WorkerRepositoryName', 'RendererRepositoryName', 'EcsClusterName', 'ApiServiceName', 'ApiTaskDefinitionFamily', 'ApiContainerName', 'WorkerServiceName', 'WorkerTaskDefinitionFamily', 'WorkerContainerName', 'MigrationTaskDefinitionFamily', 'MigrationContainerName', 'HealthUrl', 'CognitoAuthority', 'OwnerUserPoolClientId', 'DatabaseInstanceIdentifier', 'VersionControlHeartbeatAlarmName']) {
   if (!template.Outputs?.[output]) throw new Error(`Missing deployment configuration output ${output}.`);
 }
 const iamPolicies = Object.entries(template.Resources).filter(([, resource]) => resource.Type === 'AWS::IAM::Policy');

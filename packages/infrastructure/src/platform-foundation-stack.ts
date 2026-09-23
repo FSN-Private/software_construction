@@ -91,6 +91,13 @@ export class PlatformFoundationStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
       emptyOnDelete: false,
     });
+    const rendererRepository = new Repository(this, 'RendererRepository', {
+      repositoryName: `platform-${props.environmentName}-render-worker`,
+      imageTagMutability: TagMutability.IMMUTABLE,
+      imageScanOnPush: true,
+      removalPolicy: RemovalPolicy.RETAIN,
+      emptyOnDelete: false,
+    });
     const database = new DatabaseInstance(this, 'IngestDatabase', {
       engine: DatabaseInstanceEngine.postgres({ version: PostgresEngineVersion.of('18.4', '18') }),
       credentials: Credentials.fromGeneratedSecret('platform_admin'),
@@ -227,7 +234,8 @@ export class PlatformFoundationStack extends Stack {
       deploymentRole = aws_iam.Role.fromRoleArn(this, 'DeploymentRole', props.deploymentRoleArn);
       apiRepository.grantPullPush(deploymentRole);
       workerRepository.grantPullPush(deploymentRole);
-      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecr:DescribeImages'], resources: [apiRepository.repositoryArn, workerRepository.repositoryArn] }));
+      rendererRepository.grantPullPush(deploymentRole);
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecr:DescribeImages'], resources: [apiRepository.repositoryArn, workerRepository.repositoryArn, rendererRepository.repositoryArn] }));
       const taskFamilies = [apiTask, workerTask, migrationTask].map((task) => this.formatArn({ service: 'ecs', resource: 'task-definition', resourceName: `${task.family}:*` }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:RegisterTaskDefinition'], resources: ['*'] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTaskDefinition'], resources: ['*'] }));
@@ -318,6 +326,7 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'EcrRegistry', { value: `${this.account}.dkr.ecr.${this.region}.${this.urlSuffix}` });
     new CfnOutput(this, 'ApiRepositoryName', { value: apiRepository.repositoryName });
     new CfnOutput(this, 'WorkerRepositoryName', { value: workerRepository.repositoryName });
+    new CfnOutput(this, 'RendererRepositoryName', { value: rendererRepository.repositoryName });
     new CfnOutput(this, 'EcsClusterName', { value: cluster.clusterName });
     new CfnOutput(this, 'ApiServiceName', { value: apiService.serviceName });
     new CfnOutput(this, 'ApiTaskDefinitionFamily', { value: apiTask.family });
