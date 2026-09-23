@@ -14,13 +14,21 @@ public interface IImmutableRenderSourceResolver
 
 public interface IPrivateDerivativeStore
 {
-    Task PublishAsync(RenderJob job, string outputPath, CancellationToken cancellationToken = default);
+    Task<PublishedDerivative> PublishAsync(RenderJob job, string outputPath, CancellationToken cancellationToken = default);
 }
+
+public sealed record PublishedDerivative(string ObjectKey, string ObjectVersion, string OutputSha256, long ByteLength, string MediaType);
 
 public interface IRenderQueue
 {
+    Task<bool> ClaimAsync(Guid attemptId, CancellationToken cancellationToken = default);
     Task CompleteAsync(Guid attemptId, CancellationToken cancellationToken = default);
     Task FailAsync(Guid attemptId, string safeFailureCode, CancellationToken cancellationToken = default);
+}
+
+public interface IRendererCommandFactory
+{
+    RendererCommand Create(RenderJob job, ResolvedRenderInput input, RenderWorkspace workspace);
 }
 
 public sealed class RenderWorkspace : IAsyncDisposable
@@ -113,5 +121,55 @@ public sealed class ConstrainedRendererExecutor
             if (!process.HasExited) process.Kill(true);
             return RendererExecutionResult.Failed("renderer_timeout");
         }
+    }
+}
+
+public sealed class RenderWorker(
+    IRenderQueue queue,
+    IImmutableRenderSourceResolver sources,
+    IRendererCommandFactory commands,
+    ConstrainedRendererExecutor executor,
+    IPrivateDerivativeStore derivatives,
+    IRenderWorkerCallback callbacks,
+    string workspaceRoot)
+{
+    public async Task ExecuteAsync(RenderJob job, CancellationToken cancellationToken = default)
+    {
+        if (!await queue.ClaimAsync(job.AttemptId, cancellationToken)) return;
+        await using var workspace = RenderWorkspace.Create(workspaceRoot);
+        try
+        {
+            var input = await sources.ResolveAsync(job, workspace, cancellationToken);
+            if (input is null) { await FailAsync(job, "source_unavailable", cancellationToken); return; }
+            var result = await executor.ExecuteAsync(commands.Create(job, input, workspace), job.Policy, cancellationToken);
+            if (!result.Succeeded) { await FailAsync(job, result.SafeFailureCode!, cancellationToken); return; }
+            var output = workspace.PrivatePath("output.jpg");
+            var derivative = await derivatives.PublishAsync(job, ValidateOutput(output), cancellationToken);
+            var publication = new RenderPublication(derivative.ObjectKey, derivative.ObjectVersion, derivative.OutputSha256, derivative.ByteLength, derivative.MediaType);
+            publication.Validate();
+            var provenance = new RenderProvenance(input.SourceSha256, input.XmpSha256, job.Request.SelectedVersion, job.Request.RendererRelease, job.Request.RendererArtifactDigest, job.Request.Profile, job.Request.CompatibilityMatrix, DateTimeOffset.UtcNow);
+            provenance.Validate();
+            await callbacks.CompleteAsync(job.RequestId, job.AttemptId, derivative.ObjectKey, derivative.ObjectVersion, derivative.OutputSha256, derivative.ByteLength, derivative.MediaType, provenance, cancellationToken);
+            await queue.CompleteAsync(job.AttemptId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch
+        {
+            await FailAsync(job, "storage_unavailable", cancellationToken);
+        }
+    }
+
+    private static string ValidateOutput(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length < 1) throw new InvalidDataException("output_invalid");
+        return path;
+    }
+
+    private async Task FailAsync(RenderJob job, string code, CancellationToken cancellationToken)
+    {
+        var safe = RenderFailureCodes.IsSafe(code) ? code : "storage_unavailable";
+        await callbacks.FailAsync(job.RequestId, job.AttemptId, safe, cancellationToken);
+        await queue.FailAsync(job.AttemptId, safe, cancellationToken);
     }
 }

@@ -52,6 +52,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<QueryService>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
     builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
+    builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderWorkerCallback, Platform.Api.Features.Rendering.RenderWorkerCallbacks>();
     builder.Services.AddSingleton<OperationService>();
     builder.Services.AddSingleton<RewriteService>();
     builder.Services.AddSingleton<VisibilityService>();

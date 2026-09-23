@@ -109,6 +109,13 @@ public interface ISelectedVersionResolver
     Task<SelectedVersionResolution> ResolveAsync(string ownerId, string libraryId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Authenticated worker-to-API boundary; workers never write rendering metadata directly.</summary>
+public interface IRenderWorkerCallback
+{
+    Task CompleteAsync(Guid requestId, Guid attemptId, string privateObjectKey, string privateObjectVersion, string outputSha256, long byteLength, string mediaType, RenderProvenance provenance, CancellationToken cancellationToken = default);
+    Task FailAsync(Guid requestId, Guid attemptId, string safeFailureCode, CancellationToken cancellationToken = default);
+}
+
 public sealed record RenderPublication(string ObjectKey, string ObjectVersion, string OutputSha256, long ByteLength, string MediaType)
 {
     public void Validate()
