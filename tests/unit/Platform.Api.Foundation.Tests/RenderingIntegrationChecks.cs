@@ -1,0 +1,68 @@
+using Amazon.S3;
+using Amazon.S3.Model;
+using Microsoft.Extensions.Configuration;
+using Npgsql;
+using Platform.Api.Features.Rendering;
+using Platform.Contracts.Rendering;
+using static Platform.Storage.IngestDb;
+
+internal static class RenderingIntegrationChecks
+{
+    public static async Task RunAsync(NpgsqlDataSource db, IAmazonS3 s3, string bucket)
+    {
+        const string owner = "test-owner";
+        var library = "rendering-" + Guid.NewGuid().ToString("N");
+        var digest = "sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb";
+        var asset = Guid.NewGuid();
+        var edit = Guid.NewGuid();
+        string sourceSha;
+        string xmpSha;
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            await using var source = Command(connection, "SELECT a.original_sha256,e.xmp_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id JOIN content_objects original ON original.sha256=a.original_sha256 AND original.integrity_state='authoritative' JOIN content_objects xmp ON xmp.sha256=e.xmp_sha256 AND xmp.integrity_state='authoritative' WHERE a.owner_id=$1 AND a.original_sha256 IS NOT NULL AND e.xmp_sha256 IS NOT NULL LIMIT 1", owner);
+            await using var reader = await source.ExecuteReaderAsync();
+            IngestChecks.Check(await reader.ReadAsync(), "Rendering integration requires authoritative immutable source and XMP content.");
+            sourceSha = reader.GetString(0).Trim();
+            xmpSha = reader.GetString(1).Trim();
+            await reader.DisposeAsync();
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'rendering-integration'); INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind) VALUES($2,$6,'main','main','branch'); INSERT INTO rendering_compatibility(matrix_version,renderer_release,renderer_artifact_digest,profile,corpus_evidence_id,approved_at,approved_by,state) VALUES('rendering-v1','5.6.1',$7,'render-v1','ecr-corpus-20260924',now(),'Fredrik Snårbacka','approved')", default, asset, owner, sourceSha, edit, xmpSha, library, digest);
+        }
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1" }).Build();
+        var service = new RenderingService(db, new CurrentOnlyResolver(), configuration);
+        var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);
+        var created = await service.RequestAsync(owner, input, default);
+        var duplicate = await service.RequestAsync(owner, input, default);
+        IngestChecks.Check(created.State == RenderState.Pending && created.AttemptId is not null, "A current preview must create an observable pending attempt.");
+        IngestChecks.Check(created.RequestId == duplicate.RequestId && created.AttemptId == duplicate.AttemptId && !duplicate.CacheHit, "PostgreSQL must coalesce duplicate pending current-preview requests.");
+
+        var objectKey = $"private/{owner}/{library}/renditions/{created.RequestId:N}.jpg";
+        var output = "integration-render-output"u8.ToArray();
+        await using (var stream = new MemoryStream(output, writable: false))
+            await s3.PutObjectAsync(new PutObjectRequest { BucketName = bucket, Key = objectKey, InputStream = stream, ContentType = "image/jpeg" });
+        var metadata = await s3.GetObjectMetadataAsync(bucket, objectKey);
+        var provenance = new RenderProvenance(sourceSha, xmpSha, "current", "5.6.1", digest, "render-v1", "rendering-v1", DateTimeOffset.UtcNow);
+        await new RenderWorkerCallbacks(db).CompleteAsync(created.RequestId, created.AttemptId!.Value, objectKey, metadata.VersionId!, IngestChecks.Hash(output), output.LongLength, "image/jpeg", provenance, default);
+
+        var completed = await service.StatusAsync(owner, library, created.RequestId, default);
+        var cacheHit = await service.RequestAsync(owner, input, default);
+        IngestChecks.Check(completed.State == RenderState.Completed && Matches(provenance, completed.Provenance), "A completed private derivative must expose exact current-preview provenance.");
+        IngestChecks.Check(cacheHit.CacheHit && Matches(provenance, cacheHit.Provenance), "An exact completed current-preview request must reuse the cached derivative and provenance.");
+        await using var verification = await db.OpenConnectionAsync();
+        IngestChecks.Check(await ScalarAsync(verification, "SELECT original_sha256=$2 FROM assets WHERE id=$1", default, asset, sourceSha) is true && await ScalarAsync(verification, "SELECT xmp_sha256=$2 FROM edit_identities WHERE id=$1", default, edit, xmpSha) is true, "Rendering integration must not mutate source or XMP identities.");
+    }
+
+    private sealed class CurrentOnlyResolver : ISelectedVersionResolver
+    {
+        public Task<SelectedVersionResolution> ResolveAsync(string ownerId, string libraryId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default) => Task.FromResult(SelectedVersionResolution.Unavailable("selected_version_unavailable"));
+    }
+
+    private static bool Matches(RenderProvenance expected, RenderProvenance? actual) => actual is not null
+        && actual.SourceSha256 == expected.SourceSha256
+        && actual.XmpSha256 == expected.XmpSha256
+        && actual.SelectedVersion == expected.SelectedVersion
+        && actual.RendererRelease == expected.RendererRelease
+        && actual.RendererArtifactDigest == expected.RendererArtifactDigest
+        && actual.Profile == expected.Profile
+        && actual.CompatibilityMatrix == expected.CompatibilityMatrix;
+}

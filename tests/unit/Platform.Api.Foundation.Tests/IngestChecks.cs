@@ -133,6 +133,7 @@ internal static class IngestChecks
         await ReconstructionChecks.RunAsync(db, storage);
         await HttpIngestChecks.RunAsync(db, storage);
         await WindowsSyncChecks.RunAsync(db, storage);
+        await RenderingIntegrationChecks.RunAsync(db, s3, bucket);
         await CapacityChecks.RunAsync(db, storage);
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);
         Console.WriteLine($"Ingest PostgreSQL/MinIO checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");

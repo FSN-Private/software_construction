@@ -71,13 +71,14 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
 
     private static async Task<RenditionStatusView> StatusAsync(NpgsqlConnection connection, string owner, string library, Guid requestId, bool existing, CancellationToken cancellationToken)
     {
-        await using var command = Command(connection, "SELECT r.state,(SELECT id FROM render_attempts a WHERE a.request_id=r.id ORDER BY attempt_number DESC LIMIT 1),(SELECT failure_code FROM render_attempts a WHERE a.request_id=r.id ORDER BY attempt_number DESC LIMIT 1) FROM render_requests r WHERE r.id=$1 AND r.owner_id=$2 AND r.library_id=$3", requestId, owner, library);
+        await using var command = Command(connection, "SELECT r.state,a.id,a.failure_code,p.source_sha256,p.xmp_sha256,p.selected_version,p.renderer_release,p.renderer_artifact_digest,p.profile,p.matrix_version,p.completed_at FROM render_requests r LEFT JOIN LATERAL (SELECT id,failure_code FROM render_attempts WHERE request_id=r.id ORDER BY attempt_number DESC LIMIT 1) a ON true LEFT JOIN renditions d ON d.request_id=r.id LEFT JOIN render_provenance p ON p.rendition_id=d.id WHERE r.id=$1 AND r.owner_id=$2 AND r.library_id=$3", requestId, owner, library);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new RenderingProblem("rendition_not_found", 404);
         var state = ParseState(reader.GetString(0));
         var attempt = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
         var failure = reader.IsDBNull(2) ? null : reader.GetString(2);
-        return new(requestId, attempt, state, existing && state == RenderState.Completed, null, failure);
+        var provenance = reader.IsDBNull(3) ? null : new RenderProvenance(reader.GetString(3).Trim(), reader.GetString(4).Trim(), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetFieldValue<DateTimeOffset>(10));
+        return new(requestId, attempt, state, existing && state == RenderState.Completed, provenance, failure);
     }
 
     private async Task<Compatibility?> CompatibilityAsync(NpgsqlConnection connection, string profile, CancellationToken cancellationToken)
