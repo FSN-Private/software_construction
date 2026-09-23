@@ -42,6 +42,7 @@
 
 - Fredrik Snårbacka accepted the exact ECR digest for new non-production `rendering-v1` derivatives at 17:32:00 UTC, accepting the 48 medium and 18 low findings in the digest-qualified Trivy report.
 - This approval is not a production deployment authorization. [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md) blocks production until a replacement digest eliminates all 66 accepted findings and a digest-qualified scan proves their absence. No production waiver is permitted.
+- Before any production promotion, set protected `AWS_PRODUCTION_RENDERER_IMAGE` to the replacement `repository@sha256:digest` and retain `docs/features/008-darktable-rendering/evidence/production-renderer.sarif` generated from that exact digest. The production workflow rejects a missing report, a report bound to another digest, the current non-production digest, critical/high findings, or any of the 66 accepted findings that remains. This check runs before the protected production-environment approval and AWS credential issuance.
 
 ## Rollout and rollback
 

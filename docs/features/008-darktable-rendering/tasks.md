@@ -53,7 +53,7 @@
 - [x] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
 - [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for current-preview integration and worker infrastructure: T010 and T017.
 - [ ] T020 Run Spec Kit convergence, resolve appended tasks, validate all non-blocked requirements, and record feature review evidence in `docs/features/008-darktable-rendering/` (all FR/AC/NFR).
-- [ ] T021 Enforce the non-production-only compatibility scope and production scan-diff gate in deployment configuration and release validation; remediate all 48 medium and 18 low findings in a replacement digest before any production promotion (AC-010, NFR-018, ADR-0009).
+- [ ] T021 Enforce the non-production-only compatibility scope and production scan-diff gate in deployment configuration and release validation; remediate all 48 medium and 18 low findings in a replacement digest before any production promotion (AC-010, NFR-018, ADR-0009). — IN PROGRESS: `release.yml` now fails closed before production approval unless the protected replacement image and its digest-qualified SARIF prove the accepted 66 findings absent; remediation and production evidence remain outstanding.
 
 ## Dependencies and execution order
 

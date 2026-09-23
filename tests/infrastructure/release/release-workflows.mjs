@@ -70,6 +70,7 @@ assert.ok(workflows['release.yml'].includes('--require-worker "$GITHUB_REPOSITOR
 assert.ok(workflows['rollback.yml'].includes('--require-worker "$GITHUB_REPOSITORY"'), 'Rollback must bind current provenance to the trusted repository.');
 assert.ok(workflows['release.yml'].includes('nonprod-deployment-evidence'), 'Production promotion must require retained non-production deployment evidence.');
 assert.ok(workflows['release.yml'].includes('verify-promotion-evidence.mjs'), 'Production promotion must compare exact non-production evidence before approval.');
+assert.ok(workflows['release.yml'].includes('verify-renderer-production-gate.mjs') && workflows['release.yml'].includes('AWS_PRODUCTION_RENDERER_IMAGE'), 'Production promotion must fail closed until a digest-qualified renderer scan proves the accepted findings remediated.');
 assert.ok(workflows['release.yml'].includes('AWS_PRODUCTION_WORKER_SERVICE'), 'Production promotion must configure the worker service.');
 assert.ok(workflows['release.yml'].includes('scripts/deploy-ecs-release.sh'), 'Production promotion must use the same coordinated migration and rollback path as non-production.');
 assert.ok(workflows['rollback.yml'].includes('compatibility.rollbackAllowed'), 'Rollback must require explicit compatibility evidence.');
