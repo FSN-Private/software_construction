@@ -34,3 +34,9 @@ Review date: 2026-09-15. `Microsoft.Data.Sqlite` 10.0.12 and `System.Security.Cr
 ## Feature 006 graph and manifest implementation
 
 Feature 006 adds no executable dependency. Canonical JSON uses the .NET 10 `System.Text.Json` runtime library, commit identities use `System.Security.Cryptography.SHA256`, graph traversal uses generic collections, and persistence reuses the already locked and reviewed Npgsql 10.0.3 package. This avoids a second serializer or graph library, keeps manifest encoding under direct compatibility fixtures, and adds no license, advisory, install-script, or transitive-package exposure (NFR-003, NFR-014). Reconsider only if measured graph workloads cannot meet NFR-001/NFR-016 with the PostgreSQL indexes and bounded traversal implementation.
+
+## Feature 008 Darktable renderer candidate
+
+Candidate review date: 2026-09-23. `apps/render-worker/Dockerfile` builds darktable 5.6.1 from darktable-org's official release archive, verifies source SHA-256 `e8b84ac98b0b689a244e4036c4b56394c1d58ce2d9abc05e0a060ef9f756dc36`, and pins Ubuntu 24.04 by digest `sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3`. The candidate's local OCI manifest is `sha256:01b582e0f7ac9446c7911007db985dccb5d11e058cfee1f6dfa5a304a59ce362`; it starts as UID 65532 and reports `darktable 5.6.1`.
+
+Darktable is GPL-3.0-or-later. The candidate intentionally retains the source-build dependency set (about 610 MB) to provide every required shared library while a minimized runtime image is designed and validated. It is **not approved for deployment**: Docker Scout SBOM/SARIF generation stalled locally without producing output, no vulnerability result exists, the native RAW/XMP corpus has not run, and no owner compatibility approval has been given. These are release-blocking T003 gates; the candidate must be rebuilt, scanned, and published by immutable registry digest before approval.

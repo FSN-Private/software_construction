@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — BLOCKED: no approved artifact digest or trusted native-renderer runner is available.
+- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: trusted runner and a source-verified 5.6.1 local candidate are available; blocked on a successful SBOM/CVE report, native corpus evidence, immutable registry publication, and explicit owner approval.
 
 ## Phase 2: Shared rendering foundation
 

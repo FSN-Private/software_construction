@@ -1,4 +1,4 @@
-FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS build
+FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
 ARG DARKTABLE_VERSION=5.6.1
 ARG DARKTABLE_SOURCE_SHA256=e8b84ac98b0b689a244e4036c4b56394c1d58ce2d9abc05e0a060ef9f756dc36
@@ -18,9 +18,13 @@ RUN cmake -S "darktable-${DARKTABLE_VERSION}" -B output -G Ninja -DCMAKE_BUILD_T
     && cmake --build output --parallel \
     && cmake --install output
 
-FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
-
-COPY --from=build /opt/darktable /opt/darktable
-ENV PATH=/opt/darktable/bin:$PATH
+# This candidate keeps its build dependencies so the source-built CLI's shared
+# libraries are complete. It is intentionally unapproved until the release
+# process records a minimized runtime image, SBOM, and vulnerability review.
+RUN install --directory --owner=65532 --group=65532 /var/lib/darktable
+ENV PATH=/opt/darktable/bin:$PATH \
+    HOME=/var/lib/darktable \
+    XDG_CACHE_HOME=/var/lib/darktable/cache \
+    XDG_CONFIG_HOME=/var/lib/darktable/config
 USER 65532:65532
 ENTRYPOINT ["darktable-cli"]
