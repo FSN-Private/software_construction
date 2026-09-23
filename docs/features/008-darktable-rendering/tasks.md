@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: the source-verified 5.6.1 local candidate passed the four-state CC0 CR2/XMP corpus on the trusted Ubuntu 24.04 runner; its evidence is explicitly preliminary because the image is not registry-published. Blocked on a successful SBOM/CVE report, immutable registry publication, and explicit owner approval.
+- [ ] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — IN PROGRESS: the source-verified, minimized 5.6.1 local runtime candidate passed the four-state CC0 CR2/XMP corpus on the trusted Ubuntu 24.04 runner. Its retained Trivy CycloneDX/SARIF evidence has 294 components and no high/critical finding (48 medium, 18 low). Blocked on immutable ECR publication, corpus evidence by the published digest, and explicit owner approval accepting the remaining medium/low findings.
 
 ## Phase 2: Shared rendering foundation
 

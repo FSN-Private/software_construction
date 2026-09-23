@@ -4,15 +4,15 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | Candidate local manifest `sha256:01b582e0f7ac9446c7911007db985dccb5d11e058cfee1f6dfa5a304a59ce362` (not registry-published) | `render-v1` | Four-state candidate corpus passed on Ubuntu 24.04; [candidate evidence](../tests/rendering/corpus/candidate-evidence.md) | Blocked: SBOM/CVE evidence, registry digest, and owner approval outstanding |
+| `rendering-v1` | 5.6.1 | Candidate local image `sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` (not registry-published) | `render-v1` | Four-state runtime candidate corpus passed on Ubuntu 24.04; [candidate evidence](../tests/rendering/corpus/candidate-evidence.md) | Blocked: immutable ECR digest and owner approval outstanding; Trivy SBOM/SARIF has no high/critical finding |
 
 Changing any release, digest, profile, or output format creates a new matrix row. Existing derivatives retain their original provenance and are never relabelled.
 
 ## Prepared corpus input
 
-The repository already includes the one licensed RAW input needed for the first corpus: `tests/fixtures/ingest/sample.dng`. Its authoritative provenance is recorded in [the fixture inventory](../tests/fixtures/ingest/PROVENANCE.md): it is the CC0-1.0 `Apple/iPhone 12 Pro/IMG_1361.DNG` sample from raw.pixls.us, with SHA-256 `e91e77a4533ed7cce551d83330676ea5c47dd5e55fb38adda7819366afdbdfc2`.
+The native corpus uses `tests/rendering/corpus/IMG_9406.CR2`, the CC0 Canon EOS 1000D sample from raw.pixls.us. Its published SHA-256 is `08b0843a7968315b68bd3c71a96c952ebf275d5b5eba4b6094ae8b103522584c`; [the corpus provenance](../tests/rendering/corpus/PROVENANCE.md) records its source and license.
 
-Do not replace this file with a private photograph or an unlicensed download. The native corpus must add one current and three distinct historical darktable XMP revisions for this exact input, then record for every rendition:
+Do not replace this file with a private photograph or an unlicensed download. The native corpus must retain one current and three distinct historical darktable XMP revisions for this exact input, then record for every rendition:
 
 - the input and XMP SHA-256 values, version identity, output dimensions, output SHA-256, matrix, renderer image digest, and trusted-runner run identifier;
 - the generated XMP content and reference derivatives in `tests/rendering/corpus/`; and

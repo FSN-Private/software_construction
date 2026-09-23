@@ -15,7 +15,7 @@
 2. Before deployment, inspect `cdk diff` for the approved renderer repository, task role, queue, storage, and observability changes. Abort on a replacement/deletion of retained resources or a wider IAM grant than the reviewed renderer boundary.
 3. After explicit authorization for the external change, deploy with a protected outputs file. Confirm the repository has immutable tags and scan-on-push enabled, then record the renderer repository output for the non-production GitHub environment.
 4. Publish only the source-verified, SBOM/CVE-reviewed image and record its registry digest. A tag or a local OCI manifest alone is insufficient.
-5. Run the CC0 corpus: the existing `tests/fixtures/ingest/sample.dng` with its current XMP and three historical XMP revisions. Retain per-rendition input/XMP/output hashes, dimensions, renderer digest, and trusted-runner ID.
+5. Run the CC0 corpus: `tests/rendering/corpus/IMG_9406.CR2` with its current XMP and three historical XMP revisions. Retain per-rendition input/XMP/output hashes, dimensions, renderer digest, and trusted-runner ID.
 6. Obtain the explicit compatibility approval in [the compatibility matrix](../../rendering-compatibility.md) before enabling new renderer intake.
 
 ## 2026-09-23 read-only non-production preflight

@@ -1,4 +1,4 @@
-FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS build
 
 ARG DARKTABLE_VERSION=5.6.1
 ARG DARKTABLE_SOURCE_SHA256=e8b84ac98b0b689a244e4036c4b56394c1d58ce2d9abc05e0a060ef9f756dc36
@@ -18,9 +18,18 @@ RUN cmake -S "darktable-${DARKTABLE_VERSION}" -B output -G Ninja -DCMAKE_BUILD_T
     && cmake --build output --parallel \
     && cmake --install output
 
-# This candidate keeps its build dependencies so the source-built CLI's shared
-# libraries are complete. It is intentionally unapproved until the release
-# process records a minimized runtime image, SBOM, and vulnerability review.
+FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS runtime
+
+# Ubuntu 24.04's darktable package supplies the runtime shared-library closure,
+# but its 4.6.1 executable is never used. Keep its dependencies and replace the
+# package payload with the verified source-built 5.6.1 installation.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates darktable libpotrace0 \
+    && apt-get purge --yes darktable \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/darktable /opt/darktable
+
 RUN install --directory --owner=65532 --group=65532 /var/lib/darktable
 ENV PATH=/opt/darktable/bin:$PATH \
     HOME=/var/lib/darktable \
