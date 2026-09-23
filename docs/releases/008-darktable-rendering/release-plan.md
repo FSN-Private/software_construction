@@ -31,6 +31,13 @@
 - The new repository is `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker`. Post-deployment verification confirmed immutable tags and scan-on-push enabled.
 - No renderer image was published, no ECS task/service was changed, and no GitHub environment variable or secret was changed. Image publication remains blocked on T003 security/corpus evidence; the protected GitHub configuration change remains separately approval-gated.
 
+## 2026-09-24 reviewed renderer publication
+
+- The owner approved publication of the verified local runtime candidate. It was pushed only to `platform-nonprod-render-worker` under immutable tag `darktable-5.6.1-runtime-20260924` at 00:23:44 +07:00.
+- ECR resolved that tag to `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` (222,089,048 bytes). The tag and digest were pulled and the four-state CR2/XMP corpus passed using the digest-qualified reference.
+- Digest-qualified Trivy evidence records 294 components, no critical/high finding, 48 medium findings, and 18 low findings. ECR's scan-on-push setting is enabled, but its `DescribeImageScanFindings` response was `ScanNotFound`; independent Trivy evidence remains the release gate.
+- No ECS task/service, GitHub environment value, database, queue, storage, or network resource changed. Compatibility approval remains required before renderer intake can be enabled.
+
 ## Rollout and rollback
 
 1. Apply the additive migration and verify the migration ledger.

@@ -4,7 +4,7 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | Candidate local image `sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` (not registry-published) | `render-v1` | Four-state runtime candidate corpus passed on Ubuntu 24.04; [candidate evidence](../tests/rendering/corpus/candidate-evidence.md) | Blocked: immutable ECR digest and owner approval outstanding; Trivy SBOM/SARIF has no high/critical finding |
+| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` | `render-v1` | Four-state ECR-digest corpus passed on Ubuntu 24.04; [ECR corpus evidence](../tests/rendering/corpus/ecr-evidence.md) | Pending owner approval; Trivy SBOM/SARIF has no high/critical finding; 48 medium and 18 low findings require acceptance |
 
 Changing any release, digest, profile, or output format creates a new matrix row. Existing derivatives retain their original provenance and are never relabelled.
 
