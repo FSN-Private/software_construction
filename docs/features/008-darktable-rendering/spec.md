@@ -126,7 +126,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 
 - The private single-owner library and protected default-history policy are defined by the parent program.
 - Features 004, 005, and 006 provide authenticated operation, immutable source identity, and selected-version resolution respectively.
-- Feature 006 is not implemented on the current baseline. Current-edit rendering may proceed through feature 005; historical-version rendering remains blocked until feature 006 supplies its approved selected-version resolution contract. This feature MUST not substitute a branch head or synthetic history while that dependency is unavailable.
+- Feature 006 supplies the approved library-scoped selected-version resolution contract. Historical-version rendering MUST use that exact resolver and return unavailable on a missing or mismatched selected state; it MUST not substitute a branch head or synthetic history.
 - Gallery and lineage interfaces in features 009 and 010 consume this feature's rendition and provenance contract.
 - Rendering derivatives are reproducible aids, not authoritative replacements for originals or XMP history.
 
