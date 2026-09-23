@@ -48,6 +48,15 @@ internal static class RenderingIntegrationChecks
         var cacheHit = await service.RequestAsync(owner, input, default);
         IngestChecks.Check(completed.State == RenderState.Completed && Matches(provenance, completed.Provenance), "A completed private derivative must expose exact current-preview provenance.");
         IngestChecks.Check(cacheHit.CacheHit && Matches(provenance, cacheHit.Provenance), "An exact completed current-preview request must reuse the cached derivative and provenance.");
+        var failed = await service.RequestAsync(owner, input with { Rendition = RenditionKind.Preview2048 }, default);
+        await new RenderWorkerCallbacks(db).FailAsync(failed.RequestId, failed.AttemptId!.Value, "malformed_xmp", default);
+        var failure = await service.StatusAsync(owner, library, failed.RequestId, default);
+        IngestChecks.Check(failure.State == RenderState.Failed && failure.FailureCode == "malformed_xmp", "A renderer failure must retain only its safe category.");
+        var retry = await service.RetryAsync(owner, library, failed.RequestId, default);
+        IngestChecks.Check(retry.State == RenderState.Pending && retry.AttemptId != failed.AttemptId, "A corrected render retry must create a distinct pending attempt.");
+        await new RenderWorkerCallbacks(db).FailAsync(retry.RequestId, retry.AttemptId!.Value, "resource_limit", default);
+        IngestChecks.Check((await service.StatusAsync(owner, library, retry.RequestId, default)).FailureCode == "resource_limit", "A resource-limited attempt must remain visibly retryable without exposing worker details.");
+        await MissingSourceIsRejectedAsync(service, owner, library, edit);
         await using var verification = await db.OpenConnectionAsync();
         IngestChecks.Check(await ScalarAsync(verification, "SELECT original_sha256=$2 FROM assets WHERE id=$1", default, asset, sourceSha) is true && await ScalarAsync(verification, "SELECT xmp_sha256=$2 FROM edit_identities WHERE id=$1", default, edit, xmpSha) is true, "Rendering integration must not mutate source or XMP identities.");
     }
@@ -65,4 +74,11 @@ internal static class RenderingIntegrationChecks
         && actual.RendererArtifactDigest == expected.RendererArtifactDigest
         && actual.Profile == expected.Profile
         && actual.CompatibilityMatrix == expected.CompatibilityMatrix;
+
+    private static async Task MissingSourceIsRejectedAsync(RenderingService service, string owner, string library, Guid edit)
+    {
+        try { await service.RequestAsync(owner, new RenditionRequestInput(Guid.NewGuid(), edit, "current", RenditionKind.Thumbnail512, "render-v1", library), default); }
+        catch (RenderingProblem error) when (error.Code == "source_unavailable" && error.Status == 404) { return; }
+        throw new InvalidOperationException("Missing render sources must be rejected without a substitute rendition.");
+    }
 }
