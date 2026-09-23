@@ -40,6 +40,19 @@ internal static class RenderingChecks
         AssertThrows(() => new RenderResourcePolicy(0, 1024, 2048, 2).Validate(), "Render policies must bound execution time.");
         new RenderProvenance(new string('a', 64), new string('b', 64), "current", "5.6.1", "unapproved", "render-v1", "rendering-v1", DateTimeOffset.UtcNow).Validate();
 
+        var ledger = new RenderRequestLedger();
+        var first = ledger.Request(request);
+        var duplicate = ledger.Request(request);
+        Check(first.State == RenderState.Pending && !first.CacheHit, "A first current-preview request must create pending work.");
+        Check(first.RequestId == duplicate.RequestId && first.AttemptId == duplicate.AttemptId && !duplicate.CacheHit, "Duplicate pending requests must coalesce into one attempt.");
+        Check(ledger.Request(request with { OwnerId = "owner-2" }).RequestId != first.RequestId, "Owner scope must prevent cross-owner cache reuse.");
+        var provenance = new RenderProvenance(new string('a', 64), new string('b', 64), "current", "5.6.1", "unapproved", "render-v1", "rendering-v1", DateTimeOffset.UtcNow);
+        var publication = new RenderPublication("private/owner-1/rendition.jpg", "version-1", new string('e', 64), 32, "image/jpeg");
+        AssertThrows(() => ledger.Complete(first.RequestId, provenance with { SelectedVersion = "different" }, publication), "Completion must reject provenance that differs from the request.");
+        var completedRequest = ledger.Complete(first.RequestId, provenance, publication);
+        Check(completedRequest.State == RenderState.Completed && completedRequest.Provenance == provenance && completedRequest.Publication == publication, "A completed derivative and matching provenance must become visible together.");
+        Check(ledger.Request(request).CacheHit, "An exact completed request must be a cache hit.");
+
         var root = Path.Combine(Path.GetTempPath(), "platform-render-tests", Guid.NewGuid().ToString("N"));
         RenderWorkspace? workspace = null;
         try

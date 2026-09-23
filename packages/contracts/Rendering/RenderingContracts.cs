@@ -108,3 +108,57 @@ public interface ISelectedVersionResolver
 {
     Task<SelectedVersionResolution> ResolveAsync(string ownerId, string libraryId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default);
 }
+
+public sealed record RenderPublication(string ObjectKey, string ObjectVersion, string OutputSha256, long ByteLength, string MediaType)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(ObjectKey) || string.IsNullOrWhiteSpace(ObjectVersion) || !IsSha256(OutputSha256) || ByteLength < 1 || MediaType is not ("image/jpeg" or "image/png"))
+            throw new ArgumentException("invalid_render_publication");
+    }
+
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+}
+
+public sealed record RenderRequestView(Guid RequestId, Guid AttemptId, RenderState State, bool CacheHit, RenderProvenance? Provenance, RenderPublication? Publication, string? FailureCode);
+
+/// <summary>Pure request-state invariant used by durable rendering persistence.</summary>
+public sealed class RenderRequestLedger
+{
+    private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
+
+    public RenderRequestView Request(RenditionRequest request)
+    {
+        request.Validate();
+        if (entries.TryGetValue(request.Key, out var existing))
+            return existing.View(existing.Attempt.State == RenderState.Completed);
+
+        var entry = new Entry(request, Guid.NewGuid(), new RenderAttempt(Guid.NewGuid(), 1, RenderState.Pending));
+        entries.Add(request.Key, entry);
+        return entry.View(false);
+    }
+
+    public RenderRequestView Complete(Guid requestId, RenderProvenance provenance, RenderPublication publication)
+    {
+        provenance.Validate();
+        publication.Validate();
+        var entry = entries.Values.SingleOrDefault(value => value.RequestId == requestId) ?? throw new ArgumentException("render_request_not_found");
+        if (entry.Attempt.State != RenderState.Running && entry.Attempt.State != RenderState.Pending) throw new InvalidOperationException("invalid_render_transition");
+        if (provenance.SourceSha256.Length != 64 || provenance.XmpSha256.Length != 64 || provenance.SelectedVersion != entry.Request.SelectedVersion || provenance.RendererRelease != entry.Request.RendererRelease || provenance.RendererArtifactDigest != entry.Request.RendererArtifactDigest || provenance.Profile != entry.Request.Profile || provenance.CompatibilityMatrix != entry.Request.CompatibilityMatrix)
+            throw new ArgumentException("render_provenance_mismatch");
+        entry.Attempt = entry.Attempt.State == RenderState.Pending ? entry.Attempt.Transition(RenderState.Running).Transition(RenderState.Completed) : entry.Attempt.Transition(RenderState.Completed);
+        entry.Provenance = provenance;
+        entry.Publication = publication;
+        return entry.View(false);
+    }
+
+    private sealed class Entry(RenditionRequest request, Guid requestId, RenderAttempt attempt)
+    {
+        public RenditionRequest Request { get; } = request;
+        public Guid RequestId { get; } = requestId;
+        public RenderAttempt Attempt { get; set; } = attempt;
+        public RenderProvenance? Provenance { get; set; }
+        public RenderPublication? Publication { get; set; }
+        public RenderRequestView View(bool cacheHit) => new(RequestId, Attempt.Id, Attempt.State, cacheHit, Provenance, Publication, Attempt.FailureCode);
+    }
+}
