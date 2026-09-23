@@ -50,7 +50,7 @@
 ## Phase 6: Operations and release readiness
 
 - [ ] T017 Configure the renderer worker image, SQS/DLQ, restrictive IAM, resource limits, queue drain/cancel, restart recovery, private retention, metrics, and alerts in `packages/infrastructure/` (FR-008/010/011/014/017, NFR-003/005/009/012–014/017). — BLOCKED: T003 provides the approved renderer artifact.
-- [ ] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
+- [x] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
 - [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for native evidence: T003 and T012.
 - [ ] T020 Run Spec Kit convergence, resolve appended tasks, validate all non-blocked requirements, and record feature review evidence in `docs/features/008-darktable-rendering/` (all FR/AC/NFR).
 
