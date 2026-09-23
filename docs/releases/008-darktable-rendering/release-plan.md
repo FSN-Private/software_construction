@@ -18,6 +18,13 @@
 5. Run the CC0 corpus: the existing `tests/fixtures/ingest/sample.dng` with its current XMP and three historical XMP revisions. Retain per-rendition input/XMP/output hashes, dimensions, renderer digest, and trusted-runner ID.
 6. Obtain the explicit compatibility approval in [the compatibility matrix](../../rendering-compatibility.md) before enabling new renderer intake.
 
+## 2026-09-23 read-only non-production preflight
+
+- The short-lived `software-construction-nonprod` session resolved to `arn:aws:iam::344531454551:user/platform-admin` in account `344531454551`.
+- `PlatformFoundation-nonprod` is `UPDATE_COMPLETE` (last update 2026-09-14). Its existing API and ingest-worker repositories are immutable and scan on push. The renderer repository is absent, as expected before this CDK change is deployed.
+- CDK's template-only comparison against the live stack reports exactly one new `AWS::ECR::Repository`, the `RendererRepositoryName` output, and deployment-role permissions scoped to that repository (`ecr:DescribeImages` and pull/push actions). It reports no storage, database, queue, network, task, service, or replacement change.
+- No deployment ran and no CloudFormation change set remains. Creating the repository, updating the deployment role/output, and updating protected GitHub configuration still require explicit external-mutation authorization.
+
 ## Rollout and rollback
 
 1. Apply the additive migration and verify the migration ledger.
