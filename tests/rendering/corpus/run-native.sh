@@ -13,7 +13,8 @@ chmod 0777 "$workspace"
 declare -a hashes=()
 for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   output="${xmp%.xmp}.jpg"
-  docker run --rm \
+  MSYS_NO_PATHCONV=1 docker run --rm \
+    --entrypoint /opt/darktable/bin/darktable-cli \
     --volume "$root:/input:ro" \
     --volume "$workspace:/output" \
     "$DARKTABLE_IMAGE" \
