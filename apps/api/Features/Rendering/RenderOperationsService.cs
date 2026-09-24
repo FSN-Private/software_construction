@@ -5,7 +5,7 @@ namespace Platform.Api.Features.Rendering;
 
 public sealed record RenderOperationsView(bool Paused, int Cancelled, int Recovered);
 
-public sealed class RenderOperationsService(NpgsqlDataSource dataSource)
+public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfiguration configuration)
 {
     public async Task<bool> IsPausedAsync(CancellationToken cancellationToken)
     {
@@ -13,12 +13,20 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource)
         return await ScalarAsync(connection, "SELECT paused FROM render_intake_control WHERE singleton", cancellationToken) as bool? ?? false;
     }
 
-    public async Task<RenderOperationsView> SetAsync(string action, string owner, CancellationToken cancellationToken)
+    public async Task<RenderOperationsView> SetAsync(string action, string owner, string? corpusEvidenceId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var paused = action is "pause" or "drain" or "cancel";
-        if (action is not ("pause" or "resume" or "drain" or "cancel")) throw new RenderingProblem("invalid_render_operation", 400);
+        if (action is not ("pause" or "resume" or "drain" or "cancel" or "promote")) throw new RenderingProblem("invalid_render_operation", 400);
+        if (action == "promote")
+        {
+            var digest = configuration["Rendering:DeployedArtifactDigest"];
+            if (digest is null || corpusEvidenceId is null || !corpusEvidenceId.StartsWith("trusted-linux-", StringComparison.Ordinal)) throw new RenderingProblem("invalid_render_promotion", 400);
+            var promoted = await ExecuteAsync(connection, "UPDATE rendering_compatibility SET state='approved',approved_at=now(),approved_by=$1,corpus_evidence_id=$2 WHERE matrix_version=$3 AND renderer_artifact_digest=$4 AND state='pending'", cancellationToken, owner, corpusEvidenceId, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", digest);
+            if (promoted != 1) throw new RenderingProblem("render_promotion_rejected", 409);
+            paused = false;
+        }
         await ExecuteAsync(connection, "UPDATE render_intake_control SET paused=$1,updated_at=now() WHERE singleton", cancellationToken, paused);
         if (paused) await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,'*',NULL,NULL,'intake_paused')", cancellationToken, Guid.NewGuid(), owner);
         var cancelled = action == "cancel" ? await CancelAsync(connection, cancellationToken) : 0;
