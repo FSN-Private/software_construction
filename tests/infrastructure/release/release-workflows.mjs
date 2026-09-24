@@ -53,6 +53,7 @@ assert.ok(deployScript.includes('describe-images') && deployScript.includes('Imm
 assert.doesNotMatch(deployScript, /local[^\n]*repository=.*target=.*\$repository/, 'Bash locals must be assigned before a later local initializer expands them under nounset.');
 assert.ok(!deployScript.includes('file:///dev/stdin') && ['API_UPDATED', 'WORKER_UPDATED', 'RENDERER_UPDATED', 'MIGRATION_UPDATED'].every((name) => deployScript.includes(`--cli-input-json "$${name}"`)), 'Task registration must pass generated JSON directly instead of treating stdin as an AWS CLI input file.');
 assert.ok(deployScript.includes('ingest-worker.tar') && deployScript.includes('render-worker.tar'), 'Deployment must publish the verified worker artifacts.');
+assert.ok(deployScript.includes('Rendering__DeployedArtifactDigest') && deployScript.includes('RENDERER_DIGEST'), 'Deployment must bind API compatibility selection to the exact deployed renderer digest.');
 assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
 assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');
 assert.ok(migrationScript.includes('trap cleanup_migration ERR INT TERM') && migrationScript.includes('aws ecs stop-task'), 'Migration timeout or interruption must stop the remote ECS task.');
