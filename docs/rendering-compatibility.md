@@ -4,9 +4,9 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` | `render-v1` | Four-state ECR-digest corpus passed on Ubuntu 24.04; [ECR corpus evidence](../tests/rendering/corpus/ecr-evidence.md) | Approved for non-production by Fredrik Snårbacka at 2026-09-23T17:32:00Z; 48 medium and 18 low findings accepted. Production is blocked until all 66 are remediated and absent from a replacement digest scan. |
+| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` | `render-v1` | [Hardened SBOM, SARIF, and corpus evidence](features/008-darktable-rendering/evidence/README.md) | Approved for non-production at 2026-09-24T12:59:25Z; 0 critical, 0 high, and 5 medium findings accepted. |
 
-Changing any release, digest, profile, or output format creates a new matrix row. Existing derivatives retain their original provenance and are never relabelled.
+The active matrix version has one approved digest. Replacing it requires a new additive migration, immutable evidence, and owner approval; existing derivatives retain their original provenance and are never relabelled.
 
 ## Prepared corpus input
 
