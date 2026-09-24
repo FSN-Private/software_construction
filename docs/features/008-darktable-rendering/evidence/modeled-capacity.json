@@ -1,0 +1,17 @@
+{
+  "method": "user-approved modeled capacity result from approved-image native renderer measurements",
+  "observedAt": "2026-09-24",
+  "rendererImage": "platform-render-worker:feature008-measurement",
+  "fixture": "tests/rendering/corpus/IMG_9406.CR2 with current.xmp at 512px",
+  "nativeThumbnailMilliseconds": [4335, 4570, 4162, 4192, 4080],
+  "nativeThumbnailP95Milliseconds": 4570,
+  "referenceImageCount": 100000,
+  "freshnessRatio": 0.99,
+  "deadlineSeconds": 300,
+  "requiredSingleConcurrencyWorkers": 1509,
+  "limitations": [
+    "The sample invokes the production renderer image and darktable command, but not SQS, S3, API callback, task start, or queue-scaling overhead.",
+    "Cache-hit latency and uncached request-start latency require a deployed HTTP/API fixture and are not asserted by this model.",
+    "The configured non-production renderer service has one active single-concurrency task; it cannot satisfy the modeled 100000-image freshness target."
+  ]
+}

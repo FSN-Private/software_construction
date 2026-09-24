@@ -20,9 +20,23 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource)
         var paused = action is "pause" or "drain" or "cancel";
         if (action is not ("pause" or "resume" or "drain" or "cancel")) throw new RenderingProblem("invalid_render_operation", 400);
         await ExecuteAsync(connection, "UPDATE render_intake_control SET paused=$1,updated_at=now() WHERE singleton", cancellationToken, paused);
-        var cancelled = action == "cancel" ? await ExecuteAsync(connection, "WITH pending AS (SELECT a.id,a.request_id,r.owner_id,r.library_id FROM render_attempts a JOIN render_requests r ON r.id=a.request_id WHERE a.state='pending') UPDATE render_attempts a SET state='cancelled',completed_at=now() FROM pending p WHERE a.id=p.id; UPDATE render_requests SET state='cancelled',updated_at=now() WHERE state='pending'", cancellationToken) : 0;
+        var cancelled = action == "cancel" ? await CancelAsync(connection, cancellationToken) : 0;
         await transaction.CommitAsync(cancellationToken);
         return new(paused, cancelled, 0);
+    }
+
+    private static async Task<int> CancelAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var cancelled = new List<(Guid Attempt, Guid Request, string Owner, string Library)>();
+        await using (var command = Command(connection, "UPDATE render_attempts a SET state='cancelled',completed_at=now() FROM render_requests r WHERE r.id=a.request_id AND a.state='pending' RETURNING a.id,a.request_id,r.owner_id,r.library_id"))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken)) cancelled.Add((reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3)));
+        foreach (var item in cancelled)
+        {
+            await ExecuteAsync(connection, "UPDATE render_requests SET state='cancelled',updated_at=now() WHERE id=$1 AND state='pending'", cancellationToken, item.Request);
+            await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,$3,$4,$5,'cancelled')", cancellationToken, Guid.NewGuid(), item.Owner, item.Library, item.Request, item.Attempt);
+        }
+        return cancelled.Count;
     }
 
     public async Task<int> RecoverAsync(CancellationToken cancellationToken)

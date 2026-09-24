@@ -20,6 +20,6 @@ Before any renderer release is approved, an approved Linux runner must provide t
 1. Record the renderer artifact digest, SBOM, license, vulnerability result, profile version, and compatibility approver.
 2. Render one RAW current XMP plus three distinct historical XMP revisions at every configured rendition.
 3. Compare approved outputs and provenance; exercise malformed/unsupported/time-limited cases and workspace cleanup.
-4. Measure cached and uncached targets and the 100,000-image thumbnail freshness model.
+4. Run `node tests/rendering/performance/model-capacity.mjs` against retained approved-image evidence. It records the required single-concurrency worker count for the 100,000-image freshness target; do not treat it as cache-hit or request-start evidence.
 
 No local model test or container build substitutes for this gate.
