@@ -17,7 +17,10 @@ const complete = async ({ libraryId, requestId, deadline }) => {
   while (Date.now() < deadline) {
     const status = await request(`/v1/renditions/${requestId}?library=${encodeURIComponent(libraryId)}`, { headers });
     const body = await status.response.json();
-    if (body.state === 'completed') return;
+    if (body.state === 'completed') {
+      if (Date.now() > deadline) throw new Error('Renderer completed after the 30-second acceptance deadline.');
+      return;
+    }
     if (['failed', 'retryable', 'unavailable', 'cancelled'].includes(body.state)) throw new Error(`Renderer returned ${body.failureCode ?? body.state}.`);
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
