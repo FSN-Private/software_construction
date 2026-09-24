@@ -120,7 +120,8 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
     {
         var matrix = configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1";
         var deployedDigest = configuration["Rendering:DeployedArtifactDigest"];
-        await using var command = Command(connection, "SELECT matrix_version,renderer_release,renderer_artifact_digest FROM rendering_compatibility WHERE matrix_version=$1 AND profile=$2 AND state='approved' AND ($3 IS NULL OR renderer_artifact_digest=$3)", matrix, profile, deployedDigest);
+        if (deployedDigest is null || !deployedDigest.StartsWith("sha256:", StringComparison.Ordinal)) return null;
+        await using var command = Command(connection, "SELECT matrix_version,renderer_release,renderer_artifact_digest FROM rendering_compatibility WHERE matrix_version=$1 AND profile=$2 AND state='approved' AND renderer_artifact_digest=$3", matrix, profile, deployedDigest);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2)) : null;
     }

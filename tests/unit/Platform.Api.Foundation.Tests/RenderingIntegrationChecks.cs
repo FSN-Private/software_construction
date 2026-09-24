@@ -28,7 +28,7 @@ internal static class RenderingIntegrationChecks
             await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'rendering-integration'); INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind) VALUES($2,$6,'main','main','branch'); INSERT INTO rendering_compatibility(matrix_version,renderer_release,renderer_artifact_digest,profile,corpus_evidence_id,approved_at,approved_by,state) VALUES('rendering-v1','5.6.1',$7,'render-v1','ecr-corpus-20260924',now(),'Fredrik Snårbacka','approved')", default, asset, owner, sourceSha, edit, xmpSha, library, digest);
         }
 
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1" }).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1", ["Rendering:DeployedArtifactDigest"] = digest }).Build();
         var queue = new RecordingQueue();
         var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue, new FixedLocator());
         var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);
