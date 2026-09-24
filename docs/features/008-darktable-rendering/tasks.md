@@ -93,7 +93,7 @@ Implement and commit the render-model/containment milestone first, then current-
 
 ## Phase 7: Convergence
 
-- [ ] T022 Implement the executable renderer runtime: SQS envelope consumption, idempotent claim/visibility handling, immutable source materialization, darktable command creation, private derivative publication, and authenticated worker-to-API completion/failure callbacks without database credentials (FR-002/004/007–011/014/017, AC-001/003/004/007, NFR-002–005/009/011/014; missing).
+- [ ] T022 Implement the executable renderer runtime: SQS envelope consumption, idempotent claim/visibility handling, immutable source materialization, darktable command creation, private derivative publication, and AWS IAM/SigV4-authenticated worker-to-API completion/failure callbacks without database credentials (FR-002/004/007–011/014/017, AC-001/003/004/007, NFR-002–005/009/011/014, ADR-0010; missing). — IN PROGRESS: task-role callback authentication approved on 2026-09-24.
 - [ ] T023 Return an owner-authorized private derivative locator with completed status/provenance and verify cross-library access is refused (FR-006, AC-001/002/003, NFR-005/006; partial).
 - [ ] T024 Implement authenticated render-intake pause, pending-work drain/cancel, and stale-running-attempt recovery within ten minutes; connect the controls to the renderer queue/service and operational events (FR-008/014/017, NFR-003/009/013/014; missing).
 - [ ] T025 Add cache-hit, uncached-render, and 100,000-image thumbnail-freshness capacity measurements using the executable renderer runtime; update the feature validation evidence and quickstart (NFR-001/002/005/017, SC-001–006; missing).

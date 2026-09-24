@@ -132,6 +132,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - Gallery and lineage interfaces in features 009 and 010 consume this feature's rendition and provenance contract.
 - Rendering derivatives are reproducible aids, not authoritative replacements for originals or XMP history.
 - Fredrik Snårbacka approved the exact 5.6.1 ECR digest for new non-production `rendering-v1` derivatives at 2026-09-23T17:32:00Z, accepting 48 medium and 18 low findings. That acceptance does not authorize production use.
+- Fredrik Snårbacka approved AWS IAM/SigV4 task-role authentication for renderer-to-API callbacks on 2026-09-24. Renderer callbacks use dedicated machine routes and do not impersonate an owner or carry a shared bearer secret.
 
 ## Success Criteria
 

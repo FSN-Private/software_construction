@@ -26,6 +26,7 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 - [Quickstart](quickstart.md) separates model validation from the trusted native-renderer gate.
 - [ADR-0007](../../architecture/decisions/0007-isolated-darktable-rendering-provenance.md) records the enduring containment boundary.
 - [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md) limits the accepted renderer digest to non-production until every accepted lower-severity finding is remediated.
+- [ADR-0010](../../architecture/decisions/0010-renderer-iam-callback-authentication.md) authorizes the renderer task role, rather than a user or shared secret, to invoke dedicated SigV4-protected callback routes.
 
 ## Constitution Check
 
@@ -62,6 +63,7 @@ Each milestone has its own coherent commit after its listed validation passes. N
 - Intake pause/drain/cancel operates on pending work only. Completed derivative/provenance pairs are immutable and remain readable according to retention policy.
 - The release plan must pin the darktable image by digest, retain SBOM/provenance and corpus evidence, define alert thresholds, and rehearse queue-drain rollback before deployment.
 - Compatibility approval is environment-scoped: the 2026-09-23 approval permits the documented digest only for non-production. Production must use a replacement digest whose vulnerability evidence contains none of the 66 accepted medium/low findings; no waiver can bypass this gate.
+- The API signs no renderer work on behalf of a user. The renderer consumes only immutable queue envelopes and invokes only the dedicated IAM-authorized callback routes with its ECS task role.
 
 ## Alternatives considered
 
