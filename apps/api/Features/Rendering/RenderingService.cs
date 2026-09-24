@@ -14,12 +14,13 @@ public sealed class RenderingProblem(string code, int status = 409) : Exception(
     public int Status { get; } = status;
 }
 
-public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null, IPrivateDerivativeLocator? locator = null)
+public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null, IPrivateDerivativeLocator? locator = null, RenderOperationsService? operations = null)
 {
     public async Task<RenditionStatusView> RequestAsync(string owner, RenditionRequestInput input, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(input.LibraryId) || input.AssetId == Guid.Empty || input.EditId == Guid.Empty || string.IsNullOrWhiteSpace(input.SelectedVersion) || string.IsNullOrWhiteSpace(input.Profile))
             throw new RenderingProblem("invalid_render_request", 400);
+        if (operations is not null && await operations.IsPausedAsync(cancellationToken)) throw new RenderingProblem("rendering_paused", 409);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var source = await SourceAsync(connection, owner, input.LibraryId, input.AssetId, input.EditId, cancellationToken) ?? throw new RenderingProblem("source_unavailable", 404);

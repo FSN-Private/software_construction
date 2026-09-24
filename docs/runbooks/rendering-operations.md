@@ -2,7 +2,7 @@
 
 ## Pause, drain, or cancel
 
-Set render intake to paused before maintenance. Let running attempts finish; cancel only pending attempts. A restart must mark an attempt that remains running after ten minutes as retryable or terminal. Completed derivatives and provenance remain valid.
+An authenticated owner calls `POST /v1/rendering/operations/pause` before maintenance and `resume` afterward. `drain` pauses new intake while running attempts finish. `cancel` pauses intake and cancels only pending attempts; any already-delivered queue envelope is rejected by its durable claim and acknowledged without changing completed provenance. The recovery worker marks attempts still running after ten minutes retryable with the safe `renderer_timeout` code. Completed derivatives and provenance remain valid.
 
 ## Failed or stuck render
 

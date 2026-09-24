@@ -53,6 +53,8 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<QueryService>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
     builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderOperationsService>();
+    builder.Services.AddHostedService<Platform.Api.Features.Rendering.RenderRecoveryWorker>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderWorkerCallback, Platform.Api.Features.Rendering.RenderWorkerCallbacks>();
     if (!string.IsNullOrWhiteSpace(builder.Configuration["Rendering:DerivativeBucket"])) builder.Services.AddSingleton<Platform.Api.Features.Rendering.IPrivateDerivativeLocator, Platform.Api.Features.Rendering.S3PrivateDerivativeLocator>();
     if (!string.IsNullOrWhiteSpace(builder.Configuration["Rendering:QueueUrl"])) builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderQueueDispatcher, Platform.Api.Features.Rendering.SqsRenderQueueDispatcher>();

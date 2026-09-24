@@ -17,6 +17,7 @@ public static class RenderingEndpoints
         group.MapGet("/{requestId:guid}", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Ok(await Service(context).StatusAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken)));
         group.MapGet("/{requestId:guid}/derivative", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Ok(await Service(context).LocateAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken)));
         group.MapPost("/{requestId:guid}/retry", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Accepted($"/v1/renditions/{requestId:D}", await Service(context).RetryAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken)));
+        app.MapPost("/v1/rendering/operations/{action}", async (string action, HttpContext context, CancellationToken cancellationToken) => { _ = VersionControlEndpoints.Owner(context); return Results.Ok(await Operations(context).SetAsync(action, cancellationToken)); }).RequireAuthorization();
 
         var callbacks = app.MapGroup("/internal/render-callbacks");
         callbacks.MapPost("/claim", async (RenderClaimCallback callback, HttpContext context, CancellationToken cancellationToken) =>
@@ -35,6 +36,7 @@ public static class RenderingEndpoints
 
     private static RenderingService Service(HttpContext context) => context.RequestServices.GetService<RenderingService>() ?? throw new RenderingProblem("rendering_unavailable", 503);
     private static IRenderWorkerCallback Callback(HttpContext context) => context.RequestServices.GetRequiredService<IRenderWorkerCallback>();
+    private static RenderOperationsService Operations(HttpContext context) => context.RequestServices.GetRequiredService<RenderOperationsService>();
 }
 
 public sealed record RenderClaimCallback(Guid RequestId, Guid AttemptId);
