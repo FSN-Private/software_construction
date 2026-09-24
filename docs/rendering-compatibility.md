@@ -51,7 +51,7 @@ Fill this only after every checklist item has immutable evidence. A local Docker
 | Registry image | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:<digest>` |
 | Security evidence | SBOM reference and completed CVE report; no unresolved critical/high finding |
 | Corpus evidence | Trusted-runner run URL/ID and the four XMP/output provenance records |
-| Approval | Product owner, 2026-09-24T12:59:25Z: accepts 5 medium findings for controlled validation only. `pending_corpus` prevents new derivatives until T026 succeeds. |
+| Approval | Product owner, 2026-09-24T12:59:25Z: accepts 5 medium findings for controlled validation only. `pending` prevents new derivatives until T026 succeeds. |
 
 Any change to the digest, profile, output encoding, or darktable release requires an additive migration and new approval evidence before the active matrix row changes.
 

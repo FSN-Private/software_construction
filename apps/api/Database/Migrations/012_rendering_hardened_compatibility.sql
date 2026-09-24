@@ -5,5 +5,5 @@ SET renderer_release='5.6.1',
     corpus_evidence_id='darktable-5.6.1-hardened-ecr',
     approved_at=NULL,
     approved_by=NULL,
-    state='pending_corpus'
+    state='pending'
 WHERE matrix_version='rendering-v1';

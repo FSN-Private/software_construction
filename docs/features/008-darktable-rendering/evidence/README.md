@@ -36,5 +36,5 @@ OpenEXR findings. Its digest-qualified Trivy 0.74.0 evidence is:
 | `darktable-5.6.1-hardened-ecr.sarif` | `9076faf4f29657da5d0f845d7e17fdc47c9987f685d2dcb649d2ef37e356552f` | 0 critical, 0 high, 5 medium findings |
 
 The owner accepted the five medium findings for controlled non-production validation.
-The digest remains `pending_corpus` and cannot serve derivatives until T026 retains
+The digest remains `pending` and cannot serve derivatives until T026 retains
 trusted-Linux corpus and HTTP acceptance evidence; production remains blocked.

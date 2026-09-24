@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [x] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — The hardened immutable ECR digest has digest-qualified Trivy SBOM/SARIF with 0 critical/high and 5 accepted medium findings; it remains pending_corpus until T026 post-merge acceptance.
+- [x] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — The hardened immutable ECR digest has digest-qualified Trivy SBOM/SARIF with 0 critical/high and 5 accepted medium findings; it remains pending until T026 post-merge acceptance.
 
 ## Phase 2: Shared rendering foundation
 
