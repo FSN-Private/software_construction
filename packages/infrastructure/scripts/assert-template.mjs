@@ -96,6 +96,7 @@ if (!versionControlHeartbeatAlarm) throw new Error('Version-control heartbeat lo
 if (versionControlHeartbeatAlarm.Properties.ActionsEnabled !== false) throw new Error('Non-production heartbeat actions must stay disabled until a healthy application deployment enables them.');
 const budget = resources.find((resource) => resource.Type === 'AWS::Budgets::Budget');
 if (budget?.Properties?.NotificationsWithSubscribers?.length !== 2) throw new Error('Budget must alert at 80% and 100%.');
+if (Number(budget?.Properties?.Budget?.BudgetLimit?.Amount) > 25) throw new Error('Non-production monthly budget must not exceed USD 25.');
 
 const bucket = resources.find((resource) => resource.Type === 'AWS::S3::Bucket');
 if (bucket?.Properties?.PublicAccessBlockConfiguration?.BlockPublicAcls !== true) {

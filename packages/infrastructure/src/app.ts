@@ -16,7 +16,7 @@ const env: Environment = { region };
 new PlatformFoundationStack(app, `PlatformFoundation-${environmentName}`, {
   env,
   environmentName,
-  monthlyBudgetUsd: Number(requiredContext('monthlyBudgetUsd', '250')),
+  monthlyBudgetUsd: Number(requiredContext('monthlyBudgetUsd', '20')),
   ownerEmail: requiredContext('ownerEmail', 'owner@example.invalid'),
   alertEmail: requiredContext('alertEmail', 'alerts@example.invalid'),
   webOrigin: requiredContext('webOrigin', 'https://example.invalid'),
