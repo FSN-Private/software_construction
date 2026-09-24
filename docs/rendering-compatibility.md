@@ -4,7 +4,7 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |
 |---|---|---|---|---|---|
-| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` | `render-v1` | [Hardened SBOM, SARIF, and corpus evidence](features/008-darktable-rendering/evidence/README.md) | Approved for non-production at 2026-09-24T12:59:25Z; 0 critical, 0 high, and 5 medium findings accepted. |
+| `rendering-v1` | 5.6.1 | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` | `render-v1` | [Hardened SBOM/SARIF evidence](features/008-darktable-rendering/evidence/README.md) | Pending trusted-Linux corpus and HTTP acceptance (T026); intake is fail-closed. |
 
 The active matrix version has one approved digest. Replacing it requires a new additive migration, immutable evidence, and owner approval; existing derivatives retain their original provenance and are never relabelled.
 
