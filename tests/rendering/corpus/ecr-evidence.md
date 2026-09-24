@@ -13,4 +13,4 @@ The runner pulled the exact ECR digest and `run-native.sh` verified the CC0 CR2 
 | historical v3 | `d5a223df26bd7a88ea69d14e631cb6946787f59d63a1b46421a64e6f2074b324` | `3eda2fc66eeaa3d9773306a1e84f84dcea783ccea4288d67abd65a3914d65a6e` | 89226 |
 | current | `f5d91b0ac0a55b6ccc5e96d19967c414f0a355c695f9f69b55dfa985f62b85cb` | `00f5dd61687330cbd4874e0293dd3054a26c107047bc9ff8fe78e30c735d2e0f` | 89226 |
 
-This is historical evidence for the superseded candidate only. The hardened digest requires a new trusted-Linux corpus record after merge; until then, its local corpus runs are not represented by these output hashes.
+This is historical evidence for the superseded candidate only. The XMP fixtures were subsequently corrected to alter the effective exposure parameter, so its hash table does not apply to the current corpus inputs. The hardened digest requires a new trusted-Linux corpus record after merge; until then, the committed decoded-pixel references provide the local regression gate but are not deployment acceptance evidence.

@@ -18,6 +18,7 @@ public static class DatabaseMigrator
         "010_rendering_identity.sql",
         "011_rendering_events.sql",
         "012_rendering_hardened_compatibility.sql",
+        "013_rendering_candidate_acceptance.sql",
     ];
 
     public static Task ApplyAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) => ApplyAsync(dataSource, null, null, cancellationToken);

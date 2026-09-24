@@ -20,7 +20,8 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
     {
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(input.LibraryId) || input.AssetId == Guid.Empty || input.EditId == Guid.Empty || string.IsNullOrWhiteSpace(input.SelectedVersion) || string.IsNullOrWhiteSpace(input.Profile))
             throw new RenderingProblem("invalid_render_request", 400);
-        if (operations is not null && await operations.IsPausedAsync(cancellationToken)) throw new RenderingProblem("rendering_paused", 409);
+        var acceptance = operations is not null && await operations.IsAcceptanceOwnerAsync(owner, cancellationToken);
+        if (operations is not null && !acceptance && await operations.IsPausedAsync(cancellationToken)) throw new RenderingProblem("rendering_paused", 409);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var source = await SourceAsync(connection, owner, input.LibraryId, input.AssetId, input.EditId, cancellationToken) ?? throw new RenderingProblem("source_unavailable", 404);
@@ -30,7 +31,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         if (!selected.IsAvailable) throw new RenderingProblem(selected.FailureCode ?? "selected_version_unavailable", 404);
         var xmp = await ContentAsync(connection, selected.XmpSha256!, "xmp", cancellationToken) ?? throw new RenderingProblem("selected_version_unavailable", 404);
 
-        var compatibility = await CompatibilityAsync(connection, input.Profile, cancellationToken);
+        var compatibility = await CompatibilityAsync(connection, input.Profile, acceptance, cancellationToken);
         if (compatibility is null)
         {
             await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type,reason_code) VALUES($1,$2,$3,NULL,NULL,'compatibility_rejected','incompatible_renderer')", cancellationToken, Guid.NewGuid(), owner, input.LibraryId);
@@ -116,12 +117,15 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         return new(requestId, attempt, state, existing && state == RenderState.Completed, provenance, failure);
     }
 
-    private async Task<Compatibility?> CompatibilityAsync(NpgsqlConnection connection, string profile, CancellationToken cancellationToken)
+    private async Task<Compatibility?> CompatibilityAsync(NpgsqlConnection connection, string profile, bool acceptance, CancellationToken cancellationToken)
     {
         var matrix = configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1";
         var deployedDigest = configuration["Rendering:DeployedArtifactDigest"];
         if (deployedDigest is null || !deployedDigest.StartsWith("sha256:", StringComparison.Ordinal)) return null;
-        await using var command = Command(connection, "SELECT matrix_version,renderer_release,renderer_artifact_digest FROM rendering_compatibility WHERE matrix_version=$1 AND profile=$2 AND state='approved' AND renderer_artifact_digest=$3", matrix, profile, deployedDigest);
+        var sql = acceptance
+            ? "SELECT matrix_version,renderer_release,renderer_artifact_digest FROM rendering_compatibility_candidates WHERE matrix_version=$1 AND profile=$2 AND state='accepted' AND renderer_artifact_digest=$3"
+            : "SELECT matrix_version,renderer_release,renderer_artifact_digest FROM rendering_compatibility WHERE matrix_version=$1 AND profile=$2 AND state='approved' AND renderer_artifact_digest=$3";
+        await using var command = Command(connection, sql, matrix, profile, deployedDigest);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2)) : null;
     }

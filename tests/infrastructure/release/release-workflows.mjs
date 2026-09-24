@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
+const renderingCorpus = readFileSync('tests/rendering/corpus/run-native.sh', 'utf8');
 const configureNonprod = readFileSync('scripts/configure-nonprod-github.ps1', 'utf8');
 const migrationScript = readFileSync('scripts/run-ecs-migration.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
@@ -32,6 +33,7 @@ assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-pro
 assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('Validate deployment configuration') && workflows['deploy-nonprod.yml'].includes('Missing required deployment setting'), 'Non-production deployment must report missing protected configuration before AWS authentication.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURE') && workflows['deploy-nonprod.yml'].includes('RENDERING_ACCEPTANCE_FIXTURE'), 'Non-production deployment must require the protected rendering acceptance fixture identity.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/manage-nonprod-lifecycle.sh start-database'), 'Non-production deployment must start RDS before migration.');
 const nonprodCredentialAction = 'aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c';
 assert.equal(workflows['deploy-nonprod.yml'].split(nonprodCredentialAction).length - 1, 2, 'Non-production deployment must refresh its OIDC session after a cold database start.');
@@ -54,6 +56,10 @@ assert.doesNotMatch(deployScript, /local[^\n]*repository=.*target=.*\$repository
 assert.ok(!deployScript.includes('file:///dev/stdin') && ['API_UPDATED', 'WORKER_UPDATED', 'RENDERER_UPDATED', 'MIGRATION_UPDATED'].every((name) => deployScript.includes(`--cli-input-json "$${name}"`)), 'Task registration must pass generated JSON directly instead of treating stdin as an AWS CLI input file.');
 assert.ok(deployScript.includes('ingest-worker.tar') && deployScript.includes('render-worker.tar'), 'Deployment must publish the verified worker artifacts.');
 assert.ok(deployScript.includes('Rendering__DeployedArtifactDigest') && deployScript.includes('RENDERER_DIGEST'), 'Deployment must bind API compatibility selection to the exact deployed renderer digest.');
+assert.ok(deployScript.includes('tests/rendering/corpus/run-native.sh') && renderingCorpus.includes('pixel_sha256') && renderingCorpus.includes('cmp --silent'), 'Deployment must block on the exact renderer pixel-regression corpus.');
+assert.ok(deployScript.includes('operations/admit') && deployScript.includes('scripts/smoke-rendering.mjs') && deployScript.includes('operations/activate'), 'Deployment must admit a paused candidate, complete HTTP acceptance, then activate it.');
+assert.ok(deployScript.indexOf('operations/admit') < deployScript.indexOf('scripts/smoke-rendering.mjs') && deployScript.indexOf('scripts/smoke-rendering.mjs') < deployScript.indexOf('operations/activate'), 'Compatibility activation must follow rather than precede the rendering HTTP fixture.');
+assert.ok(deployScript.includes('operations/abort') && deployScript.indexOf('operations/abort') < deployScript.indexOf('update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK"'), 'Failed acceptance must clear its candidate before ECS rollback restores the prior API.');
 assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
 assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');
 assert.ok(migrationScript.includes('trap cleanup_migration ERR INT TERM') && migrationScript.includes('aws ecs stop-task'), 'Migration timeout or interruption must stop the remote ECS task.');

@@ -27,6 +27,7 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 - [ADR-0007](../../architecture/decisions/0007-isolated-darktable-rendering-provenance.md) records the enduring containment boundary.
 - [ADR-0009](../../architecture/decisions/0009-production-renderer-vulnerability-gate.md) limits the accepted renderer digest to non-production until every accepted lower-severity finding is remediated.
 - [ADR-0010](../../architecture/decisions/0010-renderer-iam-callback-authentication.md) authorizes the renderer task role, rather than a user or shared secret, to invoke dedicated SigV4-protected callback routes.
+- [ADR-0011](../../architecture/decisions/0011-paused-renderer-candidate-acceptance.md) preserves rollback compatibility while an exact renderer candidate undergoes owner-scoped HTTP acceptance.
 
 ## Constitution Check
 

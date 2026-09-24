@@ -22,5 +22,6 @@
     <EmbeddedResource Include="../api/Database/Migrations/010_rendering_identity.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.010_rendering_identity.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/011_rendering_events.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.011_rendering_events.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/012_rendering_hardened_compatibility.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.012_rendering_hardened_compatibility.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/013_rendering_candidate_acceptance.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.013_rendering_candidate_acceptance.sql" />
   </ItemGroup>
 </Project>
