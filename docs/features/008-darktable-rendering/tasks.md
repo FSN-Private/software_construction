@@ -8,7 +8,7 @@
 
 - [x] T001 Create implementation design, research, data model, quickstart, and v1 API contract in `docs/features/008-darktable-rendering/` (FR-001–017, NFR-001–017).
 - [x] T002 Record the isolated native-renderer/provenance boundary in `docs/architecture/decisions/0007-isolated-darktable-rendering-provenance.md` (FR-009/017, NFR-005).
-- [x] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — Validated by the immutable ECR digest, digest-qualified Trivy SBOM/SARIF (294 components; 0 critical/high, 48 medium, 18 low), and four-state CR2/XMP corpus. Fredrik Snårbacka approved it for non-production derivatives at 2026-09-23T17:32:00Z; ADR-0009 prohibits production until all 66 accepted findings are remediated.
+- [x] T003 Add the reviewed digest-pinned darktable artifact, license, SBOM, vulnerability scan, and regression evidence to `docs/dependency-inventory.md` and `docs/rendering-compatibility.md` (FR-001/015/016, NFR-007/010/016). — The old candidate is superseded. The active immutable ECR digest has digest-qualified Trivy SBOM/SARIF with 0 critical/high and 5 accepted medium findings; trusted-Linux corpus acceptance is T026 post-merge.
 
 ## Phase 2: Shared rendering foundation
 
@@ -53,7 +53,7 @@
 - [x] T018 Add compatibility approval workflow, corpus evidence template, failure/queue-drain/retention runbooks, and a release plan in `docs/rendering-compatibility.md`, `docs/runbooks/`, and `docs/releases/008-darktable-rendering/release-plan.md` (FR-001/015/016, NFR-007/010/012/013/016).
 - [ ] T019 Implement cache/uncached/freshness capacity measurements and validate [quickstart.md](quickstart.md) in `tests/rendering/performance/` and `docs/features/008-darktable-rendering/validation.md` (NFR-001/002/005/017, SC-001–006). — BLOCKED for current-preview integration and worker infrastructure: T010 and T017.
 - [ ] T020 Run Spec Kit convergence, resolve appended tasks, validate all non-blocked requirements, and record feature review evidence in `docs/features/008-darktable-rendering/` (all FR/AC/NFR).
-- [ ] T021 Enforce the non-production-only compatibility scope and production scan-diff gate in deployment configuration and release validation; remediate all 48 medium and 18 low findings in a replacement digest before any production promotion (AC-010, NFR-018, ADR-0009). — IN PROGRESS: `release.yml` now fails closed before production approval unless the protected replacement image and its digest-qualified SARIF prove the accepted 66 findings absent; remediation and production evidence remain outstanding.
+- [ ] T021 Enforce the non-production-only compatibility scope and production scan-diff gate in deployment configuration and release validation; remediate every finding accepted for the active digest before any production promotion (AC-010, NFR-018, ADR-0009).
 
 ## Dependencies and execution order
 

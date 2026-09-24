@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feature/008-darktable-rendering`  
 **Created**: 2026-09-03  
-**Status**: Approved for implementation by product-owner request on 2026-09-21; the reviewed renderer digest is approved for non-production derivatives only on 2026-09-23
+**Status**: Approved for implementation; the hardened renderer digest is approved for non-production only, with trusted-Linux corpus and HTTP acceptance post-merge.
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 
 ## Problem and Scope
@@ -101,7 +101,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - **AC-007**: Render execution cannot alter source objects, working changes, commits, or branch references.
 - **AC-008**: Every supported-release change passes the approved regression corpus before use for new requests.
 - **AC-009**: One RAW fixture with its current XMP state and at least three distinct historical XMP revisions renders with traceable provenance for every rendition.
-- **AC-010**: Production promotion is refused while any of the 48 medium or 18 low findings accepted for the non-production 5.6.1 digest remains in its digest-qualified vulnerability report.
+- **AC-010**: Production promotion is refused while any finding accepted for the active non-production digest remains in its digest-qualified vulnerability report.
 
 ## Non-Functional Requirements
 
@@ -131,7 +131,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - Feature 006 supplies the approved library-scoped selected-version resolution contract. Historical-version rendering MUST use that exact resolver and return unavailable on a missing or mismatched selected state; it MUST not substitute a branch head or synthetic history.
 - Gallery and lineage interfaces in features 009 and 010 consume this feature's rendition and provenance contract.
 - Rendering derivatives are reproducible aids, not authoritative replacements for originals or XMP history.
-- Fredrik Snårbacka approved the exact 5.6.1 ECR digest for new non-production `rendering-v1` derivatives at 2026-09-23T17:32:00Z, accepting 48 medium and 18 low findings. That acceptance does not authorize production use.
+- The product owner approved `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for non-production `rendering-v1` derivatives at 2026-09-24T12:59:25Z, accepting five medium findings. That acceptance does not authorize production use.
 - Fredrik Snårbacka approved AWS IAM/SigV4 task-role authentication for renderer-to-API callbacks on 2026-09-24. Renderer callbacks use dedicated machine routes and do not impersonate an owner or carry a shared bearer secret.
 
 ## Success Criteria
