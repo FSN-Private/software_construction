@@ -41,3 +41,22 @@ The push gate is not yet passable because two external acceptance tasks remain:
 
 NFR-017/SC-006 remains waived by the feature owner as documented; that waiver does not
 cover the two requirements above.
+
+## Fresh review — 2026-09-24
+
+**Reviewer model**: gpt-5.6-terra (independent alternate model)  
+**Reviewed range**: `master..cc04bf5`  
+**Result**: BLOCKED
+
+1. **Blocking, high — T003/T018/T023/T028:** migration 012 approves
+   `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b`,
+   but no committed digest-qualified SBOM/SARIF/corpus and compatibility record resolves
+   `darktable-5.6.1-hardened-ecr`; retained records still name the older digest.
+2. **Blocking, medium — T005/T028:** migration rehearsal stopped at 011 and therefore
+   did not test the exact digest update in 012. This is fixed locally by extending
+   `MigrationChecks` to apply 012 and assert the approved exact digest; validation and
+   a new review are still required.
+
+The required SBOM tooling is unavailable in this environment (`trivy` is not installed
+and Docker has no `sbom` plugin), so the first finding remains unresolved and no push
+may occur.

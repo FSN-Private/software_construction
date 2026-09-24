@@ -23,3 +23,20 @@ TRIVY_CACHE_DIR=/tmp/trivy-008-cache /path/to/trivy image --scanners vuln --form
 ```
 
 The image is published as `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb`. Its ECR-digest corpus evidence is [recorded with the corpus](../../../../tests/rendering/corpus/ecr-evidence.md). It is approved for non-production derivatives only; production is prohibited by [ADR-0009](../../../architecture/decisions/0009-production-renderer-vulnerability-gate.md).
+
+## Hardened renderer evidence
+
+The approved non-production renderer is `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b`.
+It disables unused OpenEXR support after the previous image’s four high-severity
+OpenEXR findings. Its digest-qualified Trivy 0.74.0 evidence is:
+
+| Evidence | SHA-256 | Result |
+|---|---|---|
+| `darktable-5.6.1-hardened-ecr.cdx.json` | `d46a65eb5695012d6ce62bbfbc8247945f5a4e93ea9b615583037e5afc5ee3fb` | CycloneDX SBOM (817,028 bytes) |
+| `darktable-5.6.1-hardened-ecr.sarif` | `9076faf4f29657da5d0f845d7e17fdc47c9987f685d2dcb649d2ef37e356552f` | 0 critical, 0 high, 5 medium findings |
+
+The owner approved this exact digest for non-production `rendering-v1` derivatives
+at 2026-09-24T12:59:25Z, accepting the five medium findings. Production remains
+blocked by ADR-0009. The exact digest rendered the current CR2/XMP and all three
+historical XMP states; its portable trusted-runner corpus record remains a required
+post-merge non-production acceptance artifact.
