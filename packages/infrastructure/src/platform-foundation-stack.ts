@@ -15,6 +15,7 @@ import { DnsRecordType } from 'aws-cdk-lib/aws-servicediscovery';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Secret as SecretsManagerSecret } from 'aws-cdk-lib/aws-secretsmanager';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { createOwnerIdentity } from './identity/owner-identity.js';
 
@@ -77,6 +78,16 @@ export class PlatformFoundationStack extends Stack {
       autoDeleteObjects: false,
       cors: [{ allowedOrigins: [props.webOrigin], allowedMethods: [HttpMethods.GET, HttpMethods.PUT, HttpMethods.HEAD], allowedHeaders: ['*'], exposedHeaders: ['ETag', 'x-amz-checksum-sha256', 'x-amz-version-id'], maxAge: 900 }],
     });
+    const derivativeBucket = new Bucket(this, 'DerivativeBucket', {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.KMS,
+      encryptionKey,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+      lifecycleRules: [{ prefix: 'derivatives/', expiration: Duration.days(30), noncurrentVersionExpiration: Duration.days(7) }],
+    });
     const apiRepository = new Repository(this, 'ApiRepository', {
       repositoryName: `platform-${props.environmentName}-api`,
       imageTagMutability: TagMutability.IMMUTABLE,
@@ -129,9 +140,12 @@ export class PlatformFoundationStack extends Stack {
 
     const cluster = new Cluster(this, 'RuntimeCluster', { vpc, clusterName: `platform-${props.environmentName}` });
     const namespace = cluster.addDefaultCloudMapNamespace({ name: `${props.environmentName}.platform.internal` });
+    const rendererDlq = new Queue(this, 'RendererDeadLetterQueue', { encryptionMasterKey: encryptionKey, retentionPeriod: Duration.days(14) });
+    const rendererQueue = new Queue(this, 'RendererQueue', { encryptionMasterKey: encryptionKey, visibilityTimeout: Duration.minutes(35), retentionPeriod: Duration.days(4), deadLetterQueue: { queue: rendererDlq, maxReceiveCount: 3 } });
     const apiExecutionRole = new aws_iam.Role(this, 'ApiExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     const workerExecutionRole = new aws_iam.Role(this, 'WorkerExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     const migrationExecutionRole = new aws_iam.Role(this, 'MigrationExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
+    const rendererExecutionRole = new aws_iam.Role(this, 'RendererExecutionRole', { assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'), managedPolicies: [aws_iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')] });
     runtimeDatabaseSecret.grantRead(apiExecutionRole);
     runtimeDatabaseSecret.grantRead(workerExecutionRole);
     runtimeDatabaseSecret.grantRead(migrationExecutionRole);
@@ -177,6 +191,14 @@ export class PlatformFoundationStack extends Stack {
       },
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'ingest-migration' }),
     });
+    const rendererTask = new FargateTaskDefinition(this, 'RendererTask', { family: `platform-${props.environmentName}-render-worker`, cpu: 1024, memoryLimitMiB: 2048, ephemeralStorageGiB: 30, executionRole: rendererExecutionRole });
+    rendererTask.addContainer('renderer', {
+      containerName: 'renderer',
+      image: ContainerImage.fromEcrRepository(rendererRepository, 'bootstrap'),
+      environment: { Rendering__QueueUrl: rendererQueue.queueUrl, Rendering__DerivativeBucket: derivativeBucket.bucketName, Rendering__WorkspaceRoot: '/tmp/render' },
+      logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'render-worker' }),
+      readonlyRootFilesystem: true,
+    });
     for (const role of [apiTask.taskRole, workerTask.taskRole]) {
       role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
         actions: ['s3:GetBucketVersioning', 's3:ListBucket', 's3:ListBucketMultipartUploads'],
@@ -200,6 +222,10 @@ export class PlatformFoundationStack extends Stack {
       actions: ['s3:PutObject'],
       resources: [ingestBucket.arnForObjects('sha256/*'), ingestBucket.arnForObjects('quarantine/*')],
     }));
+    rendererQueue.grantConsumeMessages(rendererTask.taskRole);
+    ingestBucket.grantRead(rendererTask.taskRole, 'sha256/*');
+    derivativeBucket.grantReadWrite(rendererTask.taskRole, 'derivatives/*');
+    encryptionKey.grantEncryptDecrypt(rendererTask.taskRole);
     workerTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
       actions: ['s3:AbortMultipartUpload', 's3:ListMultipartUploadParts'],
       resources: [ingestBucket.arnForObjects('staging/*')],
@@ -213,12 +239,14 @@ export class PlatformFoundationStack extends Stack {
 
     const apiSecurityGroup = new SecurityGroup(this, 'ApiSecurityGroup', { vpc, allowAllOutbound: true });
     const workerSecurityGroup = new SecurityGroup(this, 'WorkerSecurityGroup', { vpc, allowAllOutbound: true });
+    const rendererSecurityGroup = new SecurityGroup(this, 'RendererSecurityGroup', { vpc, allowAllOutbound: true });
     database.connections.allowDefaultPortFrom(apiSecurityGroup);
     database.connections.allowDefaultPortFrom(workerSecurityGroup);
     const apiGatewaySecurityGroup = new SecurityGroup(this, 'ApiGatewaySecurityGroup', { vpc, allowAllOutbound: true });
     apiSecurityGroup.connections.allowFrom(apiGatewaySecurityGroup, Port.tcp(8080));
     const apiService = new FargateService(this, 'ApiService', { cluster, serviceName: `platform-${props.environmentName}-api`, taskDefinition: apiTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [apiSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(60), cloudMapOptions: { cloudMapNamespace: namespace, name: 'api', dnsRecordType: DnsRecordType.SRV, container: apiContainer, containerPort: 8080 } });
     const workerService = new FargateService(this, 'WorkerService', { cluster, serviceName: `platform-${props.environmentName}-ingest-worker`, taskDefinition: workerTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [workerSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true } });
+    const rendererService = new FargateService(this, 'RendererService', { cluster, serviceName: `platform-${props.environmentName}-render-worker`, taskDefinition: rendererTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [rendererSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true } });
     const vpcLink = new VpcLink(this, 'ApiVpcLink', { vpc, securityGroups: [apiGatewaySecurityGroup], subnets: { subnetType: SubnetType.PRIVATE_ISOLATED } });
     const publicApi = new HttpApi(this, 'PublicApi', {
       createDefaultStage: true,
@@ -284,6 +312,11 @@ export class PlatformFoundationStack extends Stack {
     versionControlFailureAlarm.addAlarmAction(new SnsAction(alerts));
     const versionControlHeartbeatAlarm = new Alarm(this, 'VersionControlIntegrityHeartbeatAlarm', { metric: versionControlHeartbeatMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, actionsEnabled: props.environmentName !== 'nonprod', alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${versionControlRunbook}` });
     versionControlHeartbeatAlarm.addAlarmAction(new SnsAction(alerts));
+    const renderingRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/rendering-operations.md';
+    const rendererQueueAgeAlarm = new Alarm(this, 'RendererQueueAgeAlarm', { metric: rendererQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 300, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });
+    rendererQueueAgeAlarm.addAlarmAction(new SnsAction(alerts));
+    const rendererDlqAlarm = new Alarm(this, 'RendererDeadLetterAlarm', { metric: rendererDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });
+    rendererDlqAlarm.addAlarmAction(new SnsAction(alerts));
     deploymentRole?.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['cloudwatch:DisableAlarmActions', 'cloudwatch:EnableAlarmActions'], resources: [versionControlHeartbeatAlarm.alarmArn] }));
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
@@ -299,6 +332,7 @@ export class PlatformFoundationStack extends Stack {
       [new GraphWidget({ title: 'Ingest storage failures', left: [ingestStorageMetric] })],
       [new GraphWidget({ title: 'Ingest quarantine, repair, and integrity', left: [ingestQuarantineMetric, ingestRepairMetric, integrityDriftMetric] })],
       [new GraphWidget({ title: 'Version-control integrity', left: [versionControlHeartbeatMetric, versionControlFailureMetric] })],
+      [new GraphWidget({ title: 'Renderer queue', left: [rendererQueue.metricApproximateAgeOfOldestMessage(), rendererDlq.metricApproximateNumberOfMessagesVisible()] })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
       [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],
@@ -327,6 +361,11 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'ApiRepositoryName', { value: apiRepository.repositoryName });
     new CfnOutput(this, 'WorkerRepositoryName', { value: workerRepository.repositoryName });
     new CfnOutput(this, 'RendererRepositoryName', { value: rendererRepository.repositoryName });
+    new CfnOutput(this, 'RendererQueueUrl', { value: rendererQueue.queueUrl });
+    new CfnOutput(this, 'RendererDeadLetterQueueUrl', { value: rendererDlq.queueUrl });
+    new CfnOutput(this, 'DerivativeBucketName', { value: derivativeBucket.bucketName });
+    new CfnOutput(this, 'RendererServiceName', { value: rendererService.serviceName });
+    new CfnOutput(this, 'RendererTaskDefinitionFamily', { value: rendererTask.family });
     new CfnOutput(this, 'EcsClusterName', { value: cluster.clusterName });
     new CfnOutput(this, 'ApiServiceName', { value: apiService.serviceName });
     new CfnOutput(this, 'ApiTaskDefinitionFamily', { value: apiTask.family });
