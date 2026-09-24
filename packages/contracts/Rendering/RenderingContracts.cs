@@ -17,26 +17,29 @@ public sealed record RenditionRequest(
     string Profile,
     string RendererRelease,
     string RendererArtifactDigest,
-    string CompatibilityMatrix)
+    string CompatibilityMatrix,
+    string SourceSha256,
+    string XmpSha256)
 {
     public string Key
     {
         get
         {
             Validate();
-            var canonical = string.Join("\n", ["rendering-v1", OwnerId, LibraryId, AssetId.ToString("D"), EditId.ToString("D"), SelectedVersion, Rendition.ToString(), Profile, RendererRelease, RendererArtifactDigest, CompatibilityMatrix]);
+            var canonical = string.Join("\n", ["rendering-v1", OwnerId, LibraryId, AssetId.ToString("D"), EditId.ToString("D"), SelectedVersion, Rendition.ToString(), Profile, RendererRelease, RendererArtifactDigest, CompatibilityMatrix, SourceSha256, XmpSha256]);
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         }
     }
 
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(OwnerId) || string.IsNullOrWhiteSpace(LibraryId) || AssetId == Guid.Empty || EditId == Guid.Empty || string.IsNullOrWhiteSpace(SelectedVersion) || string.IsNullOrWhiteSpace(Profile) || string.IsNullOrWhiteSpace(RendererRelease) || string.IsNullOrWhiteSpace(CompatibilityMatrix))
+        if (string.IsNullOrWhiteSpace(OwnerId) || string.IsNullOrWhiteSpace(LibraryId) || AssetId == Guid.Empty || EditId == Guid.Empty || string.IsNullOrWhiteSpace(SelectedVersion) || string.IsNullOrWhiteSpace(Profile) || string.IsNullOrWhiteSpace(RendererRelease) || string.IsNullOrWhiteSpace(CompatibilityMatrix) || !IsSha256(SourceSha256) || !IsSha256(XmpSha256))
             throw new ArgumentException("invalid_render_request");
         if (RendererArtifactDigest is not "unapproved" && !IsDigest(RendererArtifactDigest)) throw new ArgumentException("invalid_renderer_artifact_digest");
     }
 
     private static bool IsDigest(string value) => value.StartsWith("sha256:", StringComparison.Ordinal) && value.Length == 71 && value[7..].All(static c => char.IsAsciiHexDigit(c) && char.IsLower(c) || char.IsDigit(c));
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(static c => char.IsAsciiHexDigit(c) && (char.IsLower(c) || char.IsDigit(c)));
 }
 
 public sealed record RenderProvenance(
@@ -182,7 +185,7 @@ public sealed class RenderRequestLedger
         publication.Validate();
         var entry = entries.Values.SingleOrDefault(value => value.RequestId == requestId) ?? throw new ArgumentException("render_request_not_found");
         if (entry.Attempt.State != RenderState.Running && entry.Attempt.State != RenderState.Pending) throw new InvalidOperationException("invalid_render_transition");
-        if (provenance.SourceSha256.Length != 64 || provenance.XmpSha256.Length != 64 || provenance.SelectedVersion != entry.Request.SelectedVersion || provenance.RendererRelease != entry.Request.RendererRelease || provenance.RendererArtifactDigest != entry.Request.RendererArtifactDigest || provenance.Profile != entry.Request.Profile || provenance.CompatibilityMatrix != entry.Request.CompatibilityMatrix)
+        if (provenance.SourceSha256 != entry.Request.SourceSha256 || provenance.XmpSha256 != entry.Request.XmpSha256 || provenance.SelectedVersion != entry.Request.SelectedVersion || provenance.RendererRelease != entry.Request.RendererRelease || provenance.RendererArtifactDigest != entry.Request.RendererArtifactDigest || provenance.Profile != entry.Request.Profile || provenance.CompatibilityMatrix != entry.Request.CompatibilityMatrix)
             throw new ArgumentException("render_provenance_mismatch");
         entry.Attempt = entry.Attempt.State == RenderState.Pending ? entry.Attempt.Transition(RenderState.Running).Transition(RenderState.Completed) : entry.Attempt.Transition(RenderState.Completed);
         entry.Provenance = provenance;

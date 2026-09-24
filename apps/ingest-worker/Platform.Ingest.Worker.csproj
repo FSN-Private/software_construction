@@ -18,5 +18,8 @@
     <EmbeddedResource Include="../api/Database/Migrations/007_windows_cloud_files_sync.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.007_windows_cloud_files_sync.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/008_windows_sync_lifecycle_revision.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.008_windows_sync_lifecycle_revision.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/008_rendering.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.008_rendering.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/009_rendering_operations.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.009_rendering_operations.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/010_rendering_identity.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.010_rendering_identity.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/011_rendering_events.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.011_rendering_events.sql" />
   </ItemGroup>
 </Project>

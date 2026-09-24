@@ -13,13 +13,14 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource)
         return await ScalarAsync(connection, "SELECT paused FROM render_intake_control WHERE singleton", cancellationToken) as bool? ?? false;
     }
 
-    public async Task<RenderOperationsView> SetAsync(string action, CancellationToken cancellationToken)
+    public async Task<RenderOperationsView> SetAsync(string action, string owner, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var paused = action is "pause" or "drain" or "cancel";
         if (action is not ("pause" or "resume" or "drain" or "cancel")) throw new RenderingProblem("invalid_render_operation", 400);
         await ExecuteAsync(connection, "UPDATE render_intake_control SET paused=$1,updated_at=now() WHERE singleton", cancellationToken, paused);
+        if (paused) await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,'*',NULL,NULL,'intake_paused')", cancellationToken, Guid.NewGuid(), owner);
         var cancelled = action == "cancel" ? await CancelAsync(connection, cancellationToken) : 0;
         await transaction.CommitAsync(cancellationToken);
         return new(paused, cancelled, 0);
@@ -50,13 +51,18 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource)
     }
 }
 
-public sealed class RenderRecoveryWorker(RenderOperationsService operations, ILogger<RenderRecoveryWorker> logger) : BackgroundService
+public sealed class RenderRecoveryWorker(RenderOperationsService operations, RenderingService rendering, ILogger<RenderRecoveryWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
-            try { if (await operations.RecoverAsync(stoppingToken) > 0) logger.LogWarning("Recovered stale renderer attempts"); }
+            try
+            {
+                var recovered = await operations.RecoverAsync(stoppingToken);
+                var redispatched = await rendering.RedispatchPendingAsync(stoppingToken);
+                if (recovered > 0 || redispatched > 0) logger.LogWarning("Recovered stale renderer attempts or redispatched pending work");
+            }
             catch (Exception error) when (error is NpgsqlException or OperationCanceledException) { logger.LogWarning("Renderer recovery unavailable"); }
     }
 }

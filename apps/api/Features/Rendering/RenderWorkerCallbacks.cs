@@ -23,12 +23,12 @@ public sealed class RenderWorkerCallbacks(NpgsqlDataSource dataSource) : IRender
         new RenderPublication(privateObjectKey, privateObjectVersion, outputSha256, byteLength, mediaType).Validate();
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var request = Command(connection, "SELECT owner_id,library_id,selected_version,renderer_release,renderer_artifact_digest,profile,matrix_version FROM render_requests WHERE id=$1 FOR UPDATE", requestId);
+        await using var request = Command(connection, "SELECT owner_id,library_id,selected_version,renderer_release,renderer_artifact_digest,profile,matrix_version,source_sha256,xmp_sha256 FROM render_requests WHERE id=$1 FOR UPDATE", requestId);
         await using var reader = await request.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new RenderingProblem("rendition_not_found", 404);
         var owner = reader.GetString(0);
         var library = reader.GetString(1);
-        if (provenance.SelectedVersion != reader.GetString(2) || provenance.RendererRelease != reader.GetString(3) || provenance.RendererArtifactDigest != reader.GetString(4) || provenance.Profile != reader.GetString(5) || provenance.CompatibilityMatrix != reader.GetString(6)) throw new RenderingProblem("render_provenance_mismatch");
+        if (provenance.SelectedVersion != reader.GetString(2) || provenance.RendererRelease != reader.GetString(3) || provenance.RendererArtifactDigest != reader.GetString(4) || provenance.Profile != reader.GetString(5) || provenance.CompatibilityMatrix != reader.GetString(6) || provenance.SourceSha256 != reader.GetString(7).Trim() || provenance.XmpSha256 != reader.GetString(8).Trim()) throw new RenderingProblem("render_provenance_mismatch");
         await reader.DisposeAsync();
         if (await ExecuteAsync(connection, "UPDATE render_attempts SET state='completed',completed_at=now(),failure_code=NULL WHERE id=$1 AND request_id=$2 AND state IN ('pending','running')", cancellationToken, attemptId, requestId) != 1) throw new RenderingProblem("invalid_render_transition");
         var renditionId = Guid.NewGuid();

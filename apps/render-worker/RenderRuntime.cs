@@ -34,7 +34,7 @@ public sealed class S3RenderSourceResolver(IAmazonS3 s3, string bucket) : IImmut
         source.Validate();
         using var response = await s3.GetObjectAsync(new GetObjectRequest { BucketName = bucket, Key = source.Key, VersionId = source.Version }, cancellationToken);
         if (response.ContentLength != source.ByteLength) throw new InvalidDataException("source_unavailable");
-        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
+        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920, FileOptions.Asynchronous);
         await response.ResponseStream.CopyToAsync(output, cancellationToken);
         await output.FlushAsync(cancellationToken);
         output.Position = 0;
