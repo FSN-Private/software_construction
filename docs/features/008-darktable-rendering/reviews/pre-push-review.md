@@ -60,3 +60,41 @@ cover the two requirements above.
 The required SBOM tooling is unavailable in this environment (`trivy` is not installed
 and Docker has no `sbom` plugin), so the first finding remains unresolved and no push
 may occur.
+
+## Remediation review convergence — 2026-09-25
+
+**Alternate reviewer model**: `gpt-6-sol`  
+**Remote / destination**: `origin` / `master`  
+**Base and final reviewed range**: `cd1fe828c7d56f89f5acc8503aaff6372daf8f9c..389ed07a15327fa61898bfccac5591e185c94598`  
+**Pending push scope**: complete Feature 008 branch, including `1b7f86c`, `f626b38`, `381fd39`, `de157b7`, and `389ed07`.
+
+The reviewer examined the full Feature 008 specification/tasks, migration 013,
+renderer/API digest binding, candidate admission and activation, ECS cutover/rollback,
+native corpus, live HTTP fixture, and validation evidence. The following blocking
+findings were independently assessed as valid and fixed.
+
+| Round | Finding / affected work | Disposition and evidence |
+|---|---|---|
+| 1 | Any owner could promote; activation preceded HTTP acceptance; rollback could leave the prior API incompatible (T024–T026, T028). | Valid and fixed in `1b7f86c`: configured Cognito operator admission, owner-scoped paused candidate session, activation after HTTP evidence, and abort before rollback. |
+| 1 | Corpus checked JPEG metadata/distinctness, not approved decoded pixels or all renditions (FR-015, AC-008/009). | Valid and fixed in `1b7f86c` and `f626b38`: four effective XMP states compare PFM pixels at 512px and 2048px against committed exact-digest references. |
+| 2 | Post-activation smoke/evidence failures could trigger ECS rollback after the compatibility row changed (NFR-013/014). | Valid and fixed in `4675943`: all fallible evidence steps precede activation; activation is the terminal release action. |
+| 2 | The documented rendition value did not bind to the C# enum (T026). | Valid and fixed in `f626b38`: endpoint accepts documented `thumbnail-512` / `preview-2048` strings and returns textual state values. |
+| 2 | Old-digest work could cross renderer cutover; a same-owner asset could be requested under another library (FR-005/015, NFR-005). | Valid and fixed in `f626b38`: pre-cutover drain, worker exact-digest guard, and source resolution bound to materialized/working library state; integration exercises same-owner cross-library refusal. |
+| 3 | HTTP p95 acceptance was not a real uncached p95; sequential polling could exceed a per-request 30-second deadline (T025/T026, NFR-002). | Valid and fixed in `381fd39` and `de157b7`: at least five distinct uncached requests, per-submission 30-second deadlines, concurrent polling, nearest-rank p95 start, and 20 concurrent cache samples. |
+| 3 | Activation, drain, retry, and stale queue delivery had ambiguous-response or paused-intake races (T024/T029, NFR-013/014). | Valid and fixed in `381fd39` and `389ed07`: exact activation is idempotent, retries enforce paused/exact-compatibility gates, mismatched worker envelopes claim before safe failure/delete, bootstrap skips unavailable old routes when prior renderer count is zero, and drain recovery is armed before the request. |
+| 3 | Migration 013 had not run against PostgreSQL. | Valid and fixed/verified: `node tests/integration/ingest/run.mjs` passed on local PostgreSQL/MinIO, including migration rehearsal and candidate admission/activation assertions. |
+
+### Validation rerun
+
+- `dotnet build --no-restore apps/api/Platform.Api.csproj` — PASS
+- `dotnet build --no-restore apps/render-worker/Platform.Render.Worker.csproj` — PASS
+- `dotnet run --no-restore --project tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj` — PASS
+- `node tests/integration/ingest/run.mjs` — PASS (PostgreSQL/MinIO, including migration 013)
+- `node tests/infrastructure/release/release-workflows.mjs` — PASS
+- `bash -n scripts/deploy-ecs-release.sh`, `bash -n tests/rendering/corpus/run-native.sh`, and `node --check scripts/smoke-rendering.mjs` — PASS
+
+### Independent conclusion
+
+The reviewer explicitly reported: **“PASS … All prior blocking findings are resolved; I found no valid unresolved blocking issue.”** Non-production live evidence remains intentionally post-merge T026 work and is fail-closed on the protected fixture configuration. Production remains categorically blocked by T021.
+
+**Final gate result: PASS.**
