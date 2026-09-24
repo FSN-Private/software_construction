@@ -80,7 +80,7 @@ public sealed class DarktableCommandFactory : IRendererCommandFactory
     public RendererCommand Create(RenderJob job, ResolvedRenderInput input, RenderWorkspace workspace)
     {
         var width = job.Request.Rendition == RenditionKind.Thumbnail512 ? "512" : "2048";
-        return new("/opt/darktable/bin/darktable-cli", [input.OriginalPath, input.XmpPath, workspace.PrivatePath("output.jpg"), "--width", width], workspace.Path);
+        return new("/opt/darktable/bin/darktable-cli", [input.OriginalPath, input.XmpPath, workspace.PrivatePath("output.jpg"), "--width", width, "--height", width, "--library", ":memory:"], workspace.Path);
     }
 }
 

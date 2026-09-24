@@ -65,6 +65,8 @@ internal static class RenderingChecks
             Check(workspace.PrivatePath("output.jpg").StartsWith(workspace.Path, StringComparison.Ordinal), "Worker paths must remain inside a private workspace.");
             AssertThrows(() => workspace.PrivatePath("../outside.jpg"), "Workspace path traversal must be rejected.");
             AssertThrows(() => new RendererCommand("darktable-cli", [], workspace.Path).Validate(), "Renderer execution must require an explicit absolute executable path.");
+            var command = new DarktableCommandFactory().Create(new RenderJob(Guid.NewGuid(), Guid.NewGuid(), request, new(30, 1024, 2048, 1), queueMessage), new(workspace.PrivatePath("original"), workspace.PrivatePath("edit.xmp"), new string('a', 64), new string('b', 64)), workspace);
+            Check(command.Arguments.SequenceEqual([workspace.PrivatePath("original"), workspace.PrivatePath("edit.xmp"), workspace.PrivatePath("output.jpg"), "--width", "512", "--height", "512", "--library", ":memory:"]), "Darktable must receive square rendition bounds and an in-memory library.");
         }
         finally
         {
