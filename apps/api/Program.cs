@@ -6,6 +6,7 @@ using System.Security.Claims;
 using Npgsql;
 using Platform.Storage;
 using Amazon.S3;
+using Amazon.SQS;
 using Platform.Api.Features.Ingest;
 using Platform.Api.Features.VersionControl;
 using Platform.Api.Features.VersionControl.Integrity;
@@ -53,6 +54,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
     builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderWorkerCallback, Platform.Api.Features.Rendering.RenderWorkerCallbacks>();
+    if (!string.IsNullOrWhiteSpace(builder.Configuration["Rendering:QueueUrl"])) builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderQueueDispatcher, Platform.Api.Features.Rendering.SqsRenderQueueDispatcher>();
     builder.Services.AddSingleton<OperationService>();
     builder.Services.AddSingleton<RewriteService>();
     builder.Services.AddSingleton<VisibilityService>();
@@ -61,6 +63,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<WindowsSyncService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
+builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
 var app = builder.Build();

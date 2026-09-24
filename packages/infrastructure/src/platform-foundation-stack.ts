@@ -1,5 +1,5 @@
 import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
-import { CorsHttpMethod, HttpApi, HttpMethod, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
+import { CorsHttpMethod, HttpApi, HttpMethod, HttpRoute, HttpRouteKey, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpServiceDiscoveryIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import { Key } from 'aws-cdk-lib/aws-kms';
@@ -192,13 +192,15 @@ export class PlatformFoundationStack extends Stack {
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'ingest-migration' }),
     });
     const rendererTask = new FargateTaskDefinition(this, 'RendererTask', { family: `platform-${props.environmentName}-render-worker`, cpu: 1024, memoryLimitMiB: 2048, ephemeralStorageGiB: 30, executionRole: rendererExecutionRole });
-    rendererTask.addContainer('renderer', {
+    rendererTask.addVolume({ name: 'renderer-workspace' });
+    const rendererContainer = rendererTask.addContainer('renderer', {
       containerName: 'renderer',
       image: ContainerImage.fromEcrRepository(rendererRepository, 'bootstrap'),
-      environment: { Rendering__QueueUrl: rendererQueue.queueUrl, Rendering__DerivativeBucket: derivativeBucket.bucketName, Rendering__WorkspaceRoot: '/tmp/render' },
+      environment: { Rendering__QueueUrl: rendererQueue.queueUrl, Rendering__SourceBucket: ingestBucket.bucketName, Rendering__DerivativeBucket: derivativeBucket.bucketName, Rendering__WorkspaceRoot: '/tmp/render', Rendering__AwsRegion: this.region },
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'render-worker' }),
       readonlyRootFilesystem: true,
     });
+    rendererContainer.addMountPoints({ sourceVolume: 'renderer-workspace', containerPath: '/tmp/render', readOnly: false });
     for (const role of [apiTask.taskRole, workerTask.taskRole]) {
       role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
         actions: ['s3:GetBucketVersioning', 's3:ListBucket', 's3:ListBucketMultipartUploads'],
@@ -256,6 +258,15 @@ export class PlatformFoundationStack extends Stack {
     const integration = new HttpServiceDiscoveryIntegration('ApiIntegration', apiService.cloudMapService, { vpcLink });
     publicApi.addRoutes({ path: '/', methods: [HttpMethod.ANY], integration });
     publicApi.addRoutes({ path: '/{proxy+}', methods: [HttpMethod.ANY], integration });
+    const iamCallbackAuthorizer = { bind: () => ({ authorizationType: 'AWS_IAM' }) };
+    const rendererCallbackRoutes = ['claim', 'complete', 'fail'].map((route) => new HttpRoute(this, `Renderer${route.charAt(0).toUpperCase()}${route.slice(1)}Callback`, {
+      httpApi: publicApi,
+      routeKey: HttpRouteKey.with(`/internal/render-callbacks/${route}`, HttpMethod.POST),
+      integration,
+      authorizer: iamCallbackAuthorizer,
+    }));
+    for (const route of rendererCallbackRoutes) route.grantInvoke(rendererTask.taskRole);
+    rendererContainer.addEnvironment('Rendering__CallbackBaseUrl', publicApi.apiEndpoint);
 
     let deploymentRole: aws_iam.IRole | undefined;
     if (props.deploymentRoleArn) {

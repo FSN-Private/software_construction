@@ -7,6 +7,16 @@ namespace Platform.Api.Features.Rendering;
 /// <summary>API implementation of the authenticated worker callback boundary.</summary>
 public sealed class RenderWorkerCallbacks(NpgsqlDataSource dataSource) : IRenderWorkerCallback
 {
+    public async Task<bool> ClaimAsync(Guid requestId, Guid attemptId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await ExecuteAsync(connection, "UPDATE render_attempts SET state='running',started_at=now() WHERE id=$1 AND request_id=$2 AND state='pending'", cancellationToken, attemptId, requestId) != 1) return false;
+        await ExecuteAsync(connection, "UPDATE render_requests SET state='running',updated_at=now() WHERE id=$1 AND state='pending'", cancellationToken, requestId);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     public async Task CompleteAsync(Guid requestId, Guid attemptId, string privateObjectKey, string privateObjectVersion, string outputSha256, long byteLength, string mediaType, RenderProvenance provenance, CancellationToken cancellationToken = default)
     {
         provenance.Validate();

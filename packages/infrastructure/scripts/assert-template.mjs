@@ -37,7 +37,7 @@ for (const task of runtimeTasks) {
 }
 const rendererContainer = rendererTask?.Properties.ContainerDefinitions[0];
 const rendererSettings = [...(rendererContainer?.Environment ?? []), ...(rendererContainer?.Secrets ?? [])].map(({ Name }) => Name);
-if (!rendererTask || rendererContainer?.ReadonlyRootFilesystem !== true || (rendererContainer.Secrets ?? []).length !== 0 || !['Rendering__QueueUrl', 'Rendering__DerivativeBucket', 'Rendering__WorkspaceRoot'].every((name) => rendererSettings.includes(name))) throw new Error('Renderer tasks must use a read-only root, no database secrets, and only renderer queue/storage settings.');
+if (!rendererTask || rendererContainer?.ReadonlyRootFilesystem !== true || (rendererContainer.Secrets ?? []).length !== 0 || !['Rendering__QueueUrl', 'Rendering__SourceBucket', 'Rendering__DerivativeBucket', 'Rendering__WorkspaceRoot', 'Rendering__AwsRegion', 'Rendering__CallbackBaseUrl'].every((name) => rendererSettings.includes(name))) throw new Error('Renderer tasks must use a read-only root, no database secrets, and only renderer queue/storage settings.');
 if (Number(rendererTask.Properties?.Cpu) < 1024 || Number(rendererTask.Properties?.Memory) < 2048 || Number(rendererTask.Properties?.EphemeralStorage?.SizeInGiB) < 30) throw new Error('Renderer tasks must reserve bounded CPU, memory, and ephemeral workspace capacity.');
 if (resources.filter((resource) => resource.Type === 'AWS::SQS::Queue').length !== 2) throw new Error('Renderer work requires an encrypted queue and dead-letter queue.');
 const migrationSecretNames = (migrationTask.Properties.ContainerDefinitions[0].Secrets ?? []).map(({ Name }) => Name);
@@ -76,6 +76,8 @@ if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' &&
 if (!resources.some((resource) => resource.Type === 'AWS::Cognito::UserPoolClient' && resource.Properties?.AllowedOAuthScopes?.includes('openid'))) throw new Error('The owner web client must permit the OpenID scope requested by the Hosted UI.');
 const apiGateway = resources.find((resource) => resource.Type === 'AWS::ApiGatewayV2::Api');
 if (!['if-match', 'x-client-id'].every((header) => apiGateway?.Properties?.CorsConfiguration?.AllowHeaders?.includes(header))) throw new Error('API browser preflight must allow version-control precondition headers.');
+const iamCallbacks = resources.filter((resource) => resource.Type === 'AWS::ApiGatewayV2::Route' && resource.Properties?.AuthorizationType === 'AWS_IAM');
+if (iamCallbacks.length !== 3 || !iamCallbacks.every((route) => route.Properties.RouteKey.startsWith('POST /internal/render-callbacks/'))) throw new Error('Renderer callbacks must be limited to IAM-authorized machine routes.');
 const canonicalRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
 const ingestRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/ingest-storage.md';
 const versionControlRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/version-control-integrity.md';

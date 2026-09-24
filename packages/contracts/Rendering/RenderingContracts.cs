@@ -112,8 +112,39 @@ public interface ISelectedVersionResolver
 /// <summary>Authenticated worker-to-API boundary; workers never write rendering metadata directly.</summary>
 public interface IRenderWorkerCallback
 {
+    Task<bool> ClaimAsync(Guid requestId, Guid attemptId, CancellationToken cancellationToken = default);
     Task CompleteAsync(Guid requestId, Guid attemptId, string privateObjectKey, string privateObjectVersion, string outputSha256, long byteLength, string mediaType, RenderProvenance provenance, CancellationToken cancellationToken = default);
     Task FailAsync(Guid requestId, Guid attemptId, string safeFailureCode, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Immutable SQS payload. It contains object versions, never paths, owner credentials, or database credentials.</summary>
+public sealed record RenderQueueMessage(Guid RequestId, Guid AttemptId, RenditionRequest Request, RenderInputObject Original, RenderInputObject Xmp, string DerivativeKey, RenderResourcePolicy Policy)
+{
+    public void Validate()
+    {
+        if (RequestId == Guid.Empty || AttemptId == Guid.Empty) throw new ArgumentException("invalid_render_queue_message");
+        Request.Validate();
+        Original.Validate();
+        Xmp.Validate();
+        Policy.Validate();
+        if (Original.Sha256 == Xmp.Sha256 || DerivativeKey != $"derivatives/{Request.Key}.jpg") throw new ArgumentException("invalid_render_queue_message");
+    }
+}
+
+public sealed record RenderInputObject(string Key, string Version, string Sha256, long ByteLength)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Key) || Key.StartsWith('/') || Key.Contains('\\') || Key.Split('/').Any(static part => part is "" or "." or "..") || string.IsNullOrWhiteSpace(Version) || !IsSha256(Sha256) || ByteLength < 1)
+            throw new ArgumentException("invalid_render_input_object");
+    }
+
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+}
+
+public interface IRenderQueueDispatcher
+{
+    Task EnqueueAsync(RenderQueueMessage message, CancellationToken cancellationToken = default);
 }
 
 public sealed record RenderPublication(string ObjectKey, string ObjectVersion, string OutputSha256, long ByteLength, string MediaType)

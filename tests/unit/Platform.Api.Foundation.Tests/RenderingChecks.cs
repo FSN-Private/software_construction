@@ -14,6 +14,9 @@ internal static class RenderingChecks
         Check(request.Key != historical.Key, "Selected XMP version must affect the rendition key.");
         Check(request.Key != (request with { LibraryId = "library-2" }).Key, "Library scope must affect the rendition key.");
         Check(request.Key.Length == 64 && request.Key.All(char.IsAsciiHexDigit), "Rendition keys must be SHA-256 values.");
+        var queueMessage = new RenderQueueMessage(Guid.NewGuid(), Guid.NewGuid(), request, new("sha256/" + new string('a', 64), "source-v1", new string('a', 64), 1), new("sha256/" + new string('b', 64), "xmp-v1", new string('b', 64), 1), $"derivatives/{request.Key}.jpg", new(30, 1024, 2048, 1));
+        queueMessage.Validate();
+        AssertThrows(() => (queueMessage with { DerivativeKey = "derivatives/wrong.jpg" }).Validate(), "Queue work must retain its canonical private derivative key.");
 
         var pending = new RenderAttempt(Guid.NewGuid(), 1, RenderState.Pending);
         var running = pending.Transition(RenderState.Running);

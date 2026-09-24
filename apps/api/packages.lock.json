@@ -11,6 +11,15 @@
           "AWSSDK.Core": "[4.0.102.1, 5.0.0)"
         }
       },
+      "AWSSDK.SQS": {
+        "type": "Direct",
+        "requested": "[4.0.0.22, )",
+        "resolved": "4.0.0.22",
+        "contentHash": "77HAvRnzfd/QNlSz49i7VWq3/FC8yT56wptTvYCl4PRPO90T/t08u9s43Bq8JZ5nNRPMIfgZb8mls7MUyj4dag==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.0.24, 5.0.0)"
+        }
+      },
       "Microsoft.AspNetCore.Authentication.JwtBearer": {
         "type": "Direct",
         "requested": "[10.0.4, )",

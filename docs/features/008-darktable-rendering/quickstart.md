@@ -11,6 +11,8 @@
 
 With the approved PostgreSQL/MinIO test services, run the rendering integration suite. It must verify atomic rendition/provenance publication, private object prefixes, owner isolation, duplicate coalescing, retry attempt numbering, stale-attempt recovery, and queue pause/drain behavior.
 
+The deployed worker receives only `Rendering__QueueUrl`, immutable source/derivative bucket names, an ephemeral workspace, region, and the API Gateway callback base URL. It uses its ECS task role for SQS, S3, and SigV4 callbacks; it never receives database or owner credentials.
+
 ## Trusted native-renderer gate
 
 Before any renderer release is approved, an approved Linux runner must provide the pinned darktable artifact and execute the corpus:

@@ -1,3 +1,16 @@
+FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e6331e7af6d4c8d37168c5e87a64c AS worker-build
+WORKDIR /src
+COPY global.json ./
+COPY packages/contracts/Platform.Contracts.csproj packages/contracts/
+COPY apps/render-worker/Platform.Render.Worker.csproj apps/render-worker/
+COPY apps/render-worker/packages.lock.json apps/render-worker/
+RUN dotnet restore apps/render-worker/Platform.Render.Worker.csproj --locked-mode
+COPY packages/contracts/ packages/contracts/
+COPY apps/render-worker/ apps/render-worker/
+RUN dotnet publish apps/render-worker/Platform.Render.Worker.csproj --configuration Release --no-restore --output /out /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet@sha256:a4556ed033fa96f984bb7a8d348851cb2d36b1281dd2420070045f664fbb5f94 AS dotnet-runtime
+
 FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS build
 
 ARG DARKTABLE_VERSION=5.6.1
@@ -29,11 +42,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /opt/darktable /opt/darktable
+COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
+COPY --from=worker-build /out/ /app/
 
-RUN install --directory --owner=65532 --group=65532 /var/lib/darktable
+RUN install --directory --owner=65532 --group=65532 /var/lib/darktable /tmp/render
 ENV PATH=/opt/darktable/bin:$PATH \
+    DOTNET_ROOT=/usr/share/dotnet \
     HOME=/var/lib/darktable \
     XDG_CACHE_HOME=/var/lib/darktable/cache \
     XDG_CONFIG_HOME=/var/lib/darktable/config
 USER 65532:65532
-ENTRYPOINT ["darktable-cli"]
+ENTRYPOINT ["/usr/share/dotnet/dotnet", "/app/Platform.Render.Worker.dll"]

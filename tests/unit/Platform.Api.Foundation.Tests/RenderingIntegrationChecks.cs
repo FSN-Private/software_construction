@@ -29,12 +29,14 @@ internal static class RenderingIntegrationChecks
         }
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1" }).Build();
-        var service = new RenderingService(db, new CurrentOnlyResolver(), configuration);
+        var queue = new RecordingQueue();
+        var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue);
         var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);
         var created = await service.RequestAsync(owner, input, default);
         var duplicate = await service.RequestAsync(owner, input, default);
         IngestChecks.Check(created.State == RenderState.Pending && created.AttemptId is not null, "A current preview must create an observable pending attempt.");
         IngestChecks.Check(created.RequestId == duplicate.RequestId && created.AttemptId == duplicate.AttemptId && !duplicate.CacheHit, "PostgreSQL must coalesce duplicate pending current-preview requests.");
+        IngestChecks.Check(queue.Messages.Count == 1 && queue.Messages[0].RequestId == created.RequestId && queue.Messages[0].AttemptId == created.AttemptId && queue.Messages[0].DerivativeKey == $"derivatives/{queue.Messages[0].Request.Key}.jpg", "A new render attempt must dispatch one immutable queue envelope.");
 
         var objectKey = $"private/{owner}/{library}/renditions/{created.RequestId:N}.jpg";
         var output = "integration-render-output"u8.ToArray();
@@ -54,6 +56,7 @@ internal static class RenderingIntegrationChecks
         IngestChecks.Check(failure.State == RenderState.Failed && failure.FailureCode == "malformed_xmp", "A renderer failure must retain only its safe category.");
         var retry = await service.RetryAsync(owner, library, failed.RequestId, default);
         IngestChecks.Check(retry.State == RenderState.Pending && retry.AttemptId != failed.AttemptId, "A corrected render retry must create a distinct pending attempt.");
+        IngestChecks.Check(queue.Messages.Count == 2 && queue.Messages[1].AttemptId == retry.AttemptId, "A retry must dispatch its distinct immutable render attempt.");
         await new RenderWorkerCallbacks(db).FailAsync(retry.RequestId, retry.AttemptId!.Value, "resource_limit", default);
         IngestChecks.Check((await service.StatusAsync(owner, library, retry.RequestId, default)).FailureCode == "resource_limit", "A resource-limited attempt must remain visibly retryable without exposing worker details.");
         await MissingSourceIsRejectedAsync(service, owner, library, edit);
@@ -64,6 +67,12 @@ internal static class RenderingIntegrationChecks
     private sealed class CurrentOnlyResolver : ISelectedVersionResolver
     {
         public Task<SelectedVersionResolution> ResolveAsync(string ownerId, string libraryId, Guid assetId, Guid editId, string selectedVersion, CancellationToken cancellationToken = default) => Task.FromResult(SelectedVersionResolution.Unavailable("selected_version_unavailable"));
+    }
+
+    private sealed class RecordingQueue : IRenderQueueDispatcher
+    {
+        public List<RenderQueueMessage> Messages { get; } = [];
+        public Task EnqueueAsync(RenderQueueMessage message, CancellationToken cancellationToken = default) { Messages.Add(message); return Task.CompletedTask; }
     }
 
     private static bool Matches(RenderProvenance expected, RenderProvenance? actual) => actual is not null

@@ -13,7 +13,7 @@ public sealed class RenderingProblem(string code, int status = 409) : Exception(
     public int Status { get; } = status;
 }
 
-public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration)
+public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null)
 {
     public async Task<RenditionStatusView> RequestAsync(string owner, RenditionRequestInput input, CancellationToken cancellationToken)
     {
@@ -26,6 +26,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
             ? SelectedVersionResolution.Current(source.XmpSha256)
             : await versions.ResolveAsync(owner, input.LibraryId, input.AssetId, input.EditId, input.SelectedVersion, cancellationToken);
         if (!selected.IsAvailable) throw new RenderingProblem(selected.FailureCode ?? "selected_version_unavailable", 404);
+        var xmp = await ContentAsync(connection, selected.XmpSha256!, "xmp", cancellationToken) ?? throw new RenderingProblem("selected_version_unavailable", 404);
 
         var compatibility = await CompatibilityAsync(connection, input.Profile, cancellationToken) ?? throw new RenderingProblem("incompatible_renderer");
         var request = new RenditionRequest(owner, input.LibraryId, input.AssetId, input.EditId, input.SelectedVersion, input.Rendition, input.Profile, compatibility.Release, compatibility.Digest, compatibility.Matrix);
@@ -42,6 +43,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         }
         var result = await StatusAsync(connection, owner, input.LibraryId, id, created is null, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (created.HasValue && queue is not null) await queue.EnqueueAsync(Message(id, result.AttemptId!.Value, request, source.Original, xmp), cancellationToken);
         return result;
     }
 
@@ -66,6 +68,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,$3,$4,$5,'retried'),($6,$2,$3,$4,$5,'queued')", cancellationToken, Guid.NewGuid(), owner, library, requestId, attempt, Guid.NewGuid());
         var result = await StatusAsync(connection, owner, library, requestId, false, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await DispatchAsync(owner, library, requestId, attempt, cancellationToken);
         return result;
     }
 
@@ -91,13 +94,42 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
 
     private static async Task<Source?> SourceAsync(NpgsqlConnection connection, string owner, string library, Guid asset, Guid edit, CancellationToken cancellationToken)
     {
-        await using var command = Command(connection, "SELECT a.original_sha256,e.xmp_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id WHERE a.id=$1 AND e.id=$2 AND a.owner_id=$3 AND a.state IN ('active','restored') AND EXISTS(SELECT 1 FROM vc_refs WHERE owner_id=$3 AND library_id=$4)", asset, edit, owner, library);
+        await using var command = Command(connection, "SELECT o.storage_key,o.storage_version,o.sha256,o.byte_length,e.xmp_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id JOIN content_objects o ON o.sha256=a.original_sha256 WHERE a.id=$1 AND e.id=$2 AND a.owner_id=$3 AND a.state IN ('active','restored') AND o.integrity_state='authoritative' AND EXISTS(SELECT 1 FROM vc_refs WHERE owner_id=$3 AND library_id=$4)", asset, edit, owner, library);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0) && !reader.IsDBNull(1) ? new(reader.GetString(0).Trim(), reader.GetString(1).Trim()) : null;
+        return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0) && !reader.IsDBNull(1) && !reader.IsDBNull(4) ? new(new(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetInt64(3)), reader.GetString(4).Trim()) : null;
+    }
+
+    private static async Task<RenderInputObject?> ContentAsync(NpgsqlConnection connection, string sha256, string category, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, "SELECT storage_key,storage_version,sha256,byte_length FROM content_objects WHERE sha256=$1 AND category=$2 AND integrity_state='authoritative'", sha256, category);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(1) ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetInt64(3)) : null;
+    }
+
+    private static RenderQueueMessage Message(Guid requestId, Guid attemptId, RenditionRequest request, RenderInputObject original, RenderInputObject xmp) => new(requestId, attemptId, request, original, xmp, $"derivatives/{request.Key}.jpg", new RenderResourcePolicy(1800, 2048, 30 * 1024, 1));
+
+    private async Task DispatchAsync(string owner, string library, Guid requestId, Guid attemptId, CancellationToken cancellationToken)
+    {
+        if (queue is null) return;
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(connection, "SELECT asset_id,edit_id,selected_version,rendition,profile,renderer_release,renderer_artifact_digest,matrix_version FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND state='pending'", requestId, owner, library);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return;
+        var asset = reader.GetGuid(0);
+        var edit = reader.GetGuid(1);
+        var selectedVersion = reader.GetString(2);
+        var request = new RenditionRequest(owner, library, asset, edit, selectedVersion, ParseRendition(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7));
+        await reader.DisposeAsync();
+        var source = await SourceAsync(connection, owner, library, asset, edit, cancellationToken) ?? throw new RenderingProblem("source_unavailable", 404);
+        var selected = selectedVersion == "current" ? SelectedVersionResolution.Current(source.XmpSha256) : await versions.ResolveAsync(owner, library, asset, edit, selectedVersion, cancellationToken);
+        if (!selected.IsAvailable) throw new RenderingProblem(selected.FailureCode ?? "selected_version_unavailable", 404);
+        var xmp = await ContentAsync(connection, selected.XmpSha256!, "xmp", cancellationToken) ?? throw new RenderingProblem("selected_version_unavailable", 404);
+        await queue.EnqueueAsync(Message(requestId, attemptId, request, source.Original, xmp), cancellationToken);
     }
 
     private static string Rendition(RenditionKind value) => value switch { RenditionKind.Thumbnail512 => "thumbnail-512", RenditionKind.Preview2048 => "preview-2048", _ => throw new RenderingProblem("invalid_render_request", 400) };
+    private static RenditionKind ParseRendition(string value) => value switch { "thumbnail-512" => RenditionKind.Thumbnail512, "preview-2048" => RenditionKind.Preview2048, _ => throw new RenderingProblem("rendering_unavailable", 503) };
     private static RenderState ParseState(string value) => Enum.TryParse<RenderState>(value, true, out var state) ? state : throw new RenderingProblem("rendering_unavailable", 503);
-    private sealed record Source(string OriginalSha256, string XmpSha256);
+    private sealed record Source(RenderInputObject Original, string XmpSha256);
     private sealed record Compatibility(string Matrix, string Release, string Digest);
 }

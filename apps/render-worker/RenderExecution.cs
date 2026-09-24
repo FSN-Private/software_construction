@@ -3,7 +3,7 @@ using Platform.Contracts.Rendering;
 
 namespace Platform.Render.Worker;
 
-public sealed record RenderJob(Guid RequestId, Guid AttemptId, RenditionRequest Request, RenderResourcePolicy Policy);
+public sealed record RenderJob(Guid RequestId, Guid AttemptId, RenditionRequest Request, RenderResourcePolicy Policy, RenderQueueMessage? Message = null);
 
 public sealed record ResolvedRenderInput(string OriginalPath, string XmpPath, string SourceSha256, string XmpSha256);
 
@@ -21,7 +21,6 @@ public sealed record PublishedDerivative(string ObjectKey, string ObjectVersion,
 
 public interface IRenderQueue
 {
-    Task<bool> ClaimAsync(Guid attemptId, CancellationToken cancellationToken = default);
     Task CompleteAsync(Guid attemptId, CancellationToken cancellationToken = default);
     Task FailAsync(Guid attemptId, string safeFailureCode, CancellationToken cancellationToken = default);
 }
@@ -106,6 +105,9 @@ public sealed class ConstrainedRendererExecutor
         foreach (var argument in command.Arguments) start.ArgumentList.Add(argument);
         start.Environment.Clear();
         start.Environment["TZ"] = "UTC";
+        start.Environment["HOME"] = command.WorkingDirectory;
+        start.Environment["XDG_CACHE_HOME"] = System.IO.Path.Combine(command.WorkingDirectory, "cache");
+        start.Environment["XDG_CONFIG_HOME"] = System.IO.Path.Combine(command.WorkingDirectory, "config");
 
         using var process = new Process { StartInfo = start };
         if (!process.Start()) return RendererExecutionResult.Failed("renderer_timeout");
@@ -135,7 +137,7 @@ public sealed class RenderWorker(
 {
     public async Task ExecuteAsync(RenderJob job, CancellationToken cancellationToken = default)
     {
-        if (!await queue.ClaimAsync(job.AttemptId, cancellationToken)) return;
+        if (!await callbacks.ClaimAsync(job.RequestId, job.AttemptId, cancellationToken)) { await queue.CompleteAsync(job.AttemptId, cancellationToken); return; }
         await using var workspace = RenderWorkspace.Create(workspaceRoot);
         try
         {
