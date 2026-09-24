@@ -98,8 +98,8 @@ ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --clien
 test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
 if test "$PREVIOUS_RENDERER_COUNT" != 0; then
-  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
   INTAKE_PAUSED=1
+  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
   for _ in $(seq 1 60); do
     DRAIN_STATUS="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations")"
     test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 && break
