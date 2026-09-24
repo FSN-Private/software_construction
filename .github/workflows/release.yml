@@ -53,7 +53,9 @@ jobs:
       - name: Refuse production promotion until the renderer findings are remediated
         env:
           RENDERER_IMAGE: ${{ vars.AWS_PRODUCTION_RENDERER_IMAGE }}
-        run: node scripts/verify-renderer-production-gate.mjs docs/features/008-darktable-rendering/evidence/darktable-5.6.1-ecr.sarif docs/features/008-darktable-rendering/evidence/production-renderer.sarif "$RENDERER_IMAGE"
+        run: |
+          echo 'Production renderer promotion remains blocked until T021 is complete.'
+          exit 1
 
   promote:
     needs: preflight

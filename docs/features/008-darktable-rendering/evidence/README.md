@@ -26,7 +26,7 @@ The image is published as `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/pla
 
 ## Hardened renderer evidence
 
-The approved non-production renderer is `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b`.
+The pending non-production renderer is `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b`.
 It disables unused OpenEXR support after the previous image’s four high-severity
 OpenEXR findings. Its digest-qualified Trivy 0.74.0 evidence is:
 

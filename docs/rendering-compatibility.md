@@ -51,10 +51,10 @@ Fill this only after every checklist item has immutable evidence. A local Docker
 | Registry image | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:<digest>` |
 | Security evidence | SBOM reference and completed CVE report; no unresolved critical/high finding |
 | Corpus evidence | Trusted-runner run URL/ID and the four XMP/output provenance records |
-| Approval | Product owner, 2026-09-24T12:59:25Z: accepts 5 medium findings and approves `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for non-production `rendering-v1` derivatives; trusted-Linux corpus evidence is post-merge acceptance. |
+| Approval | Product owner, 2026-09-24T12:59:25Z: accepts 5 medium findings for controlled validation only. `pending_corpus` prevents new derivatives until T026 succeeds. |
 
 Any change to the digest, profile, output encoding, or darktable release requires an additive migration and new approval evidence before the active matrix row changes.
 
 ## Recorded approval
 
-The product owner accepted 5 medium findings and approved `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for new non-production `rendering-v1` derivatives at 2026-09-24T12:59:25Z. This does not authorize production deployment; post-merge trusted-Linux corpus and HTTP acceptance evidence remain required.
+The product owner accepted 5 medium findings for controlled validation of `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` at 2026-09-24T12:59:25Z. It is not approved for new derivatives until post-merge T026 acceptance succeeds.

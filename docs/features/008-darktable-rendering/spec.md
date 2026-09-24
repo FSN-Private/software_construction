@@ -131,7 +131,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 - Feature 006 supplies the approved library-scoped selected-version resolution contract. Historical-version rendering MUST use that exact resolver and return unavailable on a missing or mismatched selected state; it MUST not substitute a branch head or synthetic history.
 - Gallery and lineage interfaces in features 009 and 010 consume this feature's rendition and provenance contract.
 - Rendering derivatives are reproducible aids, not authoritative replacements for originals or XMP history.
-- The product owner approved `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for non-production `rendering-v1` derivatives at 2026-09-24T12:59:25Z, accepting five medium findings. That acceptance does not authorize production use.
+- The product owner accepted five medium findings for controlled validation of `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b`; it cannot serve derivatives until T026 succeeds.
 - Fredrik Snårbacka approved AWS IAM/SigV4 task-role authentication for renderer-to-API callbacks on 2026-09-24. Renderer callbacks use dedicated machine routes and do not impersonate an owner or carry a shared bearer secret.
 
 ## Success Criteria
