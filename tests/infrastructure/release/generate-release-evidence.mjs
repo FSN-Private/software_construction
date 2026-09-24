@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const directory = mkdtempSync(join(tmpdir(), 'release-evidence-'));
-for (const artifact of ['api.tar', 'ingest-worker.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip']) {
+for (const artifact of ['api.tar', 'ingest-worker.tar', 'render-worker.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip']) {
   writeFileSync(join(directory, artifact), artifact);
 }
 const revision = '0123456789abcdef0123456789abcdef01234567';
@@ -18,9 +18,9 @@ const sbom = JSON.parse(readFileSync(join(directory, 'sbom.spdx.json'), 'utf8'))
 const provenanceText = readFileSync(join(directory, 'provenance.json'), 'utf8');
 const provenance = JSON.parse(provenanceText);
 assert.equal(manifest.sourceRevision, revision);
-assert.equal(manifest.artifacts.length, 5);
+assert.equal(manifest.artifacts.length, 6);
 assert.equal(manifest.evidence.length, 3);
-assert.equal(sbom.files.length, 5);
+assert.equal(sbom.files.length, 6);
 assert.equal(provenance.predicate.buildDefinition.externalParameters.sourceRevision, revision);
 assert.equal(provenance.predicate.buildDefinition.externalParameters.ciRunId, '12345');
 assert.equal(provenance.predicate.buildDefinition.externalParameters.repository, 'FSN-Private/software_construction');
@@ -30,6 +30,7 @@ assert.deepEqual(provenance.subject.map(({ name }) => name).sort(), manifest.art
 assert.throws(() => execFileSync(process.execPath, ['scripts/verify-release-evidence.mjs', join(directory, 'release-manifest.json'), revision, '--require-worker', 'FSN-Private/software_construction', '67891'], { stdio: 'pipe' }), /Provenance release workflow run does not match/);
 const legacy = structuredClone(manifest);
 legacy.artifacts = legacy.artifacts.filter(({ name }) => name !== 'ingest-worker.tar');
+legacy.artifacts = legacy.artifacts.filter(({ name }) => name !== 'render-worker.tar');
 writeFileSync(join(directory, 'provenance.json'), JSON.stringify({ predicateType: 'https://slsa.dev/provenance/v1', buildDefinition: { externalParameters: { sourceRevision: revision } } }));
 legacy.evidence.find(({ kind }) => kind === 'provenance').digest = `sha256:${createHash('sha256').update(readFileSync(join(directory, 'provenance.json'))).digest('hex')}`;
 writeFileSync(join(directory, 'legacy-release-manifest.json'), JSON.stringify(legacy));
@@ -43,8 +44,10 @@ writeFileSync(join(directory, 'nonprod-deployment.json'), JSON.stringify({
   manifestDigest,
   apiImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
   workerImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-worker@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+  rendererImage: 'example.dkr.ecr.ap-southeast-1.amazonaws.com/platform-renderer@sha256:abcdefabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123',
   taskDefinition: 'arn:api-task',
   workerTaskDefinition: 'arn:worker-task',
+  rendererTaskDefinition: 'arn:renderer-task',
   migrationTask: 'arn:migration-task',
   smoke: { assetId: '00000000-0000-0000-0000-000000000001' },
 }));

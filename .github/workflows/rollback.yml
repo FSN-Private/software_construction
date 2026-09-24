@@ -15,6 +15,10 @@ on:
         description: Exact prior healthy worker task-definition ARN; never a tag or rebuild instruction.
         required: true
         type: string
+      compatible_renderer_task_definition:
+        description: Exact prior healthy renderer task-definition ARN; never a tag or rebuild instruction.
+        required: true
+        type: string
       reason:
         description: Incident or validation failure reference.
         required: true
@@ -43,12 +47,14 @@ jobs:
       ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
       WORKER_SERVICE: ${{ vars.AWS_PRODUCTION_WORKER_SERVICE }}
+      RENDERER_SERVICE: ${{ vars.AWS_PRODUCTION_RENDERER_SERVICE }}
       HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
       COGNITO_CLIENT_ID: ${{ vars.AWS_PRODUCTION_COGNITO_CLIENT_ID }}
       COGNITO_OWNER_USERNAME: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_USERNAME }}
       COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_PASSWORD }}
       COMPATIBLE_TASK_DEFINITION: ${{ inputs.compatible_task_definition }}
       COMPATIBLE_WORKER_TASK_DEFINITION: ${{ inputs.compatible_worker_task_definition }}
+      COMPATIBLE_RENDERER_TASK_DEFINITION: ${{ inputs.compatible_renderer_task_definition }}
       ROLLBACK_REASON: ${{ inputs.reason }}
       PROMOTION_RUN_ID: ${{ inputs.production_promotion_run_id }}
     steps:
@@ -65,18 +71,20 @@ jobs:
           SOURCE_REVISION="$(jq -r .sourceRevision artifacts/production/release-manifest.json)"
           node scripts/verify-release-evidence.mjs artifacts/production/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY"
           test "$(jq -r '.compatibility.rollbackAllowed' artifacts/production/release-manifest.json)" = true
-          test -n "$COMPATIBLE_TASK_DEFINITION" && test -n "$COMPATIBLE_WORKER_TASK_DEFINITION" && test -n "$ROLLBACK_REASON" && test -n "$PROMOTION_RUN_ID"
+          test -n "$COMPATIBLE_TASK_DEFINITION" && test -n "$COMPATIBLE_WORKER_TASK_DEFINITION" && test -n "$COMPATIBLE_RENDERER_TASK_DEFINITION" && test -n "$ROLLBACK_REASON" && test -n "$PROMOTION_RUN_ID"
           test "$(jq -r .taskDefinition artifacts/production/production-promotion.json)" = "$COMPATIBLE_TASK_DEFINITION"
           test "$(jq -r .workerTaskDefinition artifacts/production/production-promotion.json)" = "$COMPATIBLE_WORKER_TASK_DEFINITION"
+          test "$(jq -r .rendererTaskDefinition artifacts/production/production-promotion.json)" = "$COMPATIBLE_RENDERER_TASK_DEFINITION"
           test "$(jq -r .sourceRevision artifacts/production/production-promotion.json)" = "$SOURCE_REVISION"
           test "$(jq -r .releaseArtifactDigest artifacts/production/production-promotion.json)" = "$(jq -r '.artifacts[] | select(.name == "api.tar") | .digest' artifacts/production/release-manifest.json)"
           test "$(jq -r .workerReleaseArtifactDigest artifacts/production/production-promotion.json)" = "$(jq -r '.artifacts[] | select(.name == "ingest-worker.tar") | .digest' artifacts/production/release-manifest.json)"
+          test "$(jq -r .rendererReleaseArtifactDigest artifacts/production/production-promotion.json)" = "$(jq -r '.artifacts[] | select(.name == "render-worker.tar") | .digest' artifacts/production/release-manifest.json)"
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: production-rollback-${{ github.run_id }}
-      - name: Restore the exact compatible API and worker task definitions
+      - name: Restore the exact compatible API, worker, and renderer task definitions
         run: timeout --foreground 1200 bash scripts/rollback-ecs-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

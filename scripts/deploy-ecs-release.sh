@@ -2,13 +2,14 @@
 set -Eeuo pipefail
 
 MISSING=()
-for NAME in RELEASE_DIR DEPLOYMENT_RECORD SOURCE_REVISION RELEASE_RUN_ID AWS_REGION ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD; do
+for NAME in RELEASE_DIR DEPLOYMENT_RECORD SOURCE_REVISION RELEASE_RUN_ID AWS_REGION ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY RENDERER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER RENDERER_SERVICE RENDERER_TASK_DEFINITION ECS_RENDERER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD; do
   test -n "${!NAME:-}" || MISSING+=("$NAME")
 done
 test "${#MISSING[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${MISSING[@]}"; exit 1; }
 
 docker load --input "$RELEASE_DIR/api.tar"
 docker load --input "$RELEASE_DIR/ingest-worker.tar"
+docker load --input "$RELEASE_DIR/render-worker.tar"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 publish_immutable() {
   local source="$1"
@@ -28,20 +29,26 @@ publish_immutable() {
 }
 API_IMAGE="$(publish_immutable "platform-api:$SOURCE_REVISION" "$API_REPOSITORY")"
 WORKER_IMAGE="$(publish_immutable "platform-ingest-worker:$SOURCE_REVISION" "$WORKER_REPOSITORY")"
-test -n "$API_IMAGE" && test -n "$WORKER_IMAGE"
+RENDERER_IMAGE="$(publish_immutable "platform-render-worker:$SOURCE_REVISION" "$RENDERER_REPOSITORY")"
+test -n "$API_IMAGE" && test -n "$WORKER_IMAGE" && test -n "$RENDERER_IMAGE"
 
 MANIFEST="$RELEASE_DIR/release-manifest.json"
 MANIFEST_DIGEST="sha256:$(sha256sum "$MANIFEST" | awk '{print $1}')"
 API_TAR_DIGEST="$(jq -er '.artifacts[] | select(.name == "api.tar") | .digest' "$MANIFEST")"
 WORKER_TAR_DIGEST="$(jq -er '.artifacts[] | select(.name == "ingest-worker.tar") | .digest' "$MANIFEST")"
+RENDERER_TAR_DIGEST="$(jq -er '.artifacts[] | select(.name == "render-worker.tar") | .digest' "$MANIFEST")"
 RELEASE_ID="$(jq -er .releaseId "$MANIFEST")"
 API_TASK="$(aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" --query taskDefinition --output json)"
 WORKER_TASK="$(aws ecs describe-task-definition --task-definition "$WORKER_TASK_DEFINITION" --query taskDefinition --output json)"
+RENDERER_TASK="$(aws ecs describe-task-definition --task-definition "$RENDERER_TASK_DEFINITION" --query taskDefinition --output json)"
 MIGRATION_TASK_BASE="$(aws ecs describe-task-definition --task-definition "$MIGRATION_TASK_DEFINITION" --query taskDefinition --output json)"
 
 for SETTING in Ingest__Database__Host Ingest__Database__Port Ingest__Database__Name Ingest__Database__Username Ingest__Database__Password Ingest__Bucket Ingest__KmsKeyId; do
   printf '%s' "$API_TASK" | jq -e --arg container "$ECS_API_CONTAINER" --arg setting "$SETTING" '.containerDefinitions[] | select(.name == $container) | ((.environment // []) + (.secrets // [])) | any(.name == $setting)' >/dev/null
   printf '%s' "$WORKER_TASK" | jq -e --arg container "$ECS_WORKER_CONTAINER" --arg setting "$SETTING" '.containerDefinitions[] | select(.name == $container) | ((.environment // []) + (.secrets // [])) | any(.name == $setting)' >/dev/null
+done
+for SETTING in Rendering__QueueUrl Rendering__SourceBucket Rendering__DerivativeBucket Rendering__WorkspaceRoot Rendering__AwsRegion Rendering__CallbackBaseUrl; do
+  printf '%s' "$RENDERER_TASK" | jq -e --arg container "$ECS_RENDERER_CONTAINER" --arg setting "$SETTING" '.containerDefinitions[] | select(.name == $container) | ((.environment // []) + (.secrets // [])) | any(.name == $setting)' >/dev/null
 done
 for SETTING in Ingest__Database__Host Ingest__Database__Port Ingest__Database__Name Ingest__Database__Username Ingest__Database__Password Ingest__RuntimeDatabase__Username Ingest__RuntimeDatabase__Password; do
   printf '%s' "$MIGRATION_TASK_BASE" | jq -e --arg container "$ECS_MIGRATION_CONTAINER" --arg setting "$SETTING" '.containerDefinitions[] | select(.name == $container) | ((.environment // []) + (.secrets // [])) | any(.name == $setting)' >/dev/null
@@ -49,18 +56,22 @@ done
 
 API_UPDATED="$(printf '%s' "$API_TASK" | jq --arg image "$API_IMAGE" --arg name "$ECS_API_CONTAINER" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "Authentication__CognitoAuthority" and .name != "Authentication__CognitoClientId" and .name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"Authentication__CognitoAuthority",value:$authority},{name:"Authentication__CognitoClientId",value:$client},{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
 WORKER_UPDATED="$(printf '%s' "$WORKER_TASK" | jq --arg image "$WORKER_IMAGE" --arg name "$ECS_WORKER_CONTAINER" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
+RENDERER_UPDATED="$(printf '%s' "$RENDERER_TASK" | jq --arg image "$RENDERER_IMAGE" --arg name "$ECS_RENDERER_CONTAINER" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
 MIGRATION_UPDATED="$(printf '%s' "$MIGRATION_TASK_BASE" | jq --arg image "$WORKER_IMAGE" --arg name "$ECS_MIGRATION_CONTAINER" --arg release "$RELEASE_ID" --arg source "$SOURCE_REVISION" --arg manifest "$MANIFEST_DIGEST" '.containerDefinitions |= map(if .name == $name then .image = $image | .environment = ((.environment // []) | map(select(.name != "PLATFORM_RELEASE_ID" and .name != "PLATFORM_SOURCE_REVISION" and .name != "PLATFORM_MANIFEST_DIGEST")) + [{name:"PLATFORM_RELEASE_ID",value:$release},{name:"PLATFORM_SOURCE_REVISION",value:$source},{name:"PLATFORM_MANIFEST_DIGEST",value:$manifest}]) else . end) | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')"
 API_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$API_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
 WORKER_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$WORKER_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
+RENDERER_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$RENDERER_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
 MIGRATION_TASK_ARN="$(aws ecs register-task-definition --cli-input-json "$MIGRATION_UPDATED" --query taskDefinition.taskDefinitionArn --output text)"
 PREVIOUS_API_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
 PREVIOUS_WORKER_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].taskDefinition' --output text)"
+PREVIOUS_RENDERER_TASK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$RENDERER_SERVICE" --query 'services[0].taskDefinition' --output text)"
 PREVIOUS_API_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].desiredCount' --output text)"
 PREVIOUS_WORKER_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].desiredCount' --output text)"
+PREVIOUS_RENDERER_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$RENDERER_SERVICE" --query 'services[0].desiredCount' --output text)"
 NETWORK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].networkConfiguration' --output json)"
 MIGRATION_TASK="$(ECS_CLUSTER="$ECS_CLUSTER" MIGRATION_TASK_DEFINITION="$MIGRATION_TASK_ARN" ECS_MIGRATION_CONTAINER="$ECS_MIGRATION_CONTAINER" MIGRATION_NETWORK="$NETWORK" bash scripts/run-ecs-migration.sh)"
 
-jq -n --arg tag "${RELEASE_TAG:-}" --arg source "$SOURCE_REVISION" --arg releaseRun "$RELEASE_RUN_ID" --arg manifest "$MANIFEST_DIGEST" --arg apiArtifact "$API_TAR_DIGEST" --arg workerArtifact "$WORKER_TAR_DIGEST" --arg apiImage "$API_IMAGE" --arg workerImage "$WORKER_IMAGE" --arg apiTask "$API_TASK_ARN" --arg workerTask "$WORKER_TASK_ARN" --arg migrationTaskDefinition "$MIGRATION_TASK_ARN" --arg previousApiTask "$PREVIOUS_API_TASK" --arg previousWorkerTask "$PREVIOUS_WORKER_TASK" --arg previousApiCount "$PREVIOUS_API_COUNT" --arg previousWorkerCount "$PREVIOUS_WORKER_COUNT" --arg migrationTask "$MIGRATION_TASK" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" '{sourceRevision:$source,releaseRunId:$releaseRun,manifestDigest:$manifest,releaseArtifactDigest:$apiArtifact,workerReleaseArtifactDigest:$workerArtifact,apiImage:$apiImage,workerImage:$workerImage,taskDefinition:$apiTask,workerTaskDefinition:$workerTask,migrationTaskDefinition:$migrationTaskDefinition,previousTaskDefinition:$previousApiTask,previousWorkerTaskDefinition:$previousWorkerTask,previousApiDesiredCount:($previousApiCount|tonumber),previousWorkerDesiredCount:($previousWorkerCount|tonumber),migrationTask:$migrationTask,cognitoAuthority:$authority,cognitoClientId:$client} + (if $tag == "" then {} else {tag:$tag} end)' > "$DEPLOYMENT_RECORD"
+jq -n --arg tag "${RELEASE_TAG:-}" --arg source "$SOURCE_REVISION" --arg releaseRun "$RELEASE_RUN_ID" --arg manifest "$MANIFEST_DIGEST" --arg apiArtifact "$API_TAR_DIGEST" --arg workerArtifact "$WORKER_TAR_DIGEST" --arg rendererArtifact "$RENDERER_TAR_DIGEST" --arg apiImage "$API_IMAGE" --arg workerImage "$WORKER_IMAGE" --arg rendererImage "$RENDERER_IMAGE" --arg apiTask "$API_TASK_ARN" --arg workerTask "$WORKER_TASK_ARN" --arg rendererTask "$RENDERER_TASK_ARN" --arg migrationTaskDefinition "$MIGRATION_TASK_ARN" --arg previousApiTask "$PREVIOUS_API_TASK" --arg previousWorkerTask "$PREVIOUS_WORKER_TASK" --arg previousRendererTask "$PREVIOUS_RENDERER_TASK" --arg previousApiCount "$PREVIOUS_API_COUNT" --arg previousWorkerCount "$PREVIOUS_WORKER_COUNT" --arg previousRendererCount "$PREVIOUS_RENDERER_COUNT" --arg migrationTask "$MIGRATION_TASK" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" '{sourceRevision:$source,releaseRunId:$releaseRun,manifestDigest:$manifest,releaseArtifactDigest:$apiArtifact,workerReleaseArtifactDigest:$workerArtifact,rendererReleaseArtifactDigest:$rendererArtifact,apiImage:$apiImage,workerImage:$workerImage,rendererImage:$rendererImage,taskDefinition:$apiTask,workerTaskDefinition:$workerTask,rendererTaskDefinition:$rendererTask,migrationTaskDefinition:$migrationTaskDefinition,previousTaskDefinition:$previousApiTask,previousWorkerTaskDefinition:$previousWorkerTask,previousRendererTaskDefinition:$previousRendererTask,previousApiDesiredCount:($previousApiCount|tonumber),previousWorkerDesiredCount:($previousWorkerCount|tonumber),previousRendererDesiredCount:($previousRendererCount|tonumber),migrationTask:$migrationTask,cognitoAuthority:$authority,cognitoClientId:$client} + (if $tag == "" then {} else {tag:$tag} end)' > "$DEPLOYMENT_RECORD"
 
 ROLLBACK_REQUIRED=0
 rollback() {
@@ -71,7 +82,8 @@ rollback() {
     set +e
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK" --desired-count "$PREVIOUS_API_COUNT" --force-new-deployment >/dev/null
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$PREVIOUS_WORKER_TASK" --desired-count "$PREVIOUS_WORKER_COUNT" --force-new-deployment >/dev/null
-    timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
+    aws ecs update-service --cluster "$ECS_CLUSTER" --service "$RENDERER_SERVICE" --task-definition "$PREVIOUS_RENDERER_TASK" --desired-count "$PREVIOUS_RENDERER_COUNT" --force-new-deployment >/dev/null
+    timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE" "$RENDERER_SERVICE"
   fi
   exit "$STATUS"
 }
@@ -79,10 +91,12 @@ trap rollback ERR INT TERM
 
 ROLLBACK_REQUIRED=1
 aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$WORKER_TASK_ARN" --desired-count 1 --force-new-deployment --query service.taskDefinition --output text
+aws ecs update-service --cluster "$ECS_CLUSTER" --service "$RENDERER_SERVICE" --task-definition "$RENDERER_TASK_ARN" --desired-count 1 --force-new-deployment --query service.taskDefinition --output text
 aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$API_TASK_ARN" --desired-count 1 --force-new-deployment --query service.taskDefinition --output text
-timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE"
+timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE" "$RENDERER_SERVICE"
 bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$ECS_SERVICE" "$API_TASK_ARN"
 bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$WORKER_SERVICE" "$WORKER_TASK_ARN"
+bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$RENDERER_SERVICE" "$RENDERER_TASK_ARN"
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" >/dev/null
 ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
 test -n "$ID_TOKEN" && test "$ID_TOKEN" != None

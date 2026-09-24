@@ -277,13 +277,13 @@ export class PlatformFoundationStack extends Stack {
       workerRepository.grantPullPush(deploymentRole);
       rendererRepository.grantPullPush(deploymentRole);
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecr:DescribeImages'], resources: [apiRepository.repositoryArn, workerRepository.repositoryArn, rendererRepository.repositoryArn] }));
-      const taskFamilies = [apiTask, workerTask, migrationTask].map((task) => this.formatArn({ service: 'ecs', resource: 'task-definition', resourceName: `${task.family}:*` }));
+      const taskFamilies = [apiTask, workerTask, rendererTask, migrationTask].map((task) => this.formatArn({ service: 'ecs', resource: 'task-definition', resourceName: `${task.family}:*` }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:RegisterTaskDefinition'], resources: ['*'] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTaskDefinition'], resources: ['*'] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:RunTask'], resources: taskFamilies, conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
-      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeServices', 'ecs:UpdateService'], resources: [apiService.serviceArn, workerService.serviceArn] }));
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeServices', 'ecs:UpdateService'], resources: [apiService.serviceArn, workerService.serviceArn, rendererService.serviceArn] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['ecs:DescribeTasks', 'ecs:StopTask'], resources: ['*'], conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } } }));
-      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, migrationTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn, migrationExecutionRole.roleArn] }));
+      deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, rendererTask.taskRole.roleArn, migrationTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn, rendererExecutionRole.roleArn, migrationExecutionRole.roleArn] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance'], resources: [database.instanceArn] }));
     }
     const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
@@ -379,6 +379,7 @@ export class PlatformFoundationStack extends Stack {
     new CfnOutput(this, 'DerivativeBucketName', { value: derivativeBucket.bucketName });
     new CfnOutput(this, 'RendererServiceName', { value: rendererService.serviceName });
     new CfnOutput(this, 'RendererTaskDefinitionFamily', { value: rendererTask.family });
+    new CfnOutput(this, 'RendererContainerName', { value: 'renderer' });
     new CfnOutput(this, 'EcsClusterName', { value: cluster.clusterName });
     new CfnOutput(this, 'ApiServiceName', { value: apiService.serviceName });
     new CfnOutput(this, 'ApiTaskDefinitionFamily', { value: apiTask.family });

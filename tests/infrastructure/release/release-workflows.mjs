@@ -37,6 +37,8 @@ const nonprodCredentialAction = 'aws-actions/configure-aws-credentials@cbe3b3927
 assert.equal(workflows['deploy-nonprod.yml'].split(nonprodCredentialAction).length - 1, 2, 'Non-production deployment must refresh its OIDC session after a cold database start.');
 assert.ok(workflows['deploy-nonprod.yml'].indexOf('scripts/manage-nonprod-lifecycle.sh start-database') < workflows['deploy-nonprod.yml'].lastIndexOf(nonprodCredentialAction) && workflows['deploy-nonprod.yml'].lastIndexOf(nonprodCredentialAction) < workflows['deploy-nonprod.yml'].indexOf('scripts/deploy-ecs-release.sh'), 'Fresh deployment credentials must be acquired after database startup and before migration.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_DATABASE_INSTANCE') && configureNonprod.includes('AWS_NONPROD_DATABASE_INSTANCE = $outputs.DatabaseInstanceIdentifier'), 'Non-production deployment must consume the generated RDS identifier.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('RENDERER_REPOSITORY') && configureNonprod.includes('AWS_NONPROD_RENDERER_REPOSITORY = $outputs.RendererRepositoryName'), 'Non-production deployment must consume the generated renderer repository.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('RENDERER_SERVICE') && configureNonprod.includes('AWS_NONPROD_RENDERER_SERVICE = $outputs.RendererServiceName'), 'Non-production deployment must consume the generated renderer service.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM') && configureNonprod.includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM = $outputs.VersionControlHeartbeatAlarmName'), 'Non-production deployment must consume the generated version-control heartbeat alarm name.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"'), 'A successful non-production deployment must restore heartbeat notifications.');
 const lifecycle = workflows['nonprod-lifecycle.yml'];
@@ -49,8 +51,8 @@ assert.ok(lifecycle.includes('AWS_NONPROD_VERSION_CONTROL_HEARTBEAT_ALARM'), 'Li
 assert.ok(lifecycle.includes('if: ${{ always() }}') && lifecycle.includes('PRIOR_JOB_STATUS: ${{ job.status }}') && lifecycle.includes('scripts/manage-nonprod-lifecycle.sh report'), 'Lifecycle failures must preserve failure and report final resource state.');
 assert.ok(deployScript.includes('describe-images') && deployScript.includes('Immutable ECR tag contains different image bytes'), 'Deployment must safely reuse an identical immutable tag and reject different image bytes.');
 assert.doesNotMatch(deployScript, /local[^\n]*repository=.*target=.*\$repository/, 'Bash locals must be assigned before a later local initializer expands them under nounset.');
-assert.ok(!deployScript.includes('file:///dev/stdin') && ['API_UPDATED', 'WORKER_UPDATED', 'MIGRATION_UPDATED'].every((name) => deployScript.includes(`--cli-input-json "$${name}"`)), 'Task registration must pass generated JSON directly instead of treating stdin as an AWS CLI input file.');
-assert.ok(deployScript.includes('ingest-worker.tar'), 'Deployment must publish the verified worker artifact.');
+assert.ok(!deployScript.includes('file:///dev/stdin') && ['API_UPDATED', 'WORKER_UPDATED', 'RENDERER_UPDATED', 'MIGRATION_UPDATED'].every((name) => deployScript.includes(`--cli-input-json "$${name}"`)), 'Task registration must pass generated JSON directly instead of treating stdin as an AWS CLI input file.');
+assert.ok(deployScript.includes('ingest-worker.tar') && deployScript.includes('render-worker.tar'), 'Deployment must publish the verified worker artifacts.');
 assert.ok(deployScript.includes('scripts/run-ecs-migration.sh'), 'Deployment must run the dedicated release migration task before services update.');
 assert.ok(migrationScript.includes('command:["--migrate"]'), 'The migration task must invoke the release migration command.');
 assert.ok(migrationScript.includes('trap cleanup_migration ERR INT TERM') && migrationScript.includes('aws ecs stop-task'), 'Migration timeout or interruption must stop the remote ECS task.');
@@ -72,17 +74,21 @@ assert.ok(workflows['release.yml'].includes('nonprod-deployment-evidence'), 'Pro
 assert.ok(workflows['release.yml'].includes('verify-promotion-evidence.mjs'), 'Production promotion must compare exact non-production evidence before approval.');
 assert.ok(workflows['release.yml'].includes('verify-renderer-production-gate.mjs') && workflows['release.yml'].includes('AWS_PRODUCTION_RENDERER_IMAGE'), 'Production promotion must fail closed until a digest-qualified renderer scan proves the accepted findings remediated.');
 assert.ok(workflows['release.yml'].includes('AWS_PRODUCTION_WORKER_SERVICE'), 'Production promotion must configure the worker service.');
+assert.ok(workflows['release.yml'].includes('AWS_PRODUCTION_RENDERER_SERVICE'), 'Production promotion must configure the renderer service.');
 assert.ok(workflows['release.yml'].includes('scripts/deploy-ecs-release.sh'), 'Production promotion must use the same coordinated migration and rollback path as non-production.');
 assert.ok(workflows['rollback.yml'].includes('compatibility.rollbackAllowed'), 'Rollback must require explicit compatibility evidence.');
 assert.ok(workflows['rollback.yml'].includes('compatible_task_definition'), 'Rollback must restore a named task definition without rebuilding.');
 assert.ok(workflows['rollback.yml'].includes('compatible_worker_task_definition'), 'Rollback must restore the worker paired with the API release.');
+assert.ok(workflows['rollback.yml'].includes('compatible_renderer_task_definition'), 'Rollback must restore the renderer paired with the API release.');
 assert.ok(rollbackScript.includes('restoredWorkerTaskDefinition'), 'Rollback evidence must identify the restored worker task definition.');
+assert.ok(rollbackScript.includes('restoredRendererTaskDefinition'), 'Rollback evidence must identify the restored renderer task definition.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion-evidence'), 'Rollback must be bound to retained healthy promotion evidence.');
 assert.ok(workflows['rollback.yml'].includes('production-promotion.json'), 'Rollback must verify the requested task definition was previously promoted.');
 assert.ok(!workflows['rollback.yml'].includes('docker build'), 'Rollback must never rebuild artifacts.');
 assert.ok(workflows['rollback.yml'].includes('scripts/rollback-ecs-release.sh'), 'Rollback must use the bounded paired restoration path.');
 assert.ok(rollbackScript.includes('"$COMPATIBLE_TASK_DEFINITION"'), 'Rollback must verify the API service stabilized on the requested task definition.');
 assert.ok(rollbackScript.includes('"$COMPATIBLE_WORKER_TASK_DEFINITION"'), 'Rollback must verify the worker service stabilized on the requested task definition.');
+assert.ok(rollbackScript.includes('"$COMPATIBLE_RENDERER_TASK_DEFINITION"'), 'Rollback must verify the renderer service stabilized on the requested task definition.');
 assert.ok(rollbackScript.includes('curl --fail'), 'Rollback must fail when the restored release is unhealthy.');
 assert.ok(!workflows['rollback.yml'].includes('"${{ inputs.'), 'Workflow-dispatch inputs must not be interpolated into shell commands.');
 

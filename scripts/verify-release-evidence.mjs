@@ -13,10 +13,10 @@ if (manifest.sourceRevision !== expectedSourceRevision) {
 }
 const names = manifest.artifacts.map(({ name }) => name).sort();
 const legacy = ['api.tar', 'infrastructure.tar', 'platform-api-win-x64.zip', 'web.tar'];
-const current = [...legacy, 'ingest-worker.tar'].sort();
+const current = [...legacy, 'ingest-worker.tar', 'render-worker.tar'].sort();
 const isLegacyArtifactSet = JSON.stringify(names) === JSON.stringify(legacy);
 if (JSON.stringify(names) !== JSON.stringify(current) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
-if (mode === '--require-worker' && !names.includes('ingest-worker.tar')) throw new Error('Release manifest does not contain the required ingest worker artifact.');
+if (mode === '--require-worker' && (!names.includes('ingest-worker.tar') || !names.includes('render-worker.tar'))) throw new Error('Release manifest does not contain the required ingest and renderer worker artifacts.');
 verifyReleaseManifest(manifest, dirname(resolve(manifestPath)));
 const provenanceEntry = manifest.evidence.filter(({ kind }) => kind === 'provenance');
 if (provenanceEntry.length !== 1) throw new Error('Release manifest must contain one provenance statement.');

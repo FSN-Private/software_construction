@@ -47,6 +47,10 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 
 Each milestone has its own coherent commit after its listed validation passes. No deploy, image publication, AWS mutation, renderer-release approval, or push is authorized by this plan.
 
+### Delivery CI contract
+
+`Build release evidence` runs only from successful `master` CI and emits six retained release artifacts: API, ingest worker, renderer worker, web, infrastructure, and Windows API. `Deploy non-production` and production promotion require the complete artifact set, use the existing protected environments and OIDC roles, and deploy the API, ingest worker, and renderer task definitions as one rollback unit. The existing workflow names and job names remain stable; local evidence and infrastructure contract tests are required, while protected-environment deployment is remote evidence.
+
 ## Interfaces and behavior
 
 1. The API canonicalizes the owner, library, source asset, selected edit/version, rendition, profile, and renderer compatibility version into a SHA-256 request key.
