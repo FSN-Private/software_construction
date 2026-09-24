@@ -33,7 +33,7 @@ while (!stop.IsCancellationRequested)
             payload.Validate();
             if (!string.Equals(payload.Request.RendererArtifactDigest, rendererDigest, StringComparison.Ordinal))
             {
-                await callbacks.FailAsync(payload.RequestId, payload.AttemptId, "incompatible_renderer", stop.Token);
+                if (await callbacks.ClaimAsync(payload.RequestId, payload.AttemptId, stop.Token)) await callbacks.FailAsync(payload.RequestId, payload.AttemptId, "incompatible_renderer", stop.Token);
                 await sqs.DeleteMessageAsync(queueUrl, message.ReceiptHandle, stop.Token);
                 continue;
             }

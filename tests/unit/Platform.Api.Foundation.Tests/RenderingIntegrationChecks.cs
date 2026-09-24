@@ -32,8 +32,8 @@ internal static class RenderingIntegrationChecks
         var operations = new RenderOperationsService(db, configuration);
         var admitted = await operations.SetAsync("admit", owner, "release-operator", default);
         IngestChecks.Check(admitted.Paused && await operations.IsAcceptanceOwnerAsync(owner, default) && !await operations.IsAcceptanceOwnerAsync("other-owner", default), "Candidate admission must pause general intake and scope acceptance to one owner.");
-        await operations.SetAsync("abort", owner, "release-operator", default);
-        IngestChecks.Check(!await operations.IsPausedAsync(default), "Candidate abort must restore normal intake before a paired rollback.");
+        await operations.SetAsync("activate", owner, "release-operator", default);
+        IngestChecks.Check(!(await operations.SetAsync("activate", owner, "release-operator", default)).Paused, "A retry after an ambiguous activate response must be idempotent for the exact activated candidate.");
         var queue = new RecordingQueue();
         var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue, new FixedLocator());
         var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);

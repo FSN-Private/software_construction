@@ -88,12 +88,19 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
 
     public async Task<RenditionStatusView> RetryAsync(string owner, string library, Guid requestId, CancellationToken cancellationToken)
     {
+        if (operations is not null && await operations.IsPausedAsync(cancellationToken)) throw new RenderingProblem("rendering_paused", 409);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = Command(connection, "SELECT state FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 FOR UPDATE", requestId, owner, library);
-        var state = await command.ExecuteScalarAsync(cancellationToken) as string;
-        if (state is null) throw new RenderingProblem("rendition_not_found", 404);
+        await using var command = Command(connection, "SELECT state,profile,renderer_artifact_digest FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 FOR UPDATE", requestId, owner, library);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) throw new RenderingProblem("rendition_not_found", 404);
+        var state = reader.GetString(0);
+        var profile = reader.GetString(1);
+        var digest = reader.GetString(2);
+        await reader.DisposeAsync();
         if (state is not ("failed" or "retryable" or "unavailable")) throw new RenderingProblem("rendition_not_retryable");
+        var compatibility = await CompatibilityAsync(connection, profile, false, cancellationToken);
+        if (compatibility is null || compatibility.Digest != digest) throw new RenderingProblem("incompatible_renderer");
         var number = Convert.ToInt32(await ScalarAsync(connection, "SELECT COALESCE(MAX(attempt_number),0)+1 FROM render_attempts WHERE request_id=$1", cancellationToken, requestId), System.Globalization.CultureInfo.InvariantCulture);
         var attempt = Guid.NewGuid();
         await ExecuteAsync(connection, "INSERT INTO render_attempts(id,request_id,attempt_number,state,worker_policy_version) VALUES($1,$2,$3,'pending','render-policy-v1')", cancellationToken, attempt, requestId, number);
@@ -132,7 +139,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
 
     private static async Task<Source?> SourceAsync(NpgsqlConnection connection, string owner, string library, Guid asset, Guid edit, CancellationToken cancellationToken)
     {
-        await using var command = Command(connection, "SELECT o.storage_key,o.storage_version,o.sha256,o.byte_length,e.xmp_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id JOIN content_objects o ON o.sha256=a.original_sha256 WHERE a.id=$1 AND e.id=$2 AND a.owner_id=$3 AND a.state IN ('active','restored') AND o.integrity_state='authoritative' AND (EXISTS(SELECT 1 FROM vc_materialized_state s WHERE s.owner_id=$3 AND s.library_id=$4 AND s.asset_id=$1 AND s.edit_id=$2 AND s.lifecycle_state <> 'deleted') OR EXISTS(SELECT 1 FROM vc_working_changes w WHERE w.owner_id=$3 AND w.library_id=$4 AND w.asset_id=$1 AND w.edit_id=$2 AND w.change_kind <> 'deleted'))", asset, edit, owner, library);
+        await using var command = Command(connection, "SELECT o.storage_key,o.storage_version,o.sha256,o.byte_length,e.xmp_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id JOIN content_objects o ON o.sha256=a.original_sha256 WHERE a.id=$1 AND e.id=$2 AND a.owner_id=$3 AND a.state IN ('active','restored') AND o.integrity_state='authoritative' AND (EXISTS(SELECT 1 FROM vc_materialized_state s WHERE s.owner_id=$3 AND s.library_id=$4 AND s.asset_id=$1 AND s.edit_id=$2 AND s.lifecycle_state IS DISTINCT FROM 'deleted') OR EXISTS(SELECT 1 FROM vc_working_changes w WHERE w.owner_id=$3 AND w.library_id=$4 AND w.asset_id=$1 AND w.edit_id=$2 AND w.change_kind <> 'deleted'))", asset, edit, owner, library);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0) && !reader.IsDBNull(1) && !reader.IsDBNull(4) ? new(new(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetInt64(3)), reader.GetString(4).Trim()) : null;
     }

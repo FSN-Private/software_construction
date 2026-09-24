@@ -73,41 +73,42 @@ PREVIOUS_WORKER_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --se
 PREVIOUS_RENDERER_COUNT="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$RENDERER_SERVICE" --query 'services[0].desiredCount' --output text)"
 NETWORK="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" --query 'services[0].networkConfiguration' --output json)"
 MIGRATION_TASK="$(ECS_CLUSTER="$ECS_CLUSTER" MIGRATION_TASK_DEFINITION="$MIGRATION_TASK_ARN" ECS_MIGRATION_CONTAINER="$ECS_MIGRATION_CONTAINER" MIGRATION_NETWORK="$NETWORK" bash scripts/run-ecs-migration.sh)"
-ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
-test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
-INTAKE_PAUSED=1
-for _ in $(seq 1 60); do
-  DRAIN_STATUS="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations")"
-  test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 && break
-  sleep 5
-done
-test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 || { echo 'Renderer queue did not drain before cutover.'; exit 1; }
-
-jq -n --arg tag "${RELEASE_TAG:-}" --arg source "$SOURCE_REVISION" --arg releaseRun "$RELEASE_RUN_ID" --arg manifest "$MANIFEST_DIGEST" --arg apiArtifact "$API_TAR_DIGEST" --arg workerArtifact "$WORKER_TAR_DIGEST" --arg rendererArtifact "$RENDERER_TAR_DIGEST" --arg apiImage "$API_IMAGE" --arg workerImage "$WORKER_IMAGE" --arg rendererImage "$RENDERER_IMAGE" --arg apiTask "$API_TASK_ARN" --arg workerTask "$WORKER_TASK_ARN" --arg rendererTask "$RENDERER_TASK_ARN" --arg migrationTaskDefinition "$MIGRATION_TASK_ARN" --arg previousApiTask "$PREVIOUS_API_TASK" --arg previousWorkerTask "$PREVIOUS_WORKER_TASK" --arg previousRendererTask "$PREVIOUS_RENDERER_TASK" --arg previousApiCount "$PREVIOUS_API_COUNT" --arg previousWorkerCount "$PREVIOUS_WORKER_COUNT" --arg previousRendererCount "$PREVIOUS_RENDERER_COUNT" --arg migrationTask "$MIGRATION_TASK" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" '{sourceRevision:$source,releaseRunId:$releaseRun,manifestDigest:$manifest,releaseArtifactDigest:$apiArtifact,workerReleaseArtifactDigest:$workerArtifact,rendererReleaseArtifactDigest:$rendererArtifact,apiImage:$apiImage,workerImage:$workerImage,rendererImage:$rendererImage,taskDefinition:$apiTask,workerTaskDefinition:$workerTask,rendererTaskDefinition:$rendererTask,migrationTaskDefinition:$migrationTaskDefinition,previousTaskDefinition:$previousApiTask,previousWorkerTaskDefinition:$previousWorkerTask,previousRendererTaskDefinition:$previousRendererTask,previousApiDesiredCount:($previousApiCount|tonumber),previousWorkerDesiredCount:($previousWorkerCount|tonumber),previousRendererDesiredCount:($previousRendererCount|tonumber),migrationTask:$migrationTask,cognitoAuthority:$authority,cognitoClientId:$client} + (if $tag == "" then {} else {tag:$tag} end)' > "$DEPLOYMENT_RECORD"
-
 ROLLBACK_REQUIRED=0
 rollback() {
   STATUS=$?
   test "$STATUS" -ne 0 || STATUS=1
   trap - ERR INT TERM
+  set +e
+  if test "${ACCEPTANCE_ACTIVE:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
+    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/abort" >/dev/null || true
+  fi
   if test "$ROLLBACK_REQUIRED" = 1; then
-    set +e
-    if test "${ACCEPTANCE_ACTIVE:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
-      curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/abort" >/dev/null || true
-    fi
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK" --desired-count "$PREVIOUS_API_COUNT" --force-new-deployment >/dev/null
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$PREVIOUS_WORKER_TASK" --desired-count "$PREVIOUS_WORKER_COUNT" --force-new-deployment >/dev/null
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$RENDERER_SERVICE" --task-definition "$PREVIOUS_RENDERER_TASK" --desired-count "$PREVIOUS_RENDERER_COUNT" --force-new-deployment >/dev/null
     timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE" "$RENDERER_SERVICE"
-    if test "${INTAKE_PAUSED:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
-      curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/resume" >/dev/null || true
-    fi
+  fi
+  if test "${INTAKE_PAUSED:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
+    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/resume" >/dev/null || true
   fi
   exit "$STATUS"
 }
 trap rollback ERR INT TERM
+ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
+test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
+curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
+if test "$PREVIOUS_RENDERER_COUNT" != 0; then
+  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
+  INTAKE_PAUSED=1
+  for _ in $(seq 1 60); do
+    DRAIN_STATUS="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations")"
+    test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 && break
+    sleep 5
+  done
+  test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 || { echo 'Renderer queue did not drain before cutover.'; exit 1; }
+fi
+
+jq -n --arg tag "${RELEASE_TAG:-}" --arg source "$SOURCE_REVISION" --arg releaseRun "$RELEASE_RUN_ID" --arg manifest "$MANIFEST_DIGEST" --arg apiArtifact "$API_TAR_DIGEST" --arg workerArtifact "$WORKER_TAR_DIGEST" --arg rendererArtifact "$RENDERER_TAR_DIGEST" --arg apiImage "$API_IMAGE" --arg workerImage "$WORKER_IMAGE" --arg rendererImage "$RENDERER_IMAGE" --arg apiTask "$API_TASK_ARN" --arg workerTask "$WORKER_TASK_ARN" --arg rendererTask "$RENDERER_TASK_ARN" --arg migrationTaskDefinition "$MIGRATION_TASK_ARN" --arg previousApiTask "$PREVIOUS_API_TASK" --arg previousWorkerTask "$PREVIOUS_WORKER_TASK" --arg previousRendererTask "$PREVIOUS_RENDERER_TASK" --arg previousApiCount "$PREVIOUS_API_COUNT" --arg previousWorkerCount "$PREVIOUS_WORKER_COUNT" --arg previousRendererCount "$PREVIOUS_RENDERER_COUNT" --arg migrationTask "$MIGRATION_TASK" --arg authority "$COGNITO_AUTHORITY" --arg client "$COGNITO_CLIENT_ID" '{sourceRevision:$source,releaseRunId:$releaseRun,manifestDigest:$manifest,releaseArtifactDigest:$apiArtifact,workerReleaseArtifactDigest:$workerArtifact,rendererReleaseArtifactDigest:$rendererArtifact,apiImage:$apiImage,workerImage:$workerImage,rendererImage:$rendererImage,taskDefinition:$apiTask,workerTaskDefinition:$workerTask,rendererTaskDefinition:$rendererTask,migrationTaskDefinition:$migrationTaskDefinition,previousTaskDefinition:$previousApiTask,previousWorkerTaskDefinition:$previousWorkerTask,previousRendererTaskDefinition:$previousRendererTask,previousApiDesiredCount:($previousApiCount|tonumber),previousWorkerDesiredCount:($previousWorkerCount|tonumber),previousRendererDesiredCount:($previousRendererCount|tonumber),migrationTask:$migrationTask,cognitoAuthority:$authority,cognitoClientId:$client} + (if $tag == "" then {} else {tag:$tag} end)' > "$DEPLOYMENT_RECORD"
 
 ROLLBACK_REQUIRED=1
 aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" --task-definition "$WORKER_TASK_ARN" --desired-count 1 --force-new-deployment --query service.taskDefinition --output text

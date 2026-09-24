@@ -53,8 +53,10 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
             var evidence = configuration["Rendering:PromotionEvidenceId"];
             if (digest is null || evidence is null) throw new RenderingProblem("invalid_render_promotion", 400);
             var activated = await ExecuteAsync(connection, "UPDATE rendering_compatibility c SET renderer_artifact_digest=$1,state='approved',approved_at=now(),approved_by=$2,corpus_evidence_id=$3 FROM rendering_compatibility_candidates candidate, render_intake_control control WHERE c.matrix_version=$4 AND candidate.matrix_version=c.matrix_version AND candidate.renderer_artifact_digest=$1 AND candidate.corpus_evidence_id=$3 AND candidate.state='accepted' AND control.singleton AND control.paused AND control.acceptance_owner=$5", cancellationToken, digest, operatorName, evidence, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", owner);
-            if (activated != 1) throw new RenderingProblem("render_promotion_rejected", 409);
-            await ExecuteAsync(connection, "UPDATE rendering_compatibility_candidates SET state='activated' WHERE matrix_version=$1 AND renderer_artifact_digest=$2", cancellationToken, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", digest);
+            if (activated == 1)
+                await ExecuteAsync(connection, "UPDATE rendering_compatibility_candidates SET state='activated' WHERE matrix_version=$1 AND renderer_artifact_digest=$2", cancellationToken, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", digest);
+            else if (!(await ScalarAsync(connection, "SELECT EXISTS(SELECT 1 FROM rendering_compatibility c JOIN rendering_compatibility_candidates candidate ON candidate.matrix_version=c.matrix_version AND candidate.renderer_artifact_digest=c.renderer_artifact_digest WHERE c.matrix_version=$1 AND c.renderer_artifact_digest=$2 AND c.corpus_evidence_id=$3 AND candidate.state='activated')", cancellationToken, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", digest, evidence) as bool? ?? false))
+                throw new RenderingProblem("render_promotion_rejected", 409);
             paused = false;
             await EventAsync(connection, operatorName, "compatibility_activated", cancellationToken);
         }
