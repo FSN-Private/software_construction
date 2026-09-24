@@ -11,6 +11,7 @@ var derivativeBucket = Required("Rendering__DerivativeBucket");
 var workspaceRoot = Required("Rendering__WorkspaceRoot");
 var callbackBaseUrl = Required("Rendering__CallbackBaseUrl");
 var region = Required("Rendering__AwsRegion");
+var rendererDigest = Required("Rendering__DeployedArtifactDigest");
 using var stop = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; stop.Cancel(); };
 using var sqs = new AmazonSQSClient();
@@ -30,6 +31,12 @@ while (!stop.IsCancellationRequested)
         {
             var payload = JsonSerializer.Deserialize<RenderQueueMessage>(message.Body) ?? throw new InvalidDataException("invalid_render_queue_message");
             payload.Validate();
+            if (!string.Equals(payload.Request.RendererArtifactDigest, rendererDigest, StringComparison.Ordinal))
+            {
+                await callbacks.FailAsync(payload.RequestId, payload.AttemptId, "incompatible_renderer", stop.Token);
+                await sqs.DeleteMessageAsync(queueUrl, message.ReceiptHandle, stop.Token);
+                continue;
+            }
             var worker = new RenderWorker(new SqsReceiptQueue(sqs, queueUrl, message.ReceiptHandle), sources, commands, executor, derivatives, callbacks, workspaceRoot);
             await worker.ExecuteAsync(new RenderJob(payload.RequestId, payload.AttemptId, payload.Request, payload.Policy, payload), stop.Token);
         }

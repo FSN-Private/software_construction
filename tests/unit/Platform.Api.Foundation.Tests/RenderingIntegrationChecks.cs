@@ -25,10 +25,15 @@ internal static class RenderingIntegrationChecks
             sourceSha = reader.GetString(0).Trim();
             xmpSha = reader.GetString(1).Trim();
             await reader.DisposeAsync();
-            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'rendering-integration'); INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind) VALUES($2,$6,'main','main','branch'); INSERT INTO rendering_compatibility(matrix_version,renderer_release,renderer_artifact_digest,profile,corpus_evidence_id,approved_at,approved_by,state) VALUES('rendering-v1','5.6.1',$7,'render-v1','ecr-corpus-20260924',now(),'Fredrik Snårbacka','approved')", default, asset, owner, sourceSha, edit, xmpSha, library, digest);
+            await ExecuteAsync(connection, "INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($1,$2,$3,'active','dng'); INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) VALUES($4,$1,0,$5,'rendering-integration'); INSERT INTO vc_working_changes(id,owner_id,library_id,client_id,branch_name,asset_id,edit_id,current_content_sha256,change_kind) VALUES($6,$2,$7,'rendering-client','main',$1,$4,$5,'modified'); UPDATE rendering_compatibility SET renderer_artifact_digest=$8,corpus_evidence_id='ecr-corpus-20260924',approved_at=now(),approved_by='Fredrik Snårbacka',state='approved' WHERE matrix_version='rendering-v1'", default, asset, owner, sourceSha, edit, xmpSha, Guid.NewGuid(), library, digest);
         }
 
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1", ["Rendering:DeployedArtifactDigest"] = digest }).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1", ["Rendering:DeployedArtifactDigest"] = digest, ["Rendering:PromotionEvidenceId"] = "trusted-linux-integration", ["Rendering:OperationsUsername"] = "release-operator" }).Build();
+        var operations = new RenderOperationsService(db, configuration);
+        var admitted = await operations.SetAsync("admit", owner, "release-operator", default);
+        IngestChecks.Check(admitted.Paused && await operations.IsAcceptanceOwnerAsync(owner, default) && !await operations.IsAcceptanceOwnerAsync("other-owner", default), "Candidate admission must pause general intake and scope acceptance to one owner.");
+        await operations.SetAsync("abort", owner, "release-operator", default);
+        IngestChecks.Check(!await operations.IsPausedAsync(default), "Candidate abort must restore normal intake before a paired rollback.");
         var queue = new RecordingQueue();
         var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue, new FixedLocator());
         var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);
@@ -52,6 +57,7 @@ internal static class RenderingIntegrationChecks
         var locator = await service.LocateAsync(owner, library, created.RequestId, default);
         IngestChecks.Check(locator.Locator == "https://derivative.example/private" && Matches(provenance, locator.Provenance), "A completed rendition must return only an owner-authorized private locator and provenance.");
         await RejectCrossLibraryLocatorAsync(service, created.RequestId);
+        await RejectSameOwnerCrossLibraryRenderAsync(service, owner, input);
         IngestChecks.Check(cacheHit.CacheHit && Matches(provenance, cacheHit.Provenance), "An exact completed current-preview request must reuse the cached derivative and provenance.");
         var failed = await service.RequestAsync(owner, input with { Rendition = RenditionKind.Preview2048 }, default);
         await new RenderWorkerCallbacks(db).FailAsync(failed.RequestId, failed.AttemptId!.Value, "malformed_xmp", default);
@@ -59,7 +65,7 @@ internal static class RenderingIntegrationChecks
         IngestChecks.Check(failure.State == RenderState.Failed && failure.FailureCode == "malformed_xmp", "A renderer failure must retain only its safe category.");
         var retry = await service.RetryAsync(owner, library, failed.RequestId, default);
         IngestChecks.Check(retry.State == RenderState.Pending && retry.AttemptId != failed.AttemptId, "A corrected render retry must create a distinct pending attempt.");
-        IngestChecks.Check(queue.Messages.Count == 2 && queue.Messages[1].AttemptId == retry.AttemptId, "A retry must dispatch its distinct immutable render attempt.");
+        IngestChecks.Check(queue.Messages.Count == 3 && queue.Messages[2].AttemptId == retry.AttemptId, "A retry must dispatch its distinct immutable render attempt.");
         await new RenderWorkerCallbacks(db).FailAsync(retry.RequestId, retry.AttemptId!.Value, "resource_limit", default);
         IngestChecks.Check((await service.StatusAsync(owner, library, retry.RequestId, default)).FailureCode == "resource_limit", "A resource-limited attempt must remain visibly retryable without exposing worker details.");
         await MissingSourceIsRejectedAsync(service, owner, library, edit);
@@ -104,5 +110,12 @@ internal static class RenderingIntegrationChecks
         try { await service.LocateAsync("other-owner", "other-library", requestId, default); }
         catch (RenderingProblem error) when (error.Code == "rendition_not_found" && error.Status == 404) { return; }
         throw new InvalidOperationException("A derivative locator must refuse cross-library access.");
+    }
+
+    private static async Task RejectSameOwnerCrossLibraryRenderAsync(RenderingService service, string owner, RenditionRequestInput input)
+    {
+        try { await service.RequestAsync(owner, input with { LibraryId = input.LibraryId + "-other" }, default); }
+        catch (RenderingProblem error) when (error.Code == "source_unavailable" && error.Status == 404) { return; }
+        throw new InvalidOperationException("A same-owner asset must not be rendered through another library identity.");
     }
 }

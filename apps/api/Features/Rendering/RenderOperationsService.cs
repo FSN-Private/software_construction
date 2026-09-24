@@ -3,7 +3,7 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.Rendering;
 
-public sealed record RenderOperationsView(bool Paused, int Cancelled, int Recovered);
+public sealed record RenderOperationsView(bool Paused, int Pending, int Cancelled, int Recovered);
 
 public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfiguration configuration)
 {
@@ -17,6 +17,15 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         return await ScalarAsync(connection, "SELECT paused AND acceptance_owner=$1 FROM render_intake_control WHERE singleton", cancellationToken, owner) as bool? ?? false;
+    }
+
+    public async Task<RenderOperationsView> GetAsync(string operatorName, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(operatorName, configuration["Rendering:OperationsUsername"], StringComparison.Ordinal)) throw new RenderingProblem("render_operation_forbidden", 403);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var paused = await ScalarAsync(connection, "SELECT paused FROM render_intake_control WHERE singleton", cancellationToken) as bool? ?? false;
+        var pending = Convert.ToInt32(await ScalarAsync(connection, "SELECT count(*) FROM render_attempts WHERE state IN ('pending','running')", cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+        return new(paused, pending, 0, 0);
     }
 
     public async Task<RenderOperationsView> SetAsync(string action, string owner, string operatorName, CancellationToken cancellationToken)
@@ -61,7 +70,8 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
         if (action is "resume" or "abort") await EventAsync(connection, operatorName, "intake_resumed", cancellationToken);
         var cancelled = action == "cancel" ? await CancelAsync(connection, cancellationToken) : 0;
         await transaction.CommitAsync(cancellationToken);
-        return new(paused, cancelled, 0);
+        var pending = Convert.ToInt32(await ScalarAsync(connection, "SELECT count(*) FROM render_attempts WHERE state IN ('pending','running')", cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+        return new(paused, pending, cancelled, 0);
     }
 
     private static Task EventAsync(NpgsqlConnection connection, string operatorName, string eventType, CancellationToken cancellationToken) =>

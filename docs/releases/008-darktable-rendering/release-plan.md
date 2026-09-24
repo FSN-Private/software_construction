@@ -16,7 +16,7 @@
 3. After explicit authorization for the external change, deploy with a protected outputs file. Confirm the repository has immutable tags and scan-on-push enabled, then record the renderer repository output for the non-production GitHub environment.
 4. Publish only the source-verified, SBOM/CVE-reviewed image and record its registry digest. A tag or a local OCI manifest alone is insufficient.
 5. Run the CC0 corpus: `tests/rendering/corpus/IMG_9406.CR2` with its current XMP and three historical XMP revisions. Retain per-rendition input/XMP/output hashes, dimensions, renderer digest, and trusted-runner ID.
-6. The protected non-production environment must have `AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURE` set to a retained owner-authorized RAW/current-XMP fixture identity. The release admits the candidate only while intake is paused, runs the HTTP fixture, and activates it only after the latency gates pass. A failed fixture rejects the candidate before paired ECS rollback.
+6. The protected non-production environment must have `AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURES` set to at least 20 distinct retained owner-authorized RAW/current-XMP fixture identities. The release drains old work, admits the candidate only while intake is paused, runs the uncached-start and concurrent cache-hit HTTP fixture, and activates it only after the p95 gates pass. A failed fixture rejects the candidate before paired ECS rollback.
 
 ## 2026-09-23 read-only non-production preflight
 
