@@ -51,10 +51,10 @@ Fill this only after every checklist item has immutable evidence. A local Docker
 | Registry image | `344531454551.dkr.ecr.ap-southeast-1.amazonaws.com/platform-nonprod-render-worker@sha256:<digest>` |
 | Security evidence | SBOM reference and completed CVE report; no unresolved critical/high finding |
 | Corpus evidence | Trusted-runner run URL/ID and the four XMP/output provenance records |
-| Approval | Fredrik Snårbacka, 2026-09-23T17:32:00Z: accepts 48 medium and 18 low findings and approves this exact digest for non-production `rendering-v1` derivatives. Production is blocked until all 66 findings are remediated and absent from a replacement-digest scan. |
+| Approval | Product owner, 2026-09-24T12:59:25Z: accepts 5 medium findings and approves `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for non-production `rendering-v1` derivatives; trusted-Linux corpus evidence is post-merge acceptance. |
 
-Any change to the digest, profile, output encoding, or darktable release invalidates this record and requires a new matrix row and approval.
+Any change to the digest, profile, output encoding, or darktable release requires an additive migration and new approval evidence before the active matrix row changes.
 
 ## Recorded approval
 
-Fredrik Snårbacka accepted 48 medium and 18 low findings and approved `sha256:7394b6f15adde742c7d2256060ff7383fca8d56ce62b63939516009ab2e328eb` for new non-production `rendering-v1` derivatives at 2026-09-23T17:32:00Z. This acceptance does not authorize production deployment: every one of the 66 findings must be remediated and absent from a digest-qualified scan of a replacement artifact before production promotion.
+The product owner accepted 5 medium findings and approved `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` for new non-production `rendering-v1` derivatives at 2026-09-24T12:59:25Z. This does not authorize production deployment; post-merge trusted-Linux corpus and HTTP acceptance evidence remain required.
