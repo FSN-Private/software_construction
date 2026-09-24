@@ -1,6 +1,6 @@
 # Adversarial Pre-Push Review
 
-**Status**: BLOCKED on external acceptance evidence only
+**Status**: PASS — historical blocked rounds and post-merge T026 acceptance remain recorded below.
 **Reviewer model**: gpt-5.6-terra (independent alternate model)
 **Review date**: 2026-09-24
 **Branch and reviewed head**: `feature/008-darktable-rendering` at `25bd8d376f6732687b6d9c407620dac0d8413152`
@@ -66,7 +66,7 @@ may occur.
 **Alternate reviewer model**: `gpt-6-sol`  
 **Remote / destination**: `origin` / `master`  
 **Base and final reviewed range**: `cd1fe828c7d56f89f5acc8503aaff6372daf8f9c..389ed07a15327fa61898bfccac5591e185c94598`  
-**Pending push scope**: complete Feature 008 branch, including `1b7f86c`, `f626b38`, `381fd39`, `de157b7`, and `389ed07`.
+**Pending push scope**: `origin/master..HEAD` at the final clean-tree/push check: the reviewed implementation through `389ed07`, this passing review record (`672c7ac`), and this record-only audit correction. No implementation changes occur after `389ed07`.
 
 The reviewer examined the full Feature 008 specification/tasks, migration 013,
 renderer/API digest binding, candidate admission and activation, ECS cutover/rollback,
