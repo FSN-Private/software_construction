@@ -165,7 +165,7 @@ export class PlatformFoundationStack extends Stack {
     const apiContainer = apiTask.addContainer('api', {
       containerName: 'api',
       image: ContainerImage.fromEcrRepository(apiRepository, 'bootstrap'),
-      environment: { ...databaseEnvironment, Authentication__CognitoAuthority: `https://cognito-idp.${this.region}.${this.urlSuffix}/${identity.userPool.userPoolId}`, Authentication__CognitoClientId: identity.client.userPoolClientId },
+      environment: { ...databaseEnvironment, Rendering__QueueUrl: rendererQueue.queueUrl, Rendering__DerivativeBucket: derivativeBucket.bucketName, Authentication__CognitoAuthority: `https://cognito-idp.${this.region}.${this.urlSuffix}/${identity.userPool.userPoolId}`, Authentication__CognitoClientId: identity.client.userPoolClientId },
       secrets: databaseSecrets,
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'api' }),
       portMappings: [{ containerPort: 8080 }],
@@ -225,6 +225,8 @@ export class PlatformFoundationStack extends Stack {
       resources: [ingestBucket.arnForObjects('sha256/*'), ingestBucket.arnForObjects('quarantine/*')],
     }));
     rendererQueue.grantConsumeMessages(rendererTask.taskRole);
+    rendererQueue.grantSendMessages(apiTask.taskRole);
+    derivativeBucket.grantRead(apiTask.taskRole, 'derivatives/*');
     ingestBucket.grantRead(rendererTask.taskRole, 'sha256/*');
     derivativeBucket.grantReadWrite(rendererTask.taskRole, 'derivatives/*');
     encryptionKey.grantEncryptDecrypt(rendererTask.taskRole);

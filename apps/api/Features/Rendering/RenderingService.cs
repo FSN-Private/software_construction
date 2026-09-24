@@ -6,6 +6,7 @@ namespace Platform.Api.Features.Rendering;
 
 public sealed record RenditionRequestInput(Guid AssetId, Guid EditId, string SelectedVersion, RenditionKind Rendition, string Profile, string LibraryId);
 public sealed record RenditionStatusView(Guid RequestId, Guid? AttemptId, RenderState State, bool CacheHit, RenderProvenance? Provenance, string? FailureCode);
+public sealed record RenditionLocatorView(string Locator, RenderProvenance Provenance);
 
 public sealed class RenderingProblem(string code, int status = 409) : Exception(code)
 {
@@ -13,7 +14,7 @@ public sealed class RenderingProblem(string code, int status = 409) : Exception(
     public int Status { get; } = status;
 }
 
-public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null)
+public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null, IPrivateDerivativeLocator? locator = null)
 {
     public async Task<RenditionStatusView> RequestAsync(string owner, RenditionRequestInput input, CancellationToken cancellationToken)
     {
@@ -51,6 +52,18 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         return await StatusAsync(connection, owner, library, requestId, false, cancellationToken);
+    }
+
+    public async Task<RenditionLocatorView> LocateAsync(string owner, string library, Guid requestId, CancellationToken cancellationToken)
+    {
+        if (locator is null) throw new RenderingProblem("rendering_unavailable", 503);
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(connection, "SELECT d.object_key,d.object_version,d.output_sha256,d.byte_length,d.media_type,p.source_sha256,p.xmp_sha256,p.selected_version,p.renderer_release,p.renderer_artifact_digest,p.profile,p.matrix_version,p.completed_at FROM render_requests r JOIN renditions d ON d.request_id=r.id JOIN render_provenance p ON p.rendition_id=d.id WHERE r.id=$1 AND r.owner_id=$2 AND r.library_id=$3 AND r.state='completed'", requestId, owner, library);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) throw new RenderingProblem("rendition_not_found", 404);
+        var publication = new RenderPublication(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetInt64(3), reader.GetString(4));
+        var provenance = new RenderProvenance(reader.GetString(5).Trim(), reader.GetString(6).Trim(), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetString(10), reader.GetString(11), reader.GetFieldValue<DateTimeOffset>(12));
+        return new(locator.Locate(publication), provenance);
     }
 
     public async Task<RenditionStatusView> RetryAsync(string owner, string library, Guid requestId, CancellationToken cancellationToken)

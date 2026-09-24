@@ -30,7 +30,7 @@ internal static class RenderingIntegrationChecks
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Rendering:CompatibilityMatrix"] = "rendering-v1" }).Build();
         var queue = new RecordingQueue();
-        var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue);
+        var service = new RenderingService(db, new CurrentOnlyResolver(), configuration, queue, new FixedLocator());
         var input = new RenditionRequestInput(asset, edit, "current", RenditionKind.Thumbnail512, "render-v1", library);
         var created = await service.RequestAsync(owner, input, default);
         var duplicate = await service.RequestAsync(owner, input, default);
@@ -49,6 +49,9 @@ internal static class RenderingIntegrationChecks
         var completed = await service.StatusAsync(owner, library, created.RequestId, default);
         var cacheHit = await service.RequestAsync(owner, input, default);
         IngestChecks.Check(completed.State == RenderState.Completed && Matches(provenance, completed.Provenance), "A completed private derivative must expose exact current-preview provenance.");
+        var locator = await service.LocateAsync(owner, library, created.RequestId, default);
+        IngestChecks.Check(locator.Locator == "https://derivative.example/private" && Matches(provenance, locator.Provenance), "A completed rendition must return only an owner-authorized private locator and provenance.");
+        await RejectCrossLibraryLocatorAsync(service, created.RequestId);
         IngestChecks.Check(cacheHit.CacheHit && Matches(provenance, cacheHit.Provenance), "An exact completed current-preview request must reuse the cached derivative and provenance.");
         var failed = await service.RequestAsync(owner, input with { Rendition = RenditionKind.Preview2048 }, default);
         await new RenderWorkerCallbacks(db).FailAsync(failed.RequestId, failed.AttemptId!.Value, "malformed_xmp", default);
@@ -75,6 +78,11 @@ internal static class RenderingIntegrationChecks
         public Task EnqueueAsync(RenderQueueMessage message, CancellationToken cancellationToken = default) { Messages.Add(message); return Task.CompletedTask; }
     }
 
+    private sealed class FixedLocator : IPrivateDerivativeLocator
+    {
+        public string Locate(RenderPublication publication) => "https://derivative.example/private";
+    }
+
     private static bool Matches(RenderProvenance expected, RenderProvenance? actual) => actual is not null
         && actual.SourceSha256 == expected.SourceSha256
         && actual.XmpSha256 == expected.XmpSha256
@@ -89,5 +97,12 @@ internal static class RenderingIntegrationChecks
         try { await service.RequestAsync(owner, new RenditionRequestInput(Guid.NewGuid(), edit, "current", RenditionKind.Thumbnail512, "render-v1", library), default); }
         catch (RenderingProblem error) when (error.Code == "source_unavailable" && error.Status == 404) { return; }
         throw new InvalidOperationException("Missing render sources must be rejected without a substitute rendition.");
+    }
+
+    private static async Task RejectCrossLibraryLocatorAsync(RenderingService service, Guid requestId)
+    {
+        try { await service.LocateAsync("other-owner", "other-library", requestId, default); }
+        catch (RenderingProblem error) when (error.Code == "rendition_not_found" && error.Status == 404) { return; }
+        throw new InvalidOperationException("A derivative locator must refuse cross-library access.");
     }
 }
