@@ -111,10 +111,10 @@ curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --r
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
 ACCEPTANCE_ACTIVE=1
 timeout 180 env INGEST_SMOKE_TOKEN="$ID_TOKEN" RENDERING_ACCEPTANCE_FIXTURE="$RENDERING_ACCEPTANCE_FIXTURE" node scripts/smoke-rendering.mjs "$HEALTH_URL" > "$RELEASE_DIR/rendering-smoke.json"
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
-ACCEPTANCE_ACTIVE=0
 timeout 120 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/smoke-ingest.mjs "$HEALTH_URL" > "$RELEASE_DIR/ingest-smoke.json"
 jq --slurpfile smoke "$RELEASE_DIR/ingest-smoke.json" --slurpfile rendering "$RELEASE_DIR/rendering-smoke.json" '. + {smoke:$smoke[0],renderingSmoke:$rendering[0]}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
 mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
+curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
+ACCEPTANCE_ACTIVE=0
 ROLLBACK_REQUIRED=0
 trap - ERR INT TERM
