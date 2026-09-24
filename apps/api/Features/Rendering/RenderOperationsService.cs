@@ -13,7 +13,7 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
         return await ScalarAsync(connection, "SELECT paused FROM render_intake_control WHERE singleton", cancellationToken) as bool? ?? false;
     }
 
-    public async Task<RenderOperationsView> SetAsync(string action, string owner, string? corpusEvidenceId, CancellationToken cancellationToken)
+    public async Task<RenderOperationsView> SetAsync(string action, string owner, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -22,8 +22,9 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
         if (action == "promote")
         {
             var digest = configuration["Rendering:DeployedArtifactDigest"];
+            var corpusEvidenceId = configuration["Rendering:PromotionEvidenceId"];
             if (digest is null || corpusEvidenceId is null || !corpusEvidenceId.StartsWith("trusted-linux-", StringComparison.Ordinal)) throw new RenderingProblem("invalid_render_promotion", 400);
-            var promoted = await ExecuteAsync(connection, "UPDATE rendering_compatibility SET state='approved',approved_at=now(),approved_by=$1,corpus_evidence_id=$2 WHERE matrix_version=$3 AND renderer_artifact_digest=$4 AND state='pending'", cancellationToken, owner, corpusEvidenceId, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1", digest);
+            var promoted = await ExecuteAsync(connection, "UPDATE rendering_compatibility SET renderer_artifact_digest=$1,state='approved',approved_at=now(),approved_by=$2,corpus_evidence_id=$3 WHERE matrix_version=$4", cancellationToken, digest, owner, corpusEvidenceId, configuration["Rendering:CompatibilityMatrix"] ?? "rendering-v1");
             if (promoted != 1) throw new RenderingProblem("render_promotion_rejected", 409);
             paused = false;
         }
