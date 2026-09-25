@@ -98,3 +98,44 @@ findings were independently assessed as valid and fixed.
 The reviewer explicitly reported: **“PASS … All prior blocking findings are resolved; I found no valid unresolved blocking issue.”** Non-production live evidence remains intentionally post-merge T026 work and is fail-closed on the protected fixture configuration. Production remains categorically blocked by T021.
 
 **Final gate result: PASS.**
+
+## CI remediation review — 2026-09-25
+
+**Alternate reviewer model**: `gpt-6-sol`
+**Remote / destination**: `origin` / `feature/008-darktable-rendering`
+**Base and implementation range**: `dfe292c261ee2cbb146297cf342f693a67da49a3..4ff00e4`
+**Pending push scope**: `origin/master..HEAD`, consisting of the already-approved Feature 008 range, `4ff00e4` (`fix(ci): restore backend and Windows checks`), and this review-record-only commit. No production deployment input changes.
+
+### Scope and independent review
+
+The reviewer examined the complete seven-file remediation diff, the PR CI workflow, the
+Windows project-reference graph and regenerated lockfile, the S3 fixture's image source,
+license, immutable digest, test-only static-KMS configuration, localhost binding, and the
+test endpoint overrides. It was asked to identify significant correctness, compatibility,
+security, reliability, documentation, and CI-runner risks without modifying repository or
+remote state.
+
+| Finding / review area | Classification | Implementer assessment and evidence |
+|---|---|---|
+| `tests/windows-sync/packages.lock.json` omitted the API's existing transitive `AWSSDK.SQS` 4.0.0.22 dependency. | Valid and fixed, blocking CI failure | `dotnet restore tests/windows-sync/Platform.WindowsSync.Tests.csproj --locked-mode`, build, and executable test run pass with the minimal regenerated closure. |
+| The Quay MinIO image tag is no longer publicly pullable in GitHub Actions. | Valid and fixed, blocking CI failure | RustFS 1.0.0 is a digest-pinned, Apache-2.0, S3-compatible replacement used only by the local integration fixture. The first two candidate images were rejected because their Trivy scans reported HIGH/CRITICAL findings; the selected `rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff` scan exited zero at HIGH/CRITICAL severity. |
+| RustFS must support the exercised versioned, multipart, and SSE-KMS request paths. | Verified, no blocking finding | A fresh isolated PostgreSQL/RustFS stack passed migration, retrieval/path, lifecycle, reconstruction, HTTP, retry/quarantine/atomic fault, versioning, multipart, and SSE-KMS request paths. The fixture retains loopback-only ports and disposable credentials; this suite does not separately assert stored-object KMS metadata. |
+| Test-port overrides might affect CI behavior. | Verified, no blocking finding | Defaults remain `54329` and `9000`; environment overrides were added only to validate without altering an existing local test stack. GitHub Actions supplies neither override and uses the documented defaults. |
+| Feature documentation and dependency inventory could become misleading after the fixture change. | Valid and fixed, non-blocking documentation issue | The inventory records source/license/digest, test-only scope, high/critical scan result, update review, and removal criterion; Feature 008 plan, quickstart, and task evidence now say PostgreSQL/S3-compatible rather than MinIO. |
+
+### Validation evidence
+
+- `trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --skip-db-update rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff` — PASS (exit 0; no HIGH/CRITICAL finding).
+- Fresh `feature005` Compose stack with alternate local loopback ports, followed by `node tests/integration/ingest/run.mjs` — PASS; the stack was removed afterwards without touching the existing `ingest-*` stack.
+- `dotnet restore tests/windows-sync/Platform.WindowsSync.Tests.csproj --locked-mode`, build, and run — PASS.
+- `dotnet format tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --verify-no-changes --no-restore`, `npm run test:backend`, `npm run test:contract`, API build, and Release publish — PASS.
+- `docker compose -f tests/integration/ingest/compose.yml config` and `git diff --check` — PASS.
+
+### Final conclusion
+
+The independent reviewer found no valid unresolved blocking finding in the CI remediation.
+The Windows locked dependency graph and the clean, digest-pinned S3 fixture both have
+reproducible validation evidence; the remaining observation about stored-object KMS
+metadata is explicitly limited to the integration fixture and is non-blocking.
+
+**Final gate result: PASS.**
