@@ -13,4 +13,6 @@ Date: 2026-09-25. Branch: `feature/009-gallery-metadata-search`; base: `origin/m
 | Dependency | MetadataExtractor 2.9.3/XmpCore locked; `dotnet list apps/api/Platform.Api.csproj package --vulnerable --include-transitive` reported no vulnerable packages from NuGet with network access. |
 | API/contract/format | `npm run lint`, `npm run test:contract`, `npm run test:backend` (including API startup/correlation), and `dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore` passed. |
 
+The browse cursor binds owner, library, branch, filters, sort, generation, and refresh invalidation revision. A source/lifecycle change during paging expires the cursor so the user restarts from page one. Cross-owner and revision-change integration checks were added after the first independent review.
+
 The capacity harness uses synthetic active assets and projection rows in the disposable integration schema. It measures the API query and serialization path; it does not claim the spec's end-user two-second page or 500 ms cached-thumbnail thresholds until browser measurements are run. The hosted Windows Cloud Files/darktable job also remains a separate compatibility gate.
