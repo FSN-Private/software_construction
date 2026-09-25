@@ -13,6 +13,7 @@
     <PackageReference Include="AWSSDK.S3" Version="4.0.102.4" />
     <PackageReference Include="AWSSDK.SQS" Version="4.0.0.22" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="MetadataExtractor" Version="2.9.3" />
     <ProjectReference Include="../../packages/contracts/Platform.Contracts.csproj" />
     <ProjectReference Include="../../packages/storage/Platform.Storage.csproj" />
   </ItemGroup>
