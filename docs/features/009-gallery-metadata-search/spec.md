@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feature/009-gallery-metadata-search`  
 **Created**: 2026-09-03  
-**Status**: Draft — awaiting product-owner approval  
+**Status**: Approved by project owner on 2026-09-25
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 
 ## Problem and Scope
