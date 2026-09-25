@@ -83,6 +83,7 @@ Assert(generatedConnection.Host == "database.internal" && generatedConnection.Po
 Assert(IngestDatabaseConfiguration.ResolveConnectionString("Host=explicit", _ => null) == "Host=explicit", "An explicit local connection string must take precedence.");
 Assert(IngestDatabaseConfiguration.ResolveConnectionString(null, _ => null) is null, "Incomplete database settings must keep ingest disabled.");
 RenderingChecks.Run();
+GalleryMetadataChecks.Run();
 
 try { await IngestChecks.RunAsync(); }
 catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }

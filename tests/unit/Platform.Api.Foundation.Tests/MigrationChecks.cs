@@ -29,6 +29,7 @@ internal static class MigrationChecks
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/011_rendering_events.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/012_rendering_hardened_compatibility.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/013_rendering_candidate_acceptance.sql"), default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/014_gallery_metadata.sql"), default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after expansion");
@@ -36,6 +37,15 @@ internal static class MigrationChecks
         Check(await ScalarAsync(connection, "SELECT to_regclass('render_requests') IS NOT NULL AND to_regclass('render_provenance') IS NOT NULL AND to_regclass('render_intake_control') IS NOT NULL", default) is true, "Rendering schema is an additive migration beside source identity tables");
         Check(await ScalarAsync(connection, "SELECT state FROM rendering_compatibility WHERE matrix_version='rendering-v1'", default) as string == "approved", "Compatibility migration preserves the prior approved matrix until protected promotion");
         Check(await ScalarAsync(connection, "SELECT column_name FROM information_schema.columns WHERE table_name='render_intake_control' AND column_name='acceptance_owner'", default) as string == "acceptance_owner", "Candidate acceptance has an owner-scoped intake control.");
+        Check(await ScalarAsync(connection, "SELECT to_regclass('gallery_projection') IS NOT NULL AND to_regclass('gallery_facet_values') IS NOT NULL AND to_regclass('gallery_refresh') IS NOT NULL AND to_regclass('gallery_preferences') IS NOT NULL AND to_regclass('gallery_web_overlay_revisions') IS NOT NULL", default) is true, "Gallery schema expands beside source and version-control state");
+        await ExecuteAsync(connection, "INSERT INTO gallery_generations(owner_id,library_id,branch_name,generation,schema_version,state) VALUES('migration-fixture','default','main',1,1,'active'),('migration-fixture','default','main',2,1,'building')", default);
+        await using (var rollout = await connection.BeginTransactionAsync())
+        {
+            await ExecuteAsync(connection, "UPDATE gallery_generations SET state='retired' WHERE owner_id='migration-fixture' AND generation=1; UPDATE gallery_generations SET state='active' WHERE owner_id='migration-fixture' AND generation=2", default);
+            await rollout.RollbackAsync();
+        }
+        Check(await ScalarAsync(connection, "SELECT generation FROM gallery_generations WHERE owner_id='migration-fixture' AND library_id='default' AND branch_name='main' AND state='active'", default) is long active && active == 1, "Gallery generation rollback retains the prior complete index");
+        await ExecuteAsync(connection, "DELETE FROM gallery_generations WHERE owner_id='migration-fixture'", default);
         await ExecuteAsync(connection, "DELETE FROM assets WHERE id=$1 AND owner_id='migration-fixture'", default, id);
         Console.WriteLine("Migration rehearsal passed: transactional failure rollback, expansion, old-reader compatibility, stable identity.");
     }
