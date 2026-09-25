@@ -32,6 +32,7 @@ internal static class MigrationChecks
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/014_gallery_metadata.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/015_gallery_search_presentation.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/016_gallery_web_content.sql"), default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/017_gallery_edit_idempotency.sql"), default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after expansion");

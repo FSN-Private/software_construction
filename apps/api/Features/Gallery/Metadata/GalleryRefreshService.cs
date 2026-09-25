@@ -1,6 +1,7 @@
 using System.Globalization;
 using Npgsql;
 using Platform.Storage;
+using Platform.Api.Features.Gallery;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.Gallery.Metadata;
@@ -16,66 +17,68 @@ public sealed class GalleryRefreshService(NpgsqlDataSource db, S3ObjectStore sto
         if (await ScalarAsync(connection, "SELECT pg_try_advisory_lock(hashtextextended($1, 9))", ct, lockKey) is not true) return;
         try
         {
-        var generation = await EnsureGenerationAsync(connection, owner, library, branch, ct);
-        var total = (long)(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1 AND state IN ('active','restored')", ct, owner) ?? 0L);
-        string priorState; Guid? after; long revision;
-        await using (var checkpoint = Command(connection, "SELECT state,last_asset_id,invalidation_revision FROM gallery_refresh WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", owner, library, branch, generation))
-        await using (var reader = await checkpoint.ExecuteReaderAsync(ct))
-        {
-            if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("gallery_refresh_missing");
-            priorState = reader.GetString(0); after = reader.IsDBNull(1) ? null : reader.GetGuid(1); revision = reader.GetInt64(2);
-        }
-        if (priorState != "running")
-        {
-            after = null;
-            await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='running',total=$5,completed=0,failed=0,last_asset_id=NULL,last_error_code=NULL,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, total);
-        }
-        while (true)
-        {
-            var sources = await ReadSourcesAsync(connection, owner, library, branch, after, ct);
-            if (sources.Count == 0) break;
-            foreach (var source in sources)
+            var generation = await EnsureGenerationAsync(connection, owner, library, branch, ct);
+            var total = (long)(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1 AND state IN ('active','restored')", ct, owner) ?? 0L);
+            string priorState; Guid? after; long revision;
+            await using (var checkpoint = Command(connection, "SELECT state,last_asset_id,invalidation_revision FROM gallery_refresh WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", owner, library, branch, generation))
+            await using (var reader = await checkpoint.ExecuteReaderAsync(ct))
             {
-                ct.ThrowIfCancellationRequested();
-                after = source.AssetId;
-                try
+                if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("gallery_refresh_missing");
+                priorState = reader.GetString(0); after = reader.IsDBNull(1) ? null : reader.GetGuid(1); revision = reader.GetInt64(2);
+            }
+            if (priorState != "running")
+            {
+                after = null;
+                await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='running',total=$5,completed=0,failed=0,last_asset_id=NULL,last_error_code=NULL,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, total);
+            }
+            while (true)
+            {
+                var sources = await ReadSourcesAsync(connection, owner, library, branch, after, ct);
+                if (sources.Count == 0) break;
+                foreach (var source in sources)
                 {
-                    if (!await IsCurrentAsync(connection, owner, library, branch, generation, source, ct))
+                    ct.ThrowIfCancellationRequested();
+                    after = source.AssetId;
+                    try
                     {
-                        await using var original = await storage.ReadVerifiedAsync(source.Original.Key, source.Original.Version, source.Original.Address, ct);
-                        await using var xmp = source.Xmp is null ? null : await storage.ReadVerifiedAsync(source.Xmp.Key, source.Xmp.Version, source.Xmp.Address, ct);
-                        var parsed = GalleryMetadataReader.Read(original, source.Format, xmp);
-                        await PublishAsync(connection, owner, library, branch, generation, source, parsed, ct);
+                        if (!await IsCurrentAsync(connection, owner, library, branch, generation, source, ct))
+                        {
+                            await using var original = await storage.ReadVerifiedAsync(source.Original.Key, source.Original.Version, source.Original.Address, ct);
+                            await using var xmp = source.Xmp is null ? null : await storage.ReadVerifiedAsync(source.Xmp.Key, source.Xmp.Version, source.Xmp.Address, ct);
+                            var parsed = GalleryMetadataReader.Read(original, source.Format, xmp);
+                            await PublishAsync(connection, owner, library, branch, generation, source, parsed, ct);
+                        }
+                        await ExecuteAsync(connection, "UPDATE gallery_refresh SET completed=completed+1,last_asset_id=$5,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, source.AssetId);
                     }
-                    await ExecuteAsync(connection, "UPDATE gallery_refresh SET completed=completed+1,last_asset_id=$5,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, source.AssetId);
-                }
-                catch (Exception error) when (error is IOException or InvalidDataException or NpgsqlException)
-                {
-                    await ExecuteAsync(connection, "UPDATE gallery_refresh SET failed=failed+1,last_asset_id=$5,last_error_code=$6,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, source.AssetId, error is NpgsqlException ? "database_error" : "source_error");
+                    catch (Exception error) when (error is IOException or InvalidDataException or NpgsqlException)
+                    {
+                        await ExecuteAsync(connection, "UPDATE gallery_refresh SET failed=failed+1,last_asset_id=$5,last_error_code=$6,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation, source.AssetId, error is NpgsqlException ? "database_error" : "source_error");
+                    }
                 }
             }
-        }
-        await using var transaction = await connection.BeginTransactionAsync(ct);
-        bool incomplete, invalidated;
-        await using (var status = Command(connection, "SELECT total,completed,failed,invalidation_revision,state FROM gallery_refresh WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4 FOR UPDATE", owner, library, branch, generation))
-        await using (var reader = await status.ExecuteReaderAsync(ct))
-        {
-            if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("gallery_refresh_missing");
-            incomplete = reader.GetInt64(1) + reader.GetInt64(2) != reader.GetInt64(0) || reader.GetInt64(2) > 0;
-            invalidated = reader.GetInt64(3) != revision || reader.GetString(4) != "running";
-        }
-        if (invalidated) { await transaction.RollbackAsync(ct); return; }
-        if (incomplete)
-        {
-            await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='failed',last_error_code='source_unavailable',updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            bool incomplete, invalidated;
+            await using (var status = Command(connection, "SELECT total,completed,failed,invalidation_revision,state FROM gallery_refresh WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4 FOR UPDATE", owner, library, branch, generation))
+            await using (var reader = await status.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("gallery_refresh_missing");
+                incomplete = reader.GetInt64(1) + reader.GetInt64(2) != reader.GetInt64(0) || reader.GetInt64(2) > 0;
+                invalidated = reader.GetInt64(3) != revision || reader.GetString(4) != "running";
+            }
+            if (invalidated) { await transaction.RollbackAsync(ct); return; }
+            if (incomplete)
+            {
+                await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='failed',last_error_code='source_unavailable',updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation);
+                await transaction.CommitAsync(ct);
+                GalleryTelemetry.RefreshFailed.Add(1);
+                return;
+            }
+            var finished = await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='complete',updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4 AND invalidation_revision=$5 AND state='running'", ct, owner, library, branch, generation, revision);
+            if (finished != 1) { await transaction.RollbackAsync(ct); return; }
+            await ExecuteAsync(connection, "UPDATE gallery_generations SET state='retired' WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND state='active' AND generation<>$4", ct, owner, library, branch, generation);
+            await ExecuteAsync(connection, "UPDATE gallery_generations SET state='active',activated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation);
             await transaction.CommitAsync(ct);
-            return;
-        }
-        var finished = await ExecuteAsync(connection, "UPDATE gallery_refresh SET state='complete',updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4 AND invalidation_revision=$5 AND state='running'", ct, owner, library, branch, generation, revision);
-        if (finished != 1) { await transaction.RollbackAsync(ct); return; }
-        await ExecuteAsync(connection, "UPDATE gallery_generations SET state='retired' WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND state='active' AND generation<>$4", ct, owner, library, branch, generation);
-        await ExecuteAsync(connection, "UPDATE gallery_generations SET state='active',activated_at=now() WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4", ct, owner, library, branch, generation);
-        await transaction.CommitAsync(ct);
+            GalleryTelemetry.RefreshCompleted.Add(1);
         }
         finally
         {
@@ -160,8 +163,13 @@ public sealed class GalleryRefreshService(NpgsqlDataSource db, S3ObjectStore sto
             var ordinal = 0;
             foreach (var facet in group)
             {
-                var type = facet.Name switch { "captureDate" or "importDate" => "date", "rejected" or "locationPresent" => "bool",
-                    "focalLength" or "aperture" or "shutter" or "iso" or "width" or "height" or "orientation" or "rating" => "number", _ => "text" };
+                var type = facet.Name switch
+                {
+                    "captureDate" or "importDate" => "date",
+                    "rejected" or "locationPresent" => "bool",
+                    "focalLength" or "aperture" or "shutter" or "iso" or "width" or "height" or "orientation" or "rating" => "number",
+                    _ => "text"
+                };
                 DateTime? date = type == "date" && facet.State == "present" ? DateTime.Parse(facet.Value!, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal).ToUniversalTime() : null;
                 decimal? number = type == "number" && facet.State == "present" ? decimal.Parse(facet.Value!, CultureInfo.InvariantCulture) : null;
                 bool? boolean = type == "bool" && facet.State == "present" ? bool.Parse(facet.Value!) : null;

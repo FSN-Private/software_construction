@@ -16,7 +16,7 @@ internal static class GalleryEditChecks
         var service = new GalleryEditService(db, storage, new WorkingService(db, storage), configuration);
         Guid asset, edit; string baseSha, originalSha;
         await using (var connection = await db.OpenConnectionAsync())
-        await using (var command = Command(connection, "SELECT a.id,e.id,e.xmp_sha256,a.original_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id AND e.duplicate_ordinal=0 AND e.state IN ('active','restored') WHERE a.owner_id='test-owner' AND a.state IN ('active','restored') AND e.xmp_sha256 IS NOT NULL ORDER BY a.id LIMIT 1"))
+        await using (var command = Command(connection, "SELECT a.id,e.id,e.xmp_sha256,a.original_sha256 FROM assets a JOIN edit_identities e ON e.asset_id=a.id AND e.duplicate_ordinal=0 AND e.state IN ('active','restored') WHERE a.owner_id='test-owner' AND a.state IN ('active','restored') AND e.xmp_sha256 IS NOT NULL AND EXISTS(SELECT 1 FROM asset_paths p WHERE p.asset_id=a.id AND p.active) ORDER BY a.id LIMIT 1"))
         await using (var reader = await command.ExecuteReaderAsync())
         {
             if (!await reader.ReadAsync()) throw new InvalidOperationException("Gallery edit fixture sidecar missing");
@@ -24,13 +24,19 @@ internal static class GalleryEditChecks
         }
         using var title = JsonDocument.Parse("{\"title\":\"Web title\"}");
         var first = await service.PatchAsync("test-owner", "main", asset,
-            new("main", edit, 0, baseSha, Changes(title)), "op_gallery_edit", default);
+            new("main", edit, 0, baseSha, Changes(title)), "op_gallery_edit", default, "gallery-edit-first");
         Check(first.Uncommitted && first.WorkingVersion == 1 && first.XmpSha256 != baseSha, "Web edit is an uncommitted versioned XMP object");
+        var replay = await service.PatchAsync("test-owner", "main", asset,
+            new("main", edit, 0, baseSha, Changes(title)), "op_gallery_edit", default, "gallery-edit-first");
+        Check(replay == first, "Idempotent gallery edit replay returns the same working change");
+        using var changedTitle = JsonDocument.Parse("{\"title\":\"Different title\"}");
         await RejectAsync(() => service.PatchAsync("test-owner", "main", asset,
-            new("main", edit, 0, baseSha, Changes(title)), "op_gallery_edit", default), "stale_working_state");
+            new("main", edit, 0, baseSha, Changes(changedTitle)), "op_gallery_edit", default, "gallery-edit-first"), "idempotency_conflict");
+        await RejectAsync(() => service.PatchAsync("test-owner", "main", asset,
+            new("main", edit, 0, baseSha, Changes(title)), "op_gallery_edit", default, "gallery-edit-stale"), "stale_working_state");
         using var tags = JsonDocument.Parse("{\"tags\":[\"Web tag\"]}");
         var second = await service.PatchAsync("test-owner", "main", asset,
-            new("main", edit, 1, first.XmpSha256, Changes(tags)), "op_gallery_edit", default);
+            new("main", edit, 1, first.XmpSha256, Changes(tags)), "op_gallery_edit", default, "gallery-edit-second");
         Check(second.WorkingVersion == 2, "Second edit advances working version without overwriting it");
         await using (var connection = await db.OpenConnectionAsync())
         {
@@ -49,7 +55,7 @@ internal static class GalleryEditChecks
             bareAsset = (Guid)(await ScalarAsync(connection, "SELECT a.id FROM assets a WHERE a.owner_id='test-owner' AND a.state IN ('active','restored') AND NOT EXISTS(SELECT 1 FROM edit_identities e WHERE e.asset_id=a.id) ORDER BY a.id LIMIT 1", default) ?? throw new InvalidOperationException("No sidecar-free fixture"));
         using var stars = JsonDocument.Parse("{\"rating\":3}");
         var created = await service.PatchAsync("test-owner", "main", bareAsset,
-            new("main", null, 0, null, Changes(stars)), "op_gallery_edit", default);
+            new("main", null, 0, null, Changes(stars)), "op_gallery_edit", default, "gallery-edit-created");
         Check(created.EditId != Guid.Empty && created.WorkingVersion == 1, "First web edit creates a sidecar identity and working change");
     }
 

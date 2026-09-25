@@ -1,7 +1,9 @@
 using Npgsql;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Platform.Api.Features.Gallery.Metadata;
+using Platform.Api.Features.VersionControl.Publishing;
 using Platform.Api.Features.VersionControl.Working;
 using Platform.Api.Features.WindowsSync;
 using Platform.Contracts.VersionControl;
@@ -110,7 +112,7 @@ internal static class WindowsSyncChecks
         using var change = JsonDocument.Parse("{\"title\":\"Shared web title\"}");
         var edited = await gallery.PatchAsync(owner, library, asset,
             new(branch, edit, 0, editDigest, change.RootElement.EnumerateObject().ToDictionary(item => item.Name, item => item.Value)),
-            "op_windows_sync_gallery_edit", default);
+            "op_windows_sync_gallery_edit", default, "windows-sync-gallery-edit");
         await ExpectExpiredAsync(() => service.NamespaceAsync(owner, library, "reader-device-a", branch, pageA.Cursor, 1000, default));
         await ExpectExpiredAsync(() => service.NamespaceAsync(owner, library, "reader-device-b", branch, pageB.Cursor, 1000, default));
         pageA = await service.NamespaceAsync(owner, library, "reader-device-a", branch, null, 1000, default);
@@ -119,6 +121,17 @@ internal static class WindowsSyncChecks
         var webB = pageB.Items.Single(item => item.EditId == edit);
         IngestChecks.Check(webA.WebWorking && webB.WebWorking && webA.Sha256 == edited.XmpSha256 && webB.ContentId == webA.ContentId,
             "A web edit must resolve to the same branch-scoped XMP object on two devices.");
+        var staleUpload = new DefaultHttpContext().Request;
+        staleUpload.ContentLength = editLength;
+        staleUpload.Headers["Idempotency-Key"] = "stale-device-upload";
+        await ExpectProblemAsync(() => service.UploadAsync(owner, library, "reader-device-a", branch, asset, edit,
+            SidecarPath(movedPath, editOrdinal), editDigest, editDigest, staleUpload, "op_windows_sync_stale_upload", default), "working_state_conflict");
+        await new WorkingService(db, storage).PutAsync(owner, library, "reader-device-a",
+            new(asset, edit, branch, "modified", editDigest, editDigest, SidecarPath(movedPath, editOrdinal), "active", 0),
+            "op_windows_sync_local_change", default);
+        pageA = await service.NamespaceAsync(owner, library, "reader-device-a", branch, null, 1000, default);
+        IngestChecks.Check(pageA.Items.Single(item => item.EditId == edit).Conflict,
+            "A device-local sidecar is retained and marked conflicting with a web edit.");
         var downloaded = await service.ContentAsync(owner, library, "reader-device-b", webB.ContentId, "op_windows_sync_web_download", default);
         await using (downloaded.Bytes)
         {
@@ -127,6 +140,18 @@ internal static class WindowsSyncChecks
         }
         await service.RevokeAsync(owner, library, "reader-device-b", "op_windows_sync_revoke_b", default);
         await ExpectProblemAsync(() => service.ContentAsync(owner, library, "reader-device-b", webB.ContentId, "op_windows_sync_denied", default), "device_revoked");
+        string head;
+        await using (var connection = await db.OpenConnectionAsync())
+            head = ((string?)await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3", default, owner, library, branch))?.Trim() ?? throw new InvalidOperationException("Branch head missing");
+        var working = new WorkingService(db, storage);
+        var stage = await working.StageAsync(owner, library, "__gallery_web__", branch,
+            new([Guid.Parse(edited.WorkingChangeId)], head, 0), "op_windows_sync_stage_web", default);
+        await new CommitService(db, storage).PublishAsync(owner, library, "__gallery_web__",
+            new(stage, branch, head, "Commit gallery metadata", DateTimeOffset.UtcNow), Guid.NewGuid().ToString("N"), "op_windows_sync_commit_web", default);
+        await ExpectExpiredAsync(() => service.NamespaceAsync(owner, library, "reader-device-a", branch, pageA.Cursor, 1000, default));
+        var committed = await service.NamespaceAsync(owner, library, "reader-device-a", branch, null, 1000, default);
+        IngestChecks.Check(committed.Items.Single(item => item.EditId == edit) is { WebWorking: false } item && item.Sha256 == edited.XmpSha256,
+            "Explicit commit promotes the web XMP to committed branch state.");
         await ExecuteBranchSwitchAsync(db, service, owner, library, branch, "reader-device-a", webA.ContentId);
     }
 

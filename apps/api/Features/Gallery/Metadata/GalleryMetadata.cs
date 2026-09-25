@@ -64,8 +64,13 @@ public static class GalleryMetadataReader
             {
                 if (sidecar.CanSeek && sidecar.Length > MaximumXmpBytes)
                     throw new InvalidDataException("xmp_too_large");
-                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                    MaxCharactersInDocument = MaximumXmpBytes, MaxCharactersFromEntities = 0 };
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = MaximumXmpBytes,
+                    MaxCharactersFromEntities = 0
+                };
                 using var xml = XmlReader.Create(new LimitedReadStream(sidecar, MaximumXmpBytes), settings);
                 var document = XDocument.Load(xml);
                 PutXmpText(fields, document, "title", Dc + "title");

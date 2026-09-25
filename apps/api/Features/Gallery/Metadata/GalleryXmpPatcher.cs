@@ -30,8 +30,13 @@ public static class GalleryXmpPatcher
             try
             {
                 using var stream = new MemoryStream(input.ToArray(), writable: false);
-                using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                    MaxCharactersInDocument = GalleryMetadataReader.MaximumXmpBytes, MaxCharactersFromEntities = 0 });
+                using var reader = XmlReader.Create(stream, new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = GalleryMetadataReader.MaximumXmpBytes,
+                    MaxCharactersFromEntities = 0
+                });
                 document = XDocument.Load(reader, LoadOptions.PreserveWhitespace);
             }
             catch (XmlException) { throw new GalleryProblem("malformed_xmp", 422); }
