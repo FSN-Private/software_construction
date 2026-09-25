@@ -26,6 +26,7 @@ if (
 console.log('Web accessibility structure tests passed.');
 
 globalThis.sessionStorage = { getItem: () => null };
+globalThis.window = { location: { search: '' } };
 const server = await createServer({
   server: { middlewareMode: true },
   appType: 'custom',
@@ -56,7 +57,33 @@ try {
       throw new Error(`Input ${id} must have an associated label.`);
   }
   console.log('Rendered import/recovery accessibility checks passed.');
+  const { Gallery } = await server.ssrLoadModule('/src/Gallery.tsx');
+  const gallery = renderToStaticMarkup(
+    createElement(Gallery, {
+      baseUrl: 'https://example.invalid',
+      token: 'test-only',
+      library: 'main',
+    }),
+  );
+  for (const label of [
+    'Gallery',
+    'Filter images',
+    'Sort by',
+    'Direction',
+    'Apply filters',
+    'Clear filters',
+  ])
+    if (!gallery.includes(label))
+      throw new Error(`Missing labelled gallery control: ${label}`);
+  if (
+    !gallery.includes('role="status"') ||
+    (!gallery.includes('role="alert"') &&
+      !gallery.includes('aria-live="polite"'))
+  )
+    throw new Error('Gallery loading and errors must be announced.');
+  console.log('Rendered gallery accessibility checks passed.');
 } finally {
   await server.close();
   delete globalThis.sessionStorage;
+  delete globalThis.window;
 }

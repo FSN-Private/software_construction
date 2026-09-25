@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { idToken, platformConfig } from './platform-config';
 import { Library } from './Library';
+import { Gallery } from './Gallery';
 
 type Status = {
   ready?: string;
@@ -20,7 +21,11 @@ export function App() {
 
   useEffect(() => {
     if (!config || !token) return;
-    window.history.replaceState({}, document.title, window.location.pathname);
+    window.history.replaceState(
+      {},
+      document.title,
+      window.location.pathname + window.location.search,
+    );
     const headers = {
       Authorization: `Bearer ${token}`,
       'X-Operation-Id': `op_${crypto.randomUUID()}`,
@@ -104,7 +109,16 @@ export function App() {
         </dl>
       </section>
       {config && token && status.ready && (
-        <Library baseUrl={config.apiBaseUrl} token={token} />
+        <>
+          {config.galleryLibraryId && (
+            <Gallery
+              baseUrl={config.apiBaseUrl}
+              token={token}
+              library={config.galleryLibraryId}
+            />
+          )}
+          <Library baseUrl={config.apiBaseUrl} token={token} />
+        </>
       )}
     </main>
   );

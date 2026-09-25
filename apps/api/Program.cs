@@ -21,6 +21,8 @@ using Platform.Api.Features.VersionControl.MergePublishing;
 using Platform.Api.Features.VersionControl.Projection;
 using Platform.Api.Features.WindowsSync;
 using Platform.Api.Features.Gallery.Metadata;
+using Platform.Api.Features.Gallery.Browse;
+using Platform.Api.Features.Gallery;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,6 +38,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.RequireHttpsMetadata = true;
 });
 builder.Services.AddAuthorization();
+builder.Services.AddDataProtection();
 var ingestConnection = IngestDatabaseConfiguration.ResolveConnectionString(builder.Configuration.GetConnectionString("Ingest"), key => builder.Configuration[key]);
 if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:Bucket"]) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:KmsKeyId"]))
 {
@@ -67,6 +70,10 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<WindowsSyncService>();
     builder.Services.AddSingleton<GalleryRefreshService>();
     builder.Services.AddHostedService<GalleryRefreshWorker>();
+    builder.Services.AddSingleton<GalleryBrowseService>();
+    builder.Services.AddSingleton<GalleryDetailService>();
+    builder.Services.AddSingleton<GalleryPreferenceService>();
+    builder.Services.AddSingleton<GalleryEditService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
@@ -83,6 +90,12 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     await result.ExecuteAsync(context);
 }));
 app.UsePlatformTelemetry();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.Value?.Contains("/gallery", StringComparison.Ordinal) == true)
+        context.Response.Headers.CacheControl = "private, no-store";
+    await next(context);
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
@@ -92,6 +105,7 @@ Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
 WindowsSyncEndpoints.Map(app);
 Platform.Api.Features.Rendering.RenderingEndpoints.Map(app);
+GalleryEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>

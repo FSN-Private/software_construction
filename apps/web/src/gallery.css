@@ -1,0 +1,70 @@
+.gallery {
+  margin-block: 2rem;
+}
+.gallery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-block: 1rem;
+}
+.gallery-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.gallery-filters label {
+  display: grid;
+  gap: 0.25rem;
+}
+.gallery-grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 1rem;
+}
+.gallery-grid li {
+  min-width: 0;
+}
+.gallery-card {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 0.35rem;
+  text-align: left;
+  padding: 0.6rem;
+}
+.gallery-card img,
+.gallery-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: #eee;
+}
+.gallery-placeholder {
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.gallery-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem;
+}
+.gallery-fields div {
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+}
+.gallery-fields dt {
+  font-weight: 700;
+}
+.gallery-fields dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+.gallery :focus-visible {
+  outline: 3px solid #1260c4;
+  outline-offset: 3px;
+}
