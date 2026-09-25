@@ -350,7 +350,8 @@ internal static class CommitChecks
         Check(rolledBackTable is null or DBNull, "Injected migration rollback must leave no partial Feature 006 schema.");
         await DatabaseMigrator.ApplyAsync(db, default);
         await DatabaseMigrator.ApplyAsync(db, default);
-        Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM platform_schema_migrations", default))! == 5, "Repeated migration must retain one checksum record per release migration.");
+        var expectedMigrationCount = typeof(DatabaseMigrator).Assembly.GetManifestResourceNames().Count(name => name.StartsWith("Platform.Ingest.Worker.Database.Migrations.", StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal));
+        Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM platform_schema_migrations", default))! == expectedMigrationCount, "Repeated migration must retain one checksum record per release migration.");
     }
 
     private static async Task SeedAsync(NpgsqlDataSource db, int count)
