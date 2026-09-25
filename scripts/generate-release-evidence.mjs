@@ -9,7 +9,7 @@ if (!/^[a-f0-9]{40}$/.test(sourceRevision) || !outputDirectory || !/^\d+$/.test(
 }
 mkdirSync(outputDirectory, { recursive: true });
 const artifacts = readdirSync(outputDirectory, { withFileTypes: true }).filter((entry) => entry.isFile() && /\.(tar|zip)$/.test(entry.name)).map((entry) => join(outputDirectory, entry.name));
-if (artifacts.length !== 5) throw new Error('Release evidence requires API, ingest worker, web, infrastructure, and Windows artifacts.');
+if (artifacts.length !== 6) throw new Error('Release evidence requires API, ingest worker, renderer, web, infrastructure, and Windows artifacts.');
 const digest = (path) => `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
 const buildType = `https://github.com/${repository}/blob/master/docs/contracts/release-provenance-v1.md`;
 const sbom = join(outputDirectory, 'sbom.spdx.json');

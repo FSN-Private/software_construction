@@ -50,6 +50,12 @@ jobs:
           name: nonprod-deployment-evidence
           path: artifacts/nonprod
       - run: node scripts/verify-promotion-evidence.mjs artifacts/release/release-manifest.json artifacts/nonprod/nonprod-deployment.json "$GITHUB_SHA" "${{ steps.evidence-runs.outputs.release_run_id }}"
+      - name: Refuse production promotion until the renderer findings are remediated
+        env:
+          RENDERER_IMAGE: ${{ vars.AWS_PRODUCTION_RENDERER_IMAGE }}
+        run: |
+          echo 'Production renderer promotion remains blocked until T021 is complete.'
+          exit 1
 
   promote:
     needs: preflight
@@ -69,6 +75,7 @@ jobs:
       ECR_REGISTRY: ${{ vars.AWS_PRODUCTION_ECR_REGISTRY }}
       API_REPOSITORY: ${{ vars.AWS_PRODUCTION_API_REPOSITORY }}
       WORKER_REPOSITORY: ${{ vars.AWS_PRODUCTION_WORKER_REPOSITORY }}
+      RENDERER_REPOSITORY: ${{ vars.AWS_PRODUCTION_RENDERER_REPOSITORY }}
       ECS_CLUSTER: ${{ vars.AWS_PRODUCTION_ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.AWS_PRODUCTION_ECS_SERVICE }}
       ECS_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_ECS_TASK_DEFINITION }}
@@ -76,6 +83,9 @@ jobs:
       WORKER_SERVICE: ${{ vars.AWS_PRODUCTION_WORKER_SERVICE }}
       WORKER_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_WORKER_TASK_DEFINITION }}
       ECS_WORKER_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_WORKER_CONTAINER }}
+      RENDERER_SERVICE: ${{ vars.AWS_PRODUCTION_RENDERER_SERVICE }}
+      RENDERER_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_RENDERER_TASK_DEFINITION }}
+      ECS_RENDERER_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_RENDERER_CONTAINER }}
       MIGRATION_TASK_DEFINITION: ${{ vars.AWS_PRODUCTION_MIGRATION_TASK_DEFINITION }}
       ECS_MIGRATION_CONTAINER: ${{ vars.AWS_PRODUCTION_ECS_MIGRATION_CONTAINER }}
       HEALTH_URL: ${{ vars.AWS_PRODUCTION_HEALTH_URL }}
@@ -107,7 +117,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: production-release-${{ github.run_id }}
-      - name: Migrate and promote the verified API and worker release
+      - name: Migrate and promote the verified API and worker renderer release
         run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

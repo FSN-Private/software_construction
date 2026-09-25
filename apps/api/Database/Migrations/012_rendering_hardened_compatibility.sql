@@ -1,0 +1,2 @@
+-- Compatibility is promoted only by the protected post-deploy workflow after it
+-- records corpus evidence for the exact digest injected into the API task.

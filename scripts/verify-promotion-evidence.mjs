@@ -22,7 +22,10 @@ if (!/^.+@sha256:[a-f0-9]{64}$/.test(deployment.apiImage ?? '')) {
 if (!/^.+@sha256:[a-f0-9]{64}$/.test(deployment.workerImage ?? '')) {
   throw new Error('Non-production evidence does not contain an immutable worker registry digest.');
 }
-if (!deployment.taskDefinition || !deployment.workerTaskDefinition || !deployment.migrationTask || !deployment.smoke?.assetId) {
+if (!/^.+@sha256:[a-f0-9]{64}$/.test(deployment.rendererImage ?? '')) {
+  throw new Error('Non-production evidence does not contain an immutable renderer registry digest.');
+}
+if (!deployment.taskDefinition || !deployment.workerTaskDefinition || !deployment.rendererTaskDefinition || !deployment.migrationTask || !deployment.smoke?.assetId) {
   throw new Error('Non-production evidence does not prove the coordinated migration, deployment, and smoke test.');
 }
 verifyReleaseManifest(manifest, dirname(resolve(manifestPath)));

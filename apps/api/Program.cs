@@ -6,6 +6,7 @@ using System.Security.Claims;
 using Npgsql;
 using Platform.Storage;
 using Amazon.S3;
+using Amazon.SQS;
 using Platform.Api.Features.Ingest;
 using Platform.Api.Features.VersionControl;
 using Platform.Api.Features.VersionControl.Integrity;
@@ -50,6 +51,13 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton(sp => new CommitService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
     builder.Services.AddSingleton<RefService>();
     builder.Services.AddSingleton<QueryService>();
+    builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
+    builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderOperationsService>();
+    builder.Services.AddHostedService<Platform.Api.Features.Rendering.RenderRecoveryWorker>();
+    builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderWorkerCallback, Platform.Api.Features.Rendering.RenderWorkerCallbacks>();
+    if (!string.IsNullOrWhiteSpace(builder.Configuration["Rendering:DerivativeBucket"])) builder.Services.AddSingleton<Platform.Api.Features.Rendering.IPrivateDerivativeLocator, Platform.Api.Features.Rendering.S3PrivateDerivativeLocator>();
+    if (!string.IsNullOrWhiteSpace(builder.Configuration["Rendering:QueueUrl"])) builder.Services.AddSingleton<Platform.Contracts.Rendering.IRenderQueueDispatcher, Platform.Api.Features.Rendering.SqsRenderQueueDispatcher>();
     builder.Services.AddSingleton<OperationService>();
     builder.Services.AddSingleton<RewriteService>();
     builder.Services.AddSingleton<VisibilityService>();
@@ -58,6 +66,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<WindowsSyncService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
+builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
 var app = builder.Build();
@@ -79,6 +88,7 @@ Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
 WindowsSyncEndpoints.Map(app);
+Platform.Api.Features.Rendering.RenderingEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>

@@ -1,0 +1,2 @@
+docs/features/008-darktable-rendering/evidence/*.json -text
+docs/features/008-darktable-rendering/evidence/*.sarif -text

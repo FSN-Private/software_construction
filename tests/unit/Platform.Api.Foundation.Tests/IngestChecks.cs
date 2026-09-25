@@ -31,10 +31,11 @@ internal static class IngestChecks
         using (var truncated = new MemoryStream(jpeg[..4], writable: false))
             await RejectAsync<InvalidDataException>(() => Task.FromResult(ContentInspector.Inspect(truncated, "truncated.jpg")));
         Check(ContentInspector.SourceCandidates("folder/sample_01.dng.xmp").Contains(("folder/sample.dng", 1)), "Numbered darktable naming");
-        if (Environment.GetEnvironmentVariable("INGEST_INTEGRATION") != "1") { Console.WriteLine("Ingest corpus checks passed; set INGEST_INTEGRATION=1 for local PostgreSQL/MinIO tests."); return; }
+        if (Environment.GetEnvironmentVariable("INGEST_INTEGRATION") != "1") { Console.WriteLine("Ingest corpus checks passed; set INGEST_INTEGRATION=1 for local PostgreSQL/S3 tests."); return; }
 
         var schema = "ingest_test_" + Guid.NewGuid().ToString("N");
-        const string connectionString = "Host=127.0.0.1;Port=54329;Username=ingest;Password=ingest-test-only;Database=ingest;Include Error Detail=false";
+        var port = Environment.GetEnvironmentVariable("INGEST_POSTGRES_PORT") ?? "54329";
+        var connectionString = $"Host=127.0.0.1;Port={port};Username=ingest;Password=ingest-test-only;Database=ingest;Include Error Detail=false";
         await using var admin = NpgsqlDataSource.Create(connectionString);
         var commandSchema = "ingest_migration_" + Guid.NewGuid().ToString("N");
         var runtimeRole = "runtime_" + Guid.NewGuid().ToString("N");
@@ -47,9 +48,9 @@ internal static class IngestChecks
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await using var count = migrationDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
-                Check((long)(await count.ExecuteScalarAsync())! == 5, "Migration command applies each embedded release migration exactly once");
+                Check((long)(await count.ExecuteScalarAsync())! == 11, "Migration command applies each embedded release migration exactly once");
             }
-            await using var runtimeDb = NpgsqlDataSource.Create($"Host=127.0.0.1;Port=54329;Username={runtimeRole};Password={runtimePassword};Database=ingest;Search Path={commandSchema}");
+            await using var runtimeDb = NpgsqlDataSource.Create($"Host=127.0.0.1;Port={port};Username={runtimeRole};Password={runtimePassword};Database=ingest;Search Path={commandSchema}");
             await using var runtimeGrants = runtimeDb.CreateCommand("SELECT count(DISTINCT privilege_type) FROM information_schema.role_table_grants WHERE grantee=current_user AND table_schema=current_schema() AND table_name='assets' AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')");
             Check((long)(await runtimeGrants.ExecuteScalarAsync())! == 4, "Runtime role receives only the required table DML class of access");
             await RejectAsync<PostgresException>(async () =>
@@ -81,7 +82,7 @@ internal static class IngestChecks
         await using (var create = admin.CreateCommand($"CREATE SCHEMA {schema}")) await create.ExecuteNonQueryAsync();
         await using var db = NpgsqlDataSource.Create(connectionString + ";Search Path=" + schema);
         await MigrationChecks.ApplyAsync(db);
-        using var s3 = new AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = "http://127.0.0.1:9000", ForcePathStyle = true });
+        using var s3 = new AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = Environment.GetEnvironmentVariable("INGEST_S3_ENDPOINT") ?? "http://127.0.0.1:9000", ForcePathStyle = true });
         var bucket = schema.Replace('_', '-');
         await s3.PutBucketAsync(new PutBucketRequest { BucketName = bucket });
         await s3.PutBucketVersioningAsync(new PutBucketVersioningRequest { BucketName = bucket, VersioningConfig = new S3BucketVersioningConfig { Status = VersionStatus.Enabled } });
@@ -133,9 +134,10 @@ internal static class IngestChecks
         await ReconstructionChecks.RunAsync(db, storage);
         await HttpIngestChecks.RunAsync(db, storage);
         await WindowsSyncChecks.RunAsync(db, storage);
+        await RenderingIntegrationChecks.RunAsync(db, s3, bucket);
         await CapacityChecks.RunAsync(db, storage);
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);
-        Console.WriteLine($"Ingest PostgreSQL/MinIO checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
+        Console.WriteLine($"Ingest PostgreSQL/S3 checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
     }
 
     internal static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
