@@ -1,0 +1,8 @@
+# Gallery Design Research
+
+- **Projection store**: Use indexed PostgreSQL tables already operated by the platform. A separate search cluster adds deployment and recovery burden at 100,000 assets; validate with T013 before revisiting.
+- **Pagination**: Use keyset tuples and asset-ID tie-breakers, with generation-bound cursors. Offset paging can repeat/skip after insertion and degrades on deep pages.
+- **Working changes**: Feature 006 scopes rows to client and branch, while feature 007 currently lists committed projection only. Reserve a web client and add an explicit branch overlay to namespace reads; retain device-local working rows and report conflicts. A per-device fanout would make partial delivery and cleanup harder.
+- **XMP**: Parse with secure `XmlReader` settings and patch only allowlisted RDF/darktable fields in an XML DOM. Preserve all unknown elements/attributes and validate with a darktable round trip; byte formatting may change, so compare semantics as well as the untouched original binary.
+- **Embedded metadata**: Feature 005 validates JPEG, PNG, TIFF, and DNG but does not extract searchable EXIF. Candidate `MetadataExtractor` 2.9.3 is listed by [NuGet](https://www.nuget.org/packages/MetadataExtractor) as Apache-2.0 with a net8.0 build and `XmpCore` dependency; the [upstream project](https://github.com/drewnoakes/metadata-extractor-dotnet) documents EXIF/IPTC/XMP and DNG support. T002 verifies advisories, format corpus, license, and lockfile before selecting it. This planning note does not approve installation by itself.
+- **Privacy**: Apply location visibility in the server query before both matches and counts. Client-only hiding would leak coordinates through search outcomes and API payloads.
