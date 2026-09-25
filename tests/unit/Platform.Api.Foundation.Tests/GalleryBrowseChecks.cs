@@ -27,6 +27,10 @@ internal static class GalleryBrowseChecks
         var filtered = await browse.BrowseAsync("test-owner", "main", Query(("fileType", "dng")), default);
         Check(filtered.Count == 1 && filtered.Cards.Single().FileType == "dng", "File type filter");
         await RejectAsync(() => browse.BrowseAsync("test-owner", "main", Query(("fileType", "dng"), ("cursor", first.NextCursor!)), default), "cursor_expired");
+        await RejectAsync(() => browse.BrowseAsync("another-owner", "main", Query(("sort", "filename"), ("limit", "2"), ("cursor", first.NextCursor!)), default), "cursor_expired");
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, "UPDATE gallery_refresh SET invalidation_revision=invalidation_revision+1 WHERE owner_id='test-owner' AND library_id='main' AND branch_name='main'", default);
+        await RejectAsync(() => browse.BrowseAsync("test-owner", "main", Query(("sort", "filename"), ("limit", "2"), ("cursor", first.NextCursor!)), default), "cursor_expired");
         await RejectAsync(() => browse.BrowseAsync("test-owner", "main", Query(("locationPresent", "true")), default), "location_hidden");
         await RejectAsync(() => browse.BrowseAsync("test-owner", "other", Query(), default), "library_unavailable");
         await RejectAsync(() => browse.BrowseAsync("test-owner", "main", Query(("sql", "anything")), default), "invalid_filter");

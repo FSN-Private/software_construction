@@ -41,7 +41,7 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         ["width"] = "g.width",
         ["height"] = "g.height"
     };
-    private sealed record Cursor(long Generation, string Hash, string Sort, string Direction, string? Value1, string? Value2,
+    private sealed record Cursor(long Generation, long Revision, string Hash, string Sort, string Direction, string? Value1, string? Value2,
         Guid AssetId, DateTimeOffset ExpiresAt);
 
     public async Task<GalleryPage> BrowseAsync(string owner, string library, IQueryCollection query, CancellationToken ct)
@@ -61,7 +61,7 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         var filters = query.Where(pair => Filters.Contains(pair.Key)).OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .ToDictionary(pair => pair.Key, pair => pair.Value.Select(value => value ?? "").OrderBy(value => value, StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
         foreach (var key in filters.Keys) GalleryTelemetry.FacetUses.Add(1, new KeyValuePair<string, object?>("facet", key));
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { branch, filters, sort, direction }))));
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { owner, library, branch, filters, sort, direction }))));
         Cursor? cursor = null;
         var token = Single(query, "cursor");
         if (token is not null)
@@ -78,7 +78,8 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
             throw new GalleryProblem("location_hidden");
         var generation = await ScalarAsync(connection, "SELECT generation FROM gallery_generations WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND state='active'", ct, owner, library, branch) as long?;
         if (generation is null) return new([], 0, null, 0, sort, direction, filters);
-        if (cursor is not null && cursor.Generation != generation) throw new GalleryProblem("cursor_expired", 409);
+        var revision = (long)(await ScalarAsync(connection, "SELECT COALESCE((SELECT invalidation_revision FROM gallery_refresh WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND generation=$4),0)", ct, owner, library, branch, generation.Value) ?? 0L);
+        if (cursor is not null && (cursor.Generation != generation || cursor.Revision != revision)) throw new GalleryProblem("cursor_expired", 409);
         var args = new List<object?> { owner, library, branch, generation.Value };
         string Param(object? value) { args.Add(value); return "$" + args.Count.ToString(CultureInfo.InvariantCulture); }
         var where = new StringBuilder("g.owner_id=$1 AND g.library_id=$2 AND g.branch_name=$3 AND g.generation=$4 AND a.state IN ('active','restored') AND g.projection_state IN ('complete','stale')");
@@ -199,7 +200,7 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         await transaction.CommitAsync(ct);
         var hasMore = cards.Count > limit;
         if (hasMore) cards.RemoveAt(cards.Count - 1);
-        var next = hasMore ? cursorProtector.Protect(JsonSerializer.Serialize(new Cursor(generation.Value, hash, sort, direction, last1, last2, lastId, DateTimeOffset.UtcNow.AddMinutes(30)))) : null;
+        var next = hasMore ? cursorProtector.Protect(JsonSerializer.Serialize(new Cursor(generation.Value, revision, hash, sort, direction, last1, last2, lastId, DateTimeOffset.UtcNow.AddMinutes(30)))) : null;
         foreach (var group in cards.GroupBy(card => card.PreviewState))
             GalleryTelemetry.PreviewStates.Add(group.LongCount(), new KeyValuePair<string, object?>("state", group.Key));
         return new(cards, count, next, generation.Value, sort, direction, filters);
