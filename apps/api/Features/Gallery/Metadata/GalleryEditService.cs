@@ -17,15 +17,21 @@ public sealed record GalleryEditResult(Guid AssetId, Guid EditId, string Branch,
 
 public sealed class GalleryEditService(NpgsqlDataSource db, S3ObjectStore storage, WorkingService working, IConfiguration configuration)
 {
-    public async Task<GalleryEditResult> PatchAsync(string owner, string library, Guid asset, GalleryEditRequest request, string operation, CancellationToken ct)
+    public async Task<GalleryEditResult> PatchAsync(string owner, string library, Guid asset, GalleryEditRequest request, string operation, CancellationToken ct, string? idempotencyKey = null)
     {
         if (string.IsNullOrWhiteSpace(configuration["Gallery:LibraryId"]) || library != configuration["Gallery:LibraryId"])
             throw new GalleryProblem("library_unavailable", 404);
         if (request.ExpectedWorkingVersion < 0 || request.Changes is null) throw new GalleryProblem("invalid_metadata_value");
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 200) throw new GalleryProblem("invalid_idempotency_key");
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { asset, request })));
         var branch = RefNames.Normalize(request.Branch);
         Source source;
         await using (var connection = await db.OpenConnectionAsync(ct))
+        {
+            var replay = await ReplayAsync(connection, owner, library, idempotencyKey, fingerprint, ct);
+            if (replay is not null) return replay;
             source = await ReadSourceAsync(connection, owner, library, branch, asset, request.EditId, ct);
+        }
         if (source.WorkingVersion != request.ExpectedWorkingVersion || source.SelectedSha != request.ExpectedBaseSha256)
             throw new GalleryProblem("stale_working_state", 409);
         byte[] before;
@@ -47,6 +53,8 @@ public sealed class GalleryEditService(NpgsqlDataSource db, S3ObjectStore storag
         await using (var transaction = await connection.BeginTransactionAsync(ct))
         {
             await LockOwnerAsync(connection, owner, ct);
+            var replay = await ReplayAsync(connection, owner, library, idempotencyKey, fingerprint, ct);
+            if (replay is not null) return replay;
             var latest = await ReadSourceAsync(connection, owner, library, branch, asset, request.EditId, ct);
             if (latest.SelectedSha != source.SelectedSha || latest.WorkingVersion != source.WorkingVersion || latest.OriginalSha != source.OriginalSha)
                 throw new GalleryProblem("stale_working_state", 409);
@@ -66,22 +74,33 @@ public sealed class GalleryEditService(NpgsqlDataSource db, S3ObjectStore storag
             if (valid is null) throw new GalleryProblem("content_not_authoritative", 409);
             await ExecuteAsync(connection, "INSERT INTO gallery_web_content(owner_id,library_id,branch_name,asset_id,edit_id,sha256) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ct,
                 owner, library, branch, asset, editId.Value, digest);
-            await transaction.CommitAsync(ct);
             source = source with { EditId = editId };
-        }
-        WorkingChangeView result;
-        try
-        {
-            result = await working.PutAsync(owner, library, "__gallery_web__", new WorkingChangeRequest(asset, source.EditId, branch,
-                source.SelectedSha is null ? "added" : "modified", source.BaseSha, digest, source.Path, "active", request.ExpectedWorkingVersion), operation, ct);
-        }
-        catch (VersionControlProblem error) when (error.Code is "working_state_conflict" or "stale_head")
-        {
-            throw new GalleryProblem("stale_working_state", 409);
-        }
-        await using (var connection = await db.OpenConnectionAsync(ct))
+            WorkingChangeView changed;
+            try
+            {
+                changed = await working.PutInTransactionAsync(connection, owner, library, "__gallery_web__", new WorkingChangeRequest(asset, source.EditId, branch,
+                    source.SelectedSha is null ? "added" : "modified", source.BaseSha, digest, source.Path, "active", request.ExpectedWorkingVersion), operation, ct);
+            }
+            catch (VersionControlProblem error) when (error.Code is "working_state_conflict" or "stale_head")
+            {
+                throw new GalleryProblem("stale_working_state", 409);
+            }
+            var result = new GalleryEditResult(asset, source.EditId!.Value, branch, digest, changed.Version, changed.Id.ToString("D"), true);
+            await ExecuteAsync(connection, "INSERT INTO gallery_edit_idempotency(owner_id,library_id,idempotency_key,fingerprint,result) VALUES($1,$2,$3,$4,$5::jsonb)", ct,
+                owner, library, idempotencyKey, fingerprint, JsonSerializer.Serialize(result));
             await AuditAsync(connection, owner, operation, "gallery.metadata_edited", asset, "accepted", ct);
-        return new(asset, source.EditId!.Value, branch, digest, result.Version, result.Id.ToString("D"), true);
+            await transaction.CommitAsync(ct);
+            return result;
+        }
+    }
+
+    private static async Task<GalleryEditResult?> ReplayAsync(NpgsqlConnection connection, string owner, string library, string key, string fingerprint, CancellationToken ct)
+    {
+        await using var command = Command(connection, "SELECT fingerprint,result::text FROM gallery_edit_idempotency WHERE owner_id=$1 AND library_id=$2 AND idempotency_key=$3", owner, library, key);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        if (reader.GetString(0).Trim() != fingerprint) throw new GalleryProblem("idempotency_conflict", 409);
+        return JsonSerializer.Deserialize<GalleryEditResult>(reader.GetString(1)) ?? throw new GalleryProblem("idempotency_conflict", 409);
     }
 
     private static async Task<Source> ReadSourceAsync(NpgsqlConnection connection, string owner, string library, string branch, Guid asset, Guid? requestedEdit, CancellationToken ct)

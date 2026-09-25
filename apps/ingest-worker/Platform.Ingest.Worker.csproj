@@ -26,5 +26,6 @@
     <EmbeddedResource Include="../api/Database/Migrations/014_gallery_metadata.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.014_gallery_metadata.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/015_gallery_search_presentation.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.015_gallery_search_presentation.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/016_gallery_web_content.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.016_gallery_web_content.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/017_gallery_edit_idempotency.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.017_gallery_edit_idempotency.sql" />
   </ItemGroup>
 </Project>

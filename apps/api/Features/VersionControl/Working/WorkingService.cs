@@ -11,11 +11,19 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
 {
     public async Task<WorkingChangeView> PutAsync(string owner, string library, string client, WorkingChangeRequest request, string operationId, CancellationToken cancellationToken)
     {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var result = await PutInTransactionAsync(connection, owner, library, client, request, operationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    public async Task<WorkingChangeView> PutInTransactionAsync(NpgsqlConnection connection, string owner, string library, string client,
+        WorkingChangeRequest request, string operationId, CancellationToken cancellationToken)
+    {
         var branch = RefNames.Normalize(request.Branch);
         var entry = new VersionControlEntry(request.AssetId, request.EditId, request.Change, request.BaseContentSha256, request.ContentSha256, request.Path, request.Lifecycle);
         _ = VersionControlManifestCodec.Write(new(library, [], owner, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "validate", [entry]));
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockClientAsync(connection, owner, library, client, cancellationToken);
         await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
         await VersionControlAdapters.ValidateEntriesAsync(connection, owner, [entry], storage, cancellationToken);
@@ -44,7 +52,6 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
             id = (Guid)(await ScalarAsync(connection, "SELECT id FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6", cancellationToken, owner, library, client, branch, request.AssetId, request.EditId) ?? throw new VersionControlProblem("working_state_conflict"));
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.working-change", id, "accepted", cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return new(id, request.AssetId, request.EditId, branch, request.Change, request.BaseContentSha256, request.ContentSha256, request.Path, request.Lifecycle, request.ExpectedVersion + 1, false);
     }
 

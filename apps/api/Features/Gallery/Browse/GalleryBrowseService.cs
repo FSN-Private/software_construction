@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Primitives;
 using Npgsql;
 using Platform.Api.Features.Gallery.Metadata;
+using Platform.Api.Features.Gallery;
 using Platform.Api.Features.VersionControl.Refs;
 using static Platform.Storage.IngestDb;
 
@@ -33,8 +34,12 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         "color", "tag", "title", "description", "creator", "locationPresent", "latitudeMin", "latitudeMax", "longitudeMin", "longitudeMax"];
     private static readonly Dictionary<string, string> NumericColumns = new(StringComparer.Ordinal)
     {
-        ["focalLength"] = "g.focal_length_mm", ["aperture"] = "g.aperture", ["shutter"] = "g.shutter_seconds",
-        ["iso"] = "g.iso", ["width"] = "g.width", ["height"] = "g.height"
+        ["focalLength"] = "g.focal_length_mm",
+        ["aperture"] = "g.aperture",
+        ["shutter"] = "g.shutter_seconds",
+        ["iso"] = "g.iso",
+        ["width"] = "g.width",
+        ["height"] = "g.height"
     };
     private sealed record Cursor(long Generation, string Hash, string Sort, string Direction, string? Value1, string? Value2,
         Guid AssetId, DateTimeOffset ExpiresAt);
@@ -55,6 +60,7 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         if (limit is < 1 or > 100) throw new GalleryProblem("invalid_limit");
         var filters = query.Where(pair => Filters.Contains(pair.Key)).OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .ToDictionary(pair => pair.Key, pair => pair.Value.Select(value => value ?? "").OrderBy(value => value, StringComparer.Ordinal).ToArray(), StringComparer.Ordinal);
+        foreach (var key in filters.Keys) GalleryTelemetry.FacetUses.Add(1, new KeyValuePair<string, object?>("facet", key));
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { branch, filters, sort, direction }))));
         Cursor? cursor = null;
         var token = Single(query, "cursor");
@@ -194,6 +200,8 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         var hasMore = cards.Count > limit;
         if (hasMore) cards.RemoveAt(cards.Count - 1);
         var next = hasMore ? cursorProtector.Protect(JsonSerializer.Serialize(new Cursor(generation.Value, hash, sort, direction, last1, last2, lastId, DateTimeOffset.UtcNow.AddMinutes(30)))) : null;
+        foreach (var group in cards.GroupBy(card => card.PreviewState))
+            GalleryTelemetry.PreviewStates.Add(group.LongCount(), new KeyValuePair<string, object?>("state", group.Key));
         return new(cards, count, next, generation.Value, sort, direction, filters);
     }
 

@@ -34,6 +34,30 @@ internal static class GalleryBrowseChecks
         var detail = await details.GetAsync("test-owner", "main", "main", first.Cards[0].AssetId, default);
         Check(detail.AssetId == first.Cards[0].AssetId && detail.OriginalSha256.Length == 64 && detail.LifecycleVersion > 0, "Detail binds authoritative identity");
         Check(detail.Thumbnail.State == "pending" && detail.Thumbnail.RequestId is null, "Missing thumbnail is explicitly pending");
+        Guid previewAsset;
+        await using (var connection = await db.OpenConnectionAsync())
+            previewAsset = (Guid)(await ScalarAsync(connection, "SELECT asset_id FROM gallery_projection WHERE owner_id='test-owner' AND xmp_sha256 IS NOT NULL LIMIT 1", default)
+                ?? throw new InvalidOperationException("Gallery preview fixture requires an XMP asset"));
+        var previewDetail = await details.GetAsync("test-owner", "main", "main", previewAsset, default);
+        var requestId = Guid.NewGuid(); var renditionId = Guid.NewGuid();
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            var otherSha = ((string?)await ScalarAsync(connection, "SELECT sha256 FROM content_objects WHERE sha256<>$1 AND integrity_state='authoritative' LIMIT 1", default, previewDetail.OriginalSha256))?.Trim()
+                ?? throw new InvalidOperationException("Gallery mismatch fixture requires another content object");
+            await ExecuteAsync(connection, "INSERT INTO rendering_compatibility(matrix_version,renderer_release,renderer_artifact_digest,profile,state) VALUES('gallery-preview-test','test','unapproved','test','pending') ON CONFLICT DO NOTHING", default);
+            await ExecuteAsync(connection, "INSERT INTO render_requests(id,owner_id,library_id,request_key,asset_id,edit_id,selected_version,rendition,profile,renderer_release,renderer_artifact_digest,matrix_version,state) VALUES($1,'test-owner','main',$2,$3,$4,'fixture','thumbnail-512','test','test','unapproved','gallery-preview-test','completed')", default,
+                requestId, new string('a', 64), previewAsset, previewDetail.EditId!.Value);
+            await ExecuteAsync(connection, "INSERT INTO renditions(id,request_id,object_key,object_version,output_sha256,byte_length,media_type,completed_at) VALUES($1,$2,$3,'fixture',$4,1,'image/jpeg',now())", default,
+                renditionId, requestId, "gallery-preview-fixture/" + requestId, new string('b', 64));
+            await ExecuteAsync(connection, "INSERT INTO render_provenance(rendition_id,source_sha256,xmp_sha256,selected_version,renderer_release,renderer_artifact_digest,profile,matrix_version,completed_at) VALUES($1,$2,$3,'fixture','test','unapproved','test','gallery-preview-test',now())", default,
+                renditionId, otherSha, previewDetail.XmpSha256!);
+            Check((await details.GetAsync("test-owner", "main", "main", previewAsset, default)).Thumbnail.State == "pending", "Mismatched provenance cannot expose another source preview");
+            await ExecuteAsync(connection, "UPDATE render_requests SET state='failed' WHERE id=$1", default, requestId);
+            Check((await details.GetAsync("test-owner", "main", "main", previewAsset, default)).Thumbnail.State == "failed", "Failed thumbnail is labelled without a derivative locator");
+            await ExecuteAsync(connection, "UPDATE render_requests SET state='completed' WHERE id=$1; UPDATE render_provenance SET source_sha256=$2 WHERE rendition_id=$3", default,
+                requestId, previewDetail.OriginalSha256, renditionId);
+            Check((await details.GetAsync("test-owner", "main", "main", previewAsset, default)).Thumbnail is { State: "available", RequestId: not null }, "Matching exact provenance enables preview");
+        }
         Check(detail.Fields.All(field => field.Name is not ("location" or "locationPresent")), "Default preference removes coordinates from normal detail");
         await RejectAsync(() => details.GetAsync("another-owner", "main", "main", first.Cards[0].AssetId, default), "asset_unavailable");
         var preferences = new GalleryPreferenceService(db, configuration);
@@ -46,9 +70,10 @@ internal static class GalleryBrowseChecks
         var revealed = await preferences.RevealAsync("test-owner", "main", "main", first.Cards[0].AssetId, "op_gallery_test", default);
         Check(revealed.Latitude == 40.5m && revealed.Longitude == -74.25m, "Explicit reveal returns retained coordinates");
         await RejectAsync(() => preferences.RevealAsync("another-owner", "main", "main", first.Cards[0].AssetId, "op_gallery_test", default), "location_unavailable");
-        var visible = await preferences.SetAsync("test-owner", "main", new(false, 1), default);
+        var visible = await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show");
         Check(!visible.HideGeolocation && visible.Version == 2, "Owner preference updates with CAS");
-        await RejectAsync(() => preferences.SetAsync("test-owner", "main", new(true, 1), default), "preference_conflict");
+        Check(await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show") == visible, "Preference idempotent replay");
+        await RejectAsync(() => preferences.SetAsync("test-owner", "main", new(true, 1), default, "gallery-preference-stale"), "preference_conflict");
         var locationMatches = await browse.BrowseAsync("test-owner", "main", Query(("locationPresent", "true")), default);
         Check(locationMatches.Count >= 1 && locationMatches.Cards.Any(card => card.AssetId == first.Cards[0].AssetId) && locationMatches.Cards.All(card => card.AssetId != Guid.Empty), "Visible location filter includes retained asset");
         await using (var connection = await db.OpenConnectionAsync())

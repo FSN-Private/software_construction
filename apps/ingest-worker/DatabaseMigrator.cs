@@ -22,6 +22,7 @@ public static class DatabaseMigrator
         "014_gallery_metadata.sql",
         "015_gallery_search_presentation.sql",
         "016_gallery_web_content.sql",
+        "017_gallery_edit_idempotency.sql",
     ];
 
     public static Task ApplyAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) => ApplyAsync(dataSource, null, null, cancellationToken);

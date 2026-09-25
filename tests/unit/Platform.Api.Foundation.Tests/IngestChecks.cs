@@ -49,7 +49,7 @@ internal static class IngestChecks
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await using var count = migrationDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
-                Check((long)(await count.ExecuteScalarAsync())! == 14, "Migration command applies each embedded release migration exactly once");
+                Check((long)(await count.ExecuteScalarAsync())! == 15, "Migration command applies each embedded release migration exactly once");
             }
             await using var runtimeDb = NpgsqlDataSource.Create($"Host=127.0.0.1;Port={port};Username={runtimeRole};Password={runtimePassword};Database=ingest;Search Path={commandSchema}");
             await using var runtimeGrants = runtimeDb.CreateCommand("SELECT count(DISTINCT privilege_type) FROM information_schema.role_table_grants WHERE grantee=current_user AND table_schema=current_schema() AND table_name='assets' AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')");
@@ -158,6 +158,7 @@ internal static class IngestChecks
         await CapacityChecks.RunAsync(db, storage);
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);
         await GalleryEditChecks.RunAsync(db, storage);
+        if (Environment.GetEnvironmentVariable("GALLERY_CAPACITY") == "1") await GalleryCapacityChecks.RunAsync(db);
         Console.WriteLine($"Ingest PostgreSQL/S3 checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
     }
 

@@ -65,6 +65,12 @@ internal static class GalleryMetadataChecks
             """);
         var patched = GalleryXmpPatcher.Patch(File.ReadAllBytes("tests/fixtures/ingest/sample.dng.xmp"),
             patch.RootElement.EnumerateObject().ToDictionary(item => item.Name, item => item.Value));
+        if (Environment.GetEnvironmentVariable("GALLERY_ROUNDTRIP_DIR") is { Length: > 0 } roundtripDirectory)
+        {
+            Directory.CreateDirectory(roundtripDirectory);
+            File.Copy("tests/fixtures/ingest/sample.jpg", Path.Combine(roundtripDirectory, "sample.jpg"), true);
+            File.WriteAllBytes(Path.Combine(roundtripDirectory, "sample.jpg.xmp"), patched);
+        }
         var xml = Encoding.UTF8.GetString(patched);
         Check(xml.Contains("history_modversion", StringComparison.Ordinal), "Unknown darktable history survives XMP patch");
         using var patchedOriginal = File.OpenRead("tests/fixtures/ingest/sample.dng");

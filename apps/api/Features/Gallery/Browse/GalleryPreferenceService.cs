@@ -19,15 +19,26 @@ public sealed class GalleryPreferenceService(NpgsqlDataSource db, IConfiguration
         return await reader.ReadAsync(ct) ? new(reader.GetBoolean(0), reader.GetInt64(1)) : new(true, 1);
     }
 
-    public async Task<GalleryPreference> SetAsync(string owner, string library, GalleryPreferenceRequest request, CancellationToken ct)
+    public async Task<GalleryPreference> SetAsync(string owner, string library, GalleryPreferenceRequest request, CancellationToken ct, string? idempotencyKey = null)
     {
         CheckLibrary(library);
         if (request.ExpectedVersion < 1) throw new GalleryProblem("invalid_version");
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 200) throw new GalleryProblem("invalid_idempotency_key");
         await using var connection = await db.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        await LockOwnerAsync(connection, owner, ct);
+        await using (var replay = Command(connection, "SELECT hide_geolocation,expected_version,result_version FROM gallery_preference_idempotency WHERE owner_id=$1 AND library_id=$2 AND idempotency_key=$3", owner, library, idempotencyKey))
+        await using (var reader = await replay.ExecuteReaderAsync(ct))
+            if (await reader.ReadAsync(ct))
+            {
+                if (reader.GetBoolean(0) != request.HideGeolocation || reader.GetInt64(1) != request.ExpectedVersion) throw new GalleryProblem("idempotency_conflict", 409);
+                return new(request.HideGeolocation, reader.GetInt64(2));
+            }
         await ExecuteAsync(connection, "INSERT INTO gallery_preferences(owner_id) VALUES($1) ON CONFLICT DO NOTHING", ct, owner);
         var changed = await ExecuteAsync(connection, "UPDATE gallery_preferences SET hide_geolocation=$2,version=version+1,updated_at=now() WHERE owner_id=$1 AND version=$3", ct, owner, request.HideGeolocation, request.ExpectedVersion);
         if (changed != 1) throw new GalleryProblem("preference_conflict", 409);
+        await ExecuteAsync(connection, "INSERT INTO gallery_preference_idempotency(owner_id,library_id,idempotency_key,hide_geolocation,expected_version,result_version) VALUES($1,$2,$3,$4,$5,$6)", ct,
+            owner, library, idempotencyKey, request.HideGeolocation, request.ExpectedVersion, request.ExpectedVersion + 1);
         await transaction.CommitAsync(ct);
         return new(request.HideGeolocation, request.ExpectedVersion + 1);
     }
