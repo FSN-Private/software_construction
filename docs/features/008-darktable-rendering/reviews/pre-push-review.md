@@ -64,7 +64,7 @@ may occur.
 ## Remediation review convergence — 2026-09-25
 
 **Alternate reviewer model**: `gpt-6-sol`  
-**Remote / destination**: `origin` / `master`  
+**Remote / destination**: `origin` / `feature/008-darktable-rendering`  
 **Base and final reviewed range**: `cd1fe828c7d56f89f5acc8503aaff6372daf8f9c..389ed07a15327fa61898bfccac5591e185c94598`  
 **Pending push scope**: `origin/master..HEAD` at the final clean-tree/push check: the reviewed implementation through `389ed07`, this passing review record (`672c7ac`), and this record-only audit correction. No implementation changes occur after `389ed07`.
 
