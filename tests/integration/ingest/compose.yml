@@ -5,17 +5,20 @@ services:
       POSTGRES_DB: ingest
       POSTGRES_USER: ingest
       POSTGRES_PASSWORD: ingest-test-only
-    ports: ["127.0.0.1:54329:5432"]
+    ports: ["127.0.0.1:${INGEST_POSTGRES_PORT:-54329}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ingest -d ingest"]
       interval: 1s
       timeout: 5s
       retries: 30
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    command: server /data
+  s3:
+    image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
     environment:
-      MINIO_ROOT_USER: ingest-test
-      MINIO_ROOT_PASSWORD: ingest-test-only
-      MINIO_KMS_SECRET_KEY: ingest-test-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    ports: ["127.0.0.1:9000:9000"]
+      AWS_DEFAULT_REGION: us-east-1
+      RUSTFS_ACCESS_KEY: ingest-test
+      RUSTFS_SECRET_KEY: ingest-test-only
+      RUSTFS_KMS_ENABLE: "true"
+      RUSTFS_KMS_BACKEND: static
+      RUSTFS_KMS_DEFAULT_KEY_ID: ingest-test-key
+      RUSTFS_KMS_STATIC_SECRET_KEY: ingest-test-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    ports: ["127.0.0.1:${INGEST_S3_PORT:-9000}:9000"]

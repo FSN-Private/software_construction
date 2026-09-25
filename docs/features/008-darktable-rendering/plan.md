@@ -15,7 +15,7 @@ Add a private rendering boundary that accepts only an immutable asset/XMP pair, 
 | Rendering | `darktable-cli` 5.6.1, invoked with explicit input, XMP, output, dimensions, `--library :memory:`, and a versioned profile |
 | Worker boundary | Dedicated Linux ECS/Fargate task role with derivative-only write access, no API/database credentials, a private writable workspace, and SQS/DLQ delivery |
 | API | Owner-authorized `/v1/renditions` request/status/retry endpoints; versioned JSON contract in [contracts/rendering-v1.md](contracts/rendering-v1.md) |
-| Testing | .NET model/unit tests; PostgreSQL/MinIO integration tests; native darktable corpus and performance tests on an approved Linux runner |
+| Testing | .NET model/unit tests; PostgreSQL/S3-compatible integration tests; native darktable corpus and performance tests on an approved Linux runner |
 | Targets | cached p95 ≤500 ms; uncached start p95 ≤2 s and finish p95 ≤30 s; the 99%-within-five-minutes 100,000-thumbnail target is waived by the product owner on 2026-09-24 with retained modeled capacity evidence |
 
 ## Research and design artifacts
