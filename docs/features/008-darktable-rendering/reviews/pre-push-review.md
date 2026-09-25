@@ -99,6 +99,55 @@ The reviewer explicitly reported: **“PASS … All prior blocking findings are 
 
 **Final gate result: PASS.**
 
+## Stale migration CI repair review — 2026-09-25
+
+**Alternate reviewer model**: `gpt-6-sol`
+**Remote / destination**: `origin` / `feature/008-darktable-rendering`
+**Base and implementation range**: `656adbe21893d2438a300ab596cbcd637fe7a74f..3e53df5`
+**Pending push scope**: the one-file maintenance commit `3e53df5`
+(`test(ci): derive migration rehearsal count`) plus this review-record-only commit.
+
+### Failure and remediation
+
+GitHub Actions run `36089272068`, backend job `107927925650`, completed the
+isolated PostgreSQL/S3 fixture successfully but failed the Feature 006
+version-control migration rehearsal. Its log showed `DatabaseMigrator` had
+applied the current release migration set, while the test still required
+exactly five rows in `platform_schema_migrations`:
+`Repeated migration must retain one checksum record per release migration.`
+
+| Finding / review area | Classification | Disposition and evidence |
+|---|---|---|
+| The idempotency assertion hard-coded the former five-migration release set although `DatabaseMigrator` now declares eleven migrations. | Valid, blocking CI failure | Fixed in `3e53df5`: the test now counts the worker assembly's embedded `Platform.Ingest.Worker.Database.Migrations.*.sql` resources and asserts exactly one checksum record for each. The worker project embeds the same eleven named migrations listed by `DatabaseMigrator`. |
+| Resource-derived migration count could differ from the migrator's declared set. | Verified, no blocking finding | The reviewer compared the worker's `Migrations` list with `Platform.Ingest.Worker.csproj`; all eleven entries are embedded with the filtered prefix and `.sql` suffix. A newly embedded but undeclared release migration would fail this rehearsal rather than be silently accepted. |
+| Local PostgreSQL runner result is not capturable in this session. | Non-blocking verification note | The healthy local service accepted the direct runner process, but this session did not retain its streamed result; it is not recorded as a pass. GitHub Actions remains the authoritative full backend verification. |
+
+### Validation evidence
+
+- The failed GitHub Actions log identifies the obsolete exact-five assertion at
+  `CommitChecks.cs:353`; the isolated fixture itself reached both containers'
+  healthy state before the assertion.
+- `dotnet format tests/version-control/Platform.VersionControl.Tests.csproj --verify-no-changes --no-restore` — PASS.
+- `dotnet build tests/version-control/Platform.VersionControl.Tests.csproj --no-restore --nologo` — PASS.
+- `git diff --check origin/feature/008-darktable-rendering..HEAD` — PASS.
+
+### Reviewer status
+
+The alternate reviewer found no valid unresolved blocking issue in the source
+change and required this exact pending record to be inspected before final
+agreement. The only open note is the unconfirmed local integration output;
+it does not invalidate the targeted correction and will be resolved by the
+post-push required CI run.
+
+### Final independent agreement
+
+After inspecting this exact pending record, the alternate reviewer reported no
+valid unresolved blocking finding. It confirmed that the resource-derived
+assertion matches the current migrator and that the missing local streamed
+result is accurately recorded as a non-blocking verification note.
+
+**Final gate result: PASS.**
+
 ## CI remediation review — 2026-09-25
 
 **Alternate reviewer model**: `gpt-6-sol`
