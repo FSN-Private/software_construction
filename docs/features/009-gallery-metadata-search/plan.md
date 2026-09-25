@@ -5,7 +5,7 @@
 
 ## Technical context and constitution check
 
-The new branch starts at `master` and contains the implemented 005–008 storage, working-state, Windows-sync, and rendering services. The stale 009 branch is preserved at `archive/009-gallery-metadata-search-stale`. The existing API is .NET 10 with Npgsql and owner JWT authorization; the web app is React/TypeScript; PostgreSQL stores source identity, XMP history, working changes, and render provenance. Source originals and sidecars live in private S3 storage. No metadata index or embedded metadata extractor currently exists.
+The new branch was rebased from the stale local `master` onto `origin/master` after the owner identified its squash merge of 008. The current `origin/master` contains features 005–008, including the working-state, Windows-sync, and rendering services required here. The stale 009 branch is preserved at `archive/009-gallery-metadata-search-stale`. The API is .NET 10 with Npgsql and owner JWT authorization; the web app is React/TypeScript. Source originals and sidecars live in private S3 storage. No gallery metadata index exists yet.
 
 The [constitution](../../../.specify/memory/constitution.md) requires approved artifacts, traceable numbered tasks, matching branch, coherent milestone commits, applicable tests and documentation, dependency review, and a separate model's pre-push review. This plan and its tasks must be approved before implementation. No merge, push, deployment, or history rewrite follows from implementation approval.
 
