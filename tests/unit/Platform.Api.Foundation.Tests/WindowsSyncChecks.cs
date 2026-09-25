@@ -1,4 +1,7 @@
 using Npgsql;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Platform.Api.Features.Gallery.Metadata;
 using Platform.Api.Features.VersionControl.Working;
 using Platform.Api.Features.WindowsSync;
 using Platform.Contracts.VersionControl;
@@ -101,6 +104,45 @@ internal static class WindowsSyncChecks
         IngestChecks.Check(pageA.Items.Count == 2 && pageA.Items.Any(item => item.Path == movedPath), "An authoritative asset restore must return the asset group at its current path.");
         var idle = await service.NamespaceAsync(owner, library, "reader-device-a", branch, pageA.Cursor, 1000, default);
         IngestChecks.Check(idle.Items.Count == 0 && idle.Cursor == pageA.Cursor, "An idle namespace poll must retain the terminal branch/lifecycle cursor.");
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Gallery:LibraryId"] = library }).Build();
+        var gallery = new GalleryEditService(db, storage, new WorkingService(db, storage), configuration);
+        using var change = JsonDocument.Parse("{\"title\":\"Shared web title\"}");
+        var edited = await gallery.PatchAsync(owner, library, asset,
+            new(branch, edit, 0, editDigest, change.RootElement.EnumerateObject().ToDictionary(item => item.Name, item => item.Value)),
+            "op_windows_sync_gallery_edit", default);
+        await ExpectExpiredAsync(() => service.NamespaceAsync(owner, library, "reader-device-a", branch, pageA.Cursor, 1000, default));
+        await ExpectExpiredAsync(() => service.NamespaceAsync(owner, library, "reader-device-b", branch, pageB.Cursor, 1000, default));
+        pageA = await service.NamespaceAsync(owner, library, "reader-device-a", branch, null, 1000, default);
+        pageB = await service.NamespaceAsync(owner, library, "reader-device-b", branch, null, 1000, default);
+        var webA = pageA.Items.Single(item => item.EditId == edit);
+        var webB = pageB.Items.Single(item => item.EditId == edit);
+        IngestChecks.Check(webA.WebWorking && webB.WebWorking && webA.Sha256 == edited.XmpSha256 && webB.ContentId == webA.ContentId,
+            "A web edit must resolve to the same branch-scoped XMP object on two devices.");
+        var downloaded = await service.ContentAsync(owner, library, "reader-device-b", webB.ContentId, "op_windows_sync_web_download", default);
+        await using (downloaded.Bytes)
+        {
+            using var text = new StreamReader(downloaded.Bytes);
+            IngestChecks.Check((await text.ReadToEndAsync()).Contains("Shared web title", StringComparison.Ordinal), "Both devices can download the verified web sidecar.");
+        }
+        await service.RevokeAsync(owner, library, "reader-device-b", "op_windows_sync_revoke_b", default);
+        await ExpectProblemAsync(() => service.ContentAsync(owner, library, "reader-device-b", webB.ContentId, "op_windows_sync_denied", default), "device_revoked");
+        await ExecuteBranchSwitchAsync(db, service, owner, library, branch, "reader-device-a", webA.ContentId);
+    }
+
+    private static async Task ExecuteBranchSwitchAsync(NpgsqlDataSource db, WindowsSyncService service, string owner, string library, string branch, string device, Guid oldContentId)
+    {
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id) SELECT owner_id,library_id,'other-branch','other-branch','branch',head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3", default, owner, library, branch);
+        await service.RegisterAsync(owner, library, device, "other-branch", "op_windows_sync_switch", default);
+        await ExpectProblemAsync(() => service.ContentAsync(owner, library, device, oldContentId, "op_windows_sync_old_branch", default), "content_not_authoritative");
+    }
+
+    private static async Task ExpectProblemAsync(Func<Task> action, string code)
+    {
+        try { await action(); }
+        catch (VersionControlProblem problem) when (problem.Code == code) { return; }
+        throw new InvalidOperationException("Expected Windows sync error: " + code);
     }
 
     private static async Task ExpectExpiredAsync(Func<Task> action)

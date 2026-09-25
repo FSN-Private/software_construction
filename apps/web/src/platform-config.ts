@@ -3,6 +3,7 @@ export interface PlatformConfig {
   readonly cognitoHostedUiUrl: string;
   readonly cognitoClientId: string;
   readonly redirectUri: string;
+  readonly galleryLibraryId?: string;
 }
 
 declare global {

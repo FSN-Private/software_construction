@@ -167,11 +167,11 @@ public sealed class GalleryRefreshService(NpgsqlDataSource db, S3ObjectStore sto
                 bool? boolean = type == "bool" && facet.State == "present" ? bool.Parse(facet.Value!) : null;
                 var text = type == "text" && facet.State == "present" ? (facet.Name == "location" ? facet.Value : GalleryMetadataReader.Normalize(facet.Value!)) : null;
                 await ExecuteAsync(connection, """
-                    INSERT INTO gallery_facet_values(owner_id,library_id,branch_name,generation,asset_id,facet,ordinal,source,value_state,source_sha256,text_value,number_value,date_value,bool_value,timestamp_basis)
-                    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                    INSERT INTO gallery_facet_values(owner_id,library_id,branch_name,generation,asset_id,facet,ordinal,source,value_state,source_sha256,text_value,number_value,date_value,bool_value,timestamp_basis,display_text)
+                    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
                     """, ct, owner, library, branch, generation, source.AssetId, facet.Name, ordinal++, facet.Source, facet.State,
                     facet.Source == "xmp" && source.Xmp is not null ? source.Xmp.Address.Sha256 : source.Original.Address.Sha256,
-                    text, number, date, boolean, facet.TimestampBasis);
+                    text, number, date, boolean, facet.TimestampBasis, type == "text" && facet.State == "present" ? facet.Value : null);
             }
         }
         await transaction.CommitAsync(ct);

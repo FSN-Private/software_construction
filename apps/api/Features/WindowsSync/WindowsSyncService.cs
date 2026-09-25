@@ -18,6 +18,28 @@ namespace Platform.Api.Features.WindowsSync;
 public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStore storage, WorkingService working)
 {
     private const long MaxXmpBytes = 16L * 1024 * 1024;
+    private const string SelectedNamespace = """
+        WITH selected AS (
+          SELECT s.owner_id,s.library_id,s.normalized_ref,s.asset_id,s.edit_id,
+                 COALESCE(w.current_content_sha256,s.content_sha256) AS content_sha256,w.id IS NOT NULL AS web_working
+          FROM vc_materialized_state s
+          JOIN assets a ON a.id=s.asset_id AND a.owner_id=s.owner_id AND a.state IN ('active','restored')
+          LEFT JOIN edit_identities e ON e.id=s.edit_id
+          LEFT JOIN vc_working_changes w ON w.owner_id=s.owner_id AND w.library_id=s.library_id AND w.branch_name=s.normalized_ref
+            AND w.client_id='__gallery_web__' AND w.asset_id=s.asset_id AND w.edit_id IS NOT DISTINCT FROM s.edit_id AND w.change_kind<>'deleted'
+          WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3 AND s.content_sha256 IS NOT NULL
+            AND (s.edit_id IS NULL OR e.state IN ('active','restored'))
+          UNION ALL
+          SELECT w.owner_id,w.library_id,w.branch_name,w.asset_id,w.edit_id,w.current_content_sha256,true
+          FROM vc_working_changes w
+          JOIN assets a ON a.id=w.asset_id AND a.owner_id=w.owner_id AND a.state IN ('active','restored')
+          JOIN edit_identities e ON e.id=w.edit_id AND e.state IN ('active','restored')
+          WHERE w.owner_id=$1 AND w.library_id=$2 AND w.branch_name=$3 AND w.client_id='__gallery_web__'
+            AND w.current_content_sha256 IS NOT NULL AND w.change_kind<>'deleted'
+            AND NOT EXISTS(SELECT 1 FROM vc_materialized_state s WHERE s.owner_id=w.owner_id AND s.library_id=w.library_id
+              AND s.normalized_ref=w.branch_name AND s.asset_id=w.asset_id AND s.edit_id IS NOT DISTINCT FROM w.edit_id)
+        )
+        """;
 
     public async Task<WindowsSyncDeviceView> RegisterAsync(string owner, string library, string device, string branchValue, string operationId, CancellationToken cancellationToken)
     {
@@ -25,6 +47,7 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch) is null) throw new VersionControlProblem("ref_not_found", 404);
         await ExecuteAsync(connection, "INSERT INTO windows_sync_devices(owner_id,library_id,device_id,normalized_ref) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,library_id,device_id) DO UPDATE SET normalized_ref=excluded.normalized_ref,cursor=NULL,version=windows_sync_devices.version+1,revoked=false,updated_at=now()", cancellationToken, owner, library, device, branch);
+        await ExecuteAsync(connection, "DELETE FROM windows_sync_device_content WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device);
         await AuditAsync(connection, owner, operationId, "windows-sync.device.registered", StableId(device), "accepted", cancellationToken);
         return await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
     }
@@ -33,6 +56,7 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         if (await ExecuteAsync(connection, "UPDATE windows_sync_devices SET revoked=true,version=version+1,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device) != 1) throw new VersionControlProblem("device_not_found", 404);
+        await ExecuteAsync(connection, "DELETE FROM windows_sync_device_content WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device);
         await AuditAsync(connection, owner, operationId, "windows-sync.device.revoked", StableId(device), "accepted", cancellationToken);
         return await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
     }
@@ -45,33 +69,34 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         await EnsureDeviceAsync(connection, owner, library, device, branch, cancellationToken);
         var head = ((string?)await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch))?.Trim() ?? throw new VersionControlProblem("ref_not_found", 404);
         var lifecycleRevision = Convert.ToInt64(await ScalarAsync(connection, "SELECT COALESCE((SELECT revision FROM windows_sync_owner_revisions WHERE owner_id=$1),0)", cancellationToken, owner), System.Globalization.CultureInfo.InvariantCulture);
-        var snapshot = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{head}\n{lifecycleRevision}")));
+        var overlayRevision = Convert.ToInt64(await ScalarAsync(connection, "SELECT COALESCE((SELECT revision FROM gallery_web_overlay_revisions WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3),0)", cancellationToken, owner, library, branch), System.Globalization.CultureInfo.InvariantCulture);
+        var snapshot = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{head}\n{lifecycleRevision}\n{overlayRevision}")));
         var cursor = WindowsSyncCursor.Decode(cursorValue);
         if (cursor is not null && cursor.Head != snapshot) throw new VersionControlProblem("cursor_expired");
 
-        await ExecuteAsync(connection, "INSERT INTO windows_sync_content_ids(content_sha256) SELECT DISTINCT content_sha256 FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3 AND content_sha256 IS NOT NULL ON CONFLICT DO NOTHING", cancellationToken, owner, library, branch);
-        await ExecuteAsync(connection, "INSERT INTO windows_sync_device_content(owner_id,library_id,device_id,content_id) SELECT $1,$2,$3,i.content_id FROM vc_materialized_state s JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256 WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$4 ON CONFLICT DO NOTHING", cancellationToken, owner, library, device, branch);
-        await using var command = Command(connection, """
-            SELECT s.asset_id,s.edit_id,i.content_id,p.display_path,s.content_sha256,o.byte_length,COALESCE(e.state,a.state),a.lifecycle_version,e.lifecycle_version,e.duplicate_ordinal
-            FROM vc_materialized_state s
+        await ExecuteAsync(connection, SelectedNamespace + "INSERT INTO windows_sync_content_ids(content_sha256) SELECT DISTINCT content_sha256 FROM selected ON CONFLICT DO NOTHING", cancellationToken, owner, library, branch);
+        await ExecuteAsync(connection, SelectedNamespace + "INSERT INTO windows_sync_device_content(owner_id,library_id,device_id,content_id) SELECT $1,$2,$4,i.content_id FROM selected s JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256 ON CONFLICT DO NOTHING", cancellationToken, owner, library, branch, device);
+        await using var command = Command(connection, SelectedNamespace + """
+            SELECT s.asset_id,s.edit_id,i.content_id,p.display_path,s.content_sha256,o.byte_length,COALESCE(e.state,a.state),a.lifecycle_version,e.lifecycle_version,e.duplicate_ordinal,s.web_working,
+                   EXISTS(SELECT 1 FROM vc_working_changes local WHERE local.owner_id=$1 AND local.library_id=$2 AND local.client_id=$7 AND local.branch_name=$3
+                     AND local.asset_id=s.asset_id AND local.edit_id IS NOT DISTINCT FROM s.edit_id AND local.current_content_sha256 IS DISTINCT FROM s.content_sha256) AS conflict
+            FROM selected s
             JOIN assets a ON a.id=s.asset_id
             LEFT JOIN edit_identities e ON e.id=s.edit_id
             JOIN LATERAL(SELECT display_path FROM asset_paths WHERE asset_id=s.asset_id AND active ORDER BY effective_from DESC,id DESC LIMIT 1) p ON true
             JOIN content_objects o ON o.sha256=s.content_sha256 AND o.integrity_state='authoritative'
             JOIN windows_sync_content_ids i ON i.content_sha256=s.content_sha256
-            WHERE s.owner_id=$1 AND s.library_id=$2 AND s.normalized_ref=$3
-              AND a.state IN ('active','restored') AND (s.edit_id IS NULL OR e.state IN ('active','restored'))
-              AND ($4::uuid IS NULL OR (s.asset_id,COALESCE(s.edit_id,'00000000-0000-0000-0000-000000000000'::uuid)) > ($4,COALESCE($5::uuid,'00000000-0000-0000-0000-000000000000'::uuid)))
+            WHERE ($4::uuid IS NULL OR (s.asset_id,COALESCE(s.edit_id,'00000000-0000-0000-0000-000000000000'::uuid)) > ($4,COALESCE($5::uuid,'00000000-0000-0000-0000-000000000000'::uuid)))
             ORDER BY s.asset_id,COALESCE(s.edit_id,'00000000-0000-0000-0000-000000000000'::uuid)
             LIMIT $6
-            """, owner, library, branch, cursor?.AssetId, cursor?.EditId, limit + 1);
+            """, owner, library, branch, cursor?.AssetId, cursor?.EditId, limit + 1, device);
         var result = new List<WindowsSyncNamespaceItem>(limit + 1);
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
             {
                 var edit = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
                 var path = edit.HasValue ? SidecarPath(reader.GetString(3), reader.GetInt32(9)) : reader.GetString(3);
-                result.Add(new(reader.GetGuid(0), edit, reader.GetGuid(2), path, reader.GetString(4).Trim(), reader.GetInt64(5), reader.GetString(6), reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8)));
+                result.Add(new(reader.GetGuid(0), edit, reader.GetGuid(2), path, reader.GetString(4).Trim(), reader.GetInt64(5), reader.GetString(6), reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8), reader.GetBoolean(10), reader.GetBoolean(11)));
             }
         var hasMore = result.Count > limit;
         if (hasMore) result.RemoveAt(result.Count - 1);
@@ -85,7 +110,7 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var branch = (string?)await ScalarAsync(connection, "SELECT normalized_ref FROM windows_sync_devices WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device) ?? throw new VersionControlProblem("device_not_found", 404);
         await EnsureDeviceAsync(connection, owner, library, device, branch, cancellationToken);
-        await using var command = Command(connection, "SELECT c.sha256,c.byte_length,c.storage_version FROM windows_sync_device_content d JOIN windows_sync_content_ids i ON i.content_id=d.content_id JOIN content_objects c ON c.sha256=i.content_sha256 AND c.integrity_state='authoritative' WHERE d.owner_id=$1 AND d.library_id=$2 AND d.device_id=$3 AND d.content_id=$4", owner, library, device, contentId);
+        await using var command = Command(connection, SelectedNamespace + "SELECT c.sha256,c.byte_length,c.storage_version FROM windows_sync_device_content d JOIN windows_sync_content_ids i ON i.content_id=d.content_id JOIN content_objects c ON c.sha256=i.content_sha256 AND c.integrity_state='authoritative' WHERE d.owner_id=$1 AND d.library_id=$2 AND d.device_id=$4 AND d.content_id=$5 AND EXISTS(SELECT 1 FROM selected s WHERE s.content_sha256=c.sha256)", owner, library, branch, device, contentId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new VersionControlProblem("content_not_authoritative", 404);
         var address = new ContentAddress(reader.GetString(0).Trim(), reader.GetInt64(1));
@@ -108,7 +133,11 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         var fingerprint = VersionControlIdempotency.Fingerprint(new { device, branch, asset, edit, path, baseSha256, expectedSha256, request.ContentLength });
         var replay = await VersionControlIdempotency.ReadAsync<WindowsSyncMutationView>(connection, owner, library, idempotencyKey, fingerprint, cancellationToken);
         if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
-        var current = (string?)await ScalarAsync(connection, "SELECT COALESCE((SELECT current_content_sha256 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6),(SELECT content_sha256 FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6))", cancellationToken, owner, library, device, branch, asset, edit);
+        var current = (string?)await ScalarAsync(connection, "SELECT COALESCE((SELECT current_content_sha256 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6),(SELECT current_content_sha256 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id='__gallery_web__' AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6),(SELECT content_sha256 FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6))", cancellationToken, owner, library, device, branch, asset, edit);
+        var localChange = await ScalarAsync(connection, "SELECT 1 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6", cancellationToken, owner, library, device, branch, asset, edit) is not null;
+        var webSha = (string?)await ScalarAsync(connection, "SELECT current_content_sha256 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id='__gallery_web__' AND branch_name=$3 AND asset_id=$4 AND edit_id IS NOT DISTINCT FROM $5", cancellationToken, owner, library, branch, asset, edit);
+        if (!localChange && webSha is not null && !string.Equals(webSha.Trim(), baseSha256, StringComparison.Ordinal))
+            throw new VersionControlProblem("working_state_conflict");
         if (string.Equals(current?.Trim(), expectedSha256, StringComparison.Ordinal))
         {
             var existingVersion = Convert.ToInt64(await ScalarAsync(connection, "SELECT version FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6", cancellationToken, owner, library, device, branch, asset, edit), System.Globalization.CultureInfo.InvariantCulture);

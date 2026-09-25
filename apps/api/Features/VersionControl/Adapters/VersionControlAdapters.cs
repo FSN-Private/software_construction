@@ -36,7 +36,8 @@ public static class VersionControlAdapters
             SELECT d.digest,
                    o.sha256 IS NOT NULL AND o.category='xmp' AND o.integrity_state='authoritative' AND o.storage_key<>'' AND o.storage_version IS NOT NULL
                      AND (EXISTS(SELECT 1 FROM edit_identities e JOIN assets a ON a.id=e.asset_id WHERE e.id=d.edit_id AND e.asset_id=d.asset_id AND a.owner_id=$2 AND e.xmp_sha256=o.sha256)
-                          OR EXISTS(SELECT 1 FROM upload_sessions u JOIN assets a ON a.id=u.asset_id WHERE u.owner_id=$2 AND a.owner_id=$2 AND u.asset_id=d.asset_id AND u.edit_id IS NOT DISTINCT FROM d.edit_id AND u.expected_sha256=o.sha256 AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL)),
+                          OR EXISTS(SELECT 1 FROM upload_sessions u JOIN assets a ON a.id=u.asset_id WHERE u.owner_id=$2 AND a.owner_id=$2 AND u.asset_id=d.asset_id AND u.edit_id IS NOT DISTINCT FROM d.edit_id AND u.expected_sha256=o.sha256 AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL)
+                          OR EXISTS(SELECT 1 FROM gallery_web_content g WHERE g.owner_id=$2 AND g.asset_id=d.asset_id AND g.edit_id=d.edit_id AND g.sha256=o.sha256)),
                    o.byte_length,o.storage_key,o.storage_version
             FROM digests d LEFT JOIN content_objects o ON o.sha256=d.digest
             """, requested, owner))

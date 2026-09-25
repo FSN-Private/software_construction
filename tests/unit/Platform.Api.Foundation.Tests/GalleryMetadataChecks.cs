@@ -1,5 +1,6 @@
 using System.Text;
 using Platform.Api.Features.Gallery.Metadata;
+using System.Text.Json;
 
 internal static class GalleryMetadataChecks
 {
@@ -58,6 +59,23 @@ internal static class GalleryMetadataChecks
         using var brokenOriginal = File.OpenRead("tests/fixtures/ingest/sample.jpg");
         using var broken = Xmp("<!DOCTYPE x [<!ENTITY probe SYSTEM 'file:///c:/windows/win.ini'>]><x>&probe;</x>");
         Check(GalleryMetadataReader.Read(brokenOriginal, "sample.jpg", broken).ParseStatus == "xmp_invalid", "External XML entities are rejected");
+
+        using var patch = JsonDocument.Parse("""
+            {"rating":4,"rejected":false,"color":2,"tags":["Night","Archive"],"title":"Edited title","description":"Edited description","location":{"latitude":40.5,"longitude":-74.25}}
+            """);
+        var patched = GalleryXmpPatcher.Patch(File.ReadAllBytes("tests/fixtures/ingest/sample.dng.xmp"),
+            patch.RootElement.EnumerateObject().ToDictionary(item => item.Name, item => item.Value));
+        var xml = Encoding.UTF8.GetString(patched);
+        Check(xml.Contains("history_modversion", StringComparison.Ordinal), "Unknown darktable history survives XMP patch");
+        using var patchedOriginal = File.OpenRead("tests/fixtures/ingest/sample.dng");
+        using var patchedSidecar = new MemoryStream(patched);
+        var parsedPatch = GalleryMetadataReader.Read(patchedOriginal, "sample.dng", patchedSidecar);
+        Check(parsedPatch.Fields["title"].Value == "Edited title" && parsedPatch.Fields["rating"].Value == "4" &&
+            parsedPatch.Fields["location"].State == "present" && parsedPatch.Tags.Count == 2 && parsedPatch.Colors.Single().Value == "2", "Patched values round trip through metadata reader");
+        using var unsupported = JsonDocument.Parse("{" + "\"history\":true}");
+        try { GalleryXmpPatcher.Patch([], unsupported.RootElement.EnumerateObject().ToDictionary(item => item.Name, item => item.Value)); }
+        catch (Platform.Api.Features.Gallery.Browse.GalleryProblem error) when (error.Code == "unsupported_metadata_field") { return; }
+        throw new InvalidOperationException("Gallery metadata: unsupported XMP field accepted");
     }
 
     private static MemoryStream Xmp(string value) => new(Encoding.UTF8.GetBytes(value));
