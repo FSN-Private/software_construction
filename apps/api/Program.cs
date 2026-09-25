@@ -20,6 +20,7 @@ using Platform.Api.Features.VersionControl.Visibility;
 using Platform.Api.Features.VersionControl.MergePublishing;
 using Platform.Api.Features.VersionControl.Projection;
 using Platform.Api.Features.WindowsSync;
+using Platform.Api.Features.Gallery.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,6 +65,8 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<MergeService>();
     builder.Services.AddSingleton<ProjectionService>();
     builder.Services.AddSingleton<WindowsSyncService>();
+    builder.Services.AddSingleton<GalleryRefreshService>();
+    builder.Services.AddHostedService<GalleryRefreshWorker>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());

@@ -5,6 +5,7 @@ using Npgsql;
 using Platform.Ingest.Worker;
 using Platform.Ingest.Worker.Verification;
 using Platform.Storage;
+using Platform.Api.Features.Gallery.Metadata;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using static Platform.Storage.IngestDb;
@@ -48,7 +49,7 @@ internal static class IngestChecks
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await DatabaseMigrator.ApplyAsync(migrationDb, runtimeRole, runtimePassword, default);
                 await using var count = migrationDb.CreateCommand("SELECT count(*) FROM platform_schema_migrations");
-                Check((long)(await count.ExecuteScalarAsync())! == 11, "Migration command applies each embedded release migration exactly once");
+                Check((long)(await count.ExecuteScalarAsync())! == 12, "Migration command applies each embedded release migration exactly once");
             }
             await using var runtimeDb = NpgsqlDataSource.Create($"Host=127.0.0.1;Port={port};Username={runtimeRole};Password={runtimePassword};Database=ingest;Search Path={commandSchema}");
             await using var runtimeGrants = runtimeDb.CreateCommand("SELECT count(DISTINCT privilege_type) FROM information_schema.role_table_grants WHERE grantee=current_user AND table_schema=current_schema() AND table_name='assets' AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')");
@@ -115,6 +116,24 @@ internal static class IngestChecks
         Check(await processor.ProcessNextAsync(default), "Worker claims the durable publication set");
         var outcome = await imports.StatusAsync(owner, batch.Id, default);
         Check(outcome.State == "completed" && outcome.Items.All(i => i.State == "active"), "Atomic mixed corpus publishes");
+        await new GalleryRefreshService(db, storage).RefreshAsync(owner, "main", "main", default);
+        await using (var galleryCount = db.CreateCommand("SELECT count(*) FROM gallery_projection WHERE owner_id='test-owner' AND projection_state='complete'"))
+            Check((long)(await galleryCount.ExecuteScalarAsync())! == 4, "Gallery refresh publishes all four imported originals");
+        await new GalleryRefreshService(db, storage).RefreshAsync(owner, "main", "main", default);
+        await using (var facets = db.CreateCommand("SELECT count(*) FROM gallery_facet_values WHERE owner_id='test-owner' AND facet='width' AND value_state='present'"))
+            Check((long)(await facets.ExecuteScalarAsync())! == 4, "Refresh replay keeps one complete facet set per asset");
+        await using (var invalidate = db.CreateCommand("UPDATE asset_paths SET display_path=display_path WHERE active AND asset_id=(SELECT asset_id FROM gallery_projection WHERE owner_id='test-owner' ORDER BY asset_id LIMIT 1)"))
+            await invalidate.ExecuteNonQueryAsync();
+        await using (var stale = db.CreateCommand("SELECT count(*) FROM gallery_projection WHERE owner_id='test-owner' AND projection_state='stale'"))
+            Check((long)(await stale.ExecuteScalarAsync())! == 1, "Source change immediately marks prior gallery record stale");
+        await new GalleryRefreshService(db, storage).RefreshAsync(owner, "main", "main", default);
+        await using (var recovered = db.CreateCommand("SELECT count(*) FROM gallery_projection WHERE owner_id='test-owner' AND projection_state='complete'"))
+            Check((long)(await recovered.ExecuteScalarAsync())! == 4, "Queued invalidation refreshes without mixing records");
+        await using (var interrupted = db.CreateCommand("UPDATE gallery_refresh SET state='running',last_asset_id=(SELECT asset_id FROM gallery_projection WHERE owner_id='test-owner' ORDER BY asset_id LIMIT 1),completed=1,failed=0 WHERE owner_id='test-owner' AND library_id='main' AND branch_name='main'"))
+            await interrupted.ExecuteNonQueryAsync();
+        await new GalleryRefreshService(db, storage).RefreshAsync(owner, "main", "main", default);
+        await using (var resumed = db.CreateCommand("SELECT completed FROM gallery_refresh WHERE owner_id='test-owner' AND library_id='main' AND branch_name='main'"))
+            Check((long)(await resumed.ExecuteScalarAsync())! == 4, "Interrupted refresh resumes from committed asset checkpoint");
         Check(!await processor.ProcessNextAsync(default), "Worker completion is idempotent");
         await using (var connection = await db.OpenConnectionAsync())
         {
