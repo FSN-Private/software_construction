@@ -1,6 +1,6 @@
 # Tasks: Gallery Metadata Search
 
-**Status**: Approved by project owner on 2026-09-25; implementation in progress.
+**Status**: Approved by project owner on 2026-09-25; local implementation and review complete on 2026-09-26.
 **Branch**: `feature/009-gallery-metadata-search`
 **Task IDs are stable after implementation begins.** Each completed task includes its test and documentation in the same work slice.
 
@@ -30,7 +30,7 @@
 
 ## Phase 4: Review (M4)
 
-- [ ] T016 Obtain the independent alternate-model adversarial review, independently validate and remediate findings, repeat until explicit agreement, record every round in `reviews/pre-push-review.md`, validate again, and commit M4. No push without separate authorization.
+- [x] T016 Obtain the independent alternate-model adversarial review, independently validate and remediate findings, repeat until explicit agreement, record every round in `reviews/pre-push-review.md`, validate again, and commit M4. No push without separate authorization. The alternate-model Round 4 review explicitly reported PASS on 2026-09-26; the final M4 review-only commit closes this task.
 
 ## Dependencies and traceability
 
