@@ -45,4 +45,16 @@ The alternate reviewer inspected the complete `origin/master..9294028` range and
 
 The reviewer also verified that stable `ci / backend` installs browser engines and runs the connected capacity check, `ci / web` runs the ordinary three-browser suite, the `locator` response correction matches the rendering contract, and the prior findings and dispositions remain preserved in this record. The reviewer requested that this agreement be appended and the record committed unchanged as M4.
 
-**Final gate: PASS.** Intended pending push scope is the seven feature commits in `origin/master..9294028` plus the review-only M4 commit to `origin/feature/009-gallery-metadata-search`. No push or merge has been requested or performed in this round; each still requires separate user authorization.
+**Round 4 gate: PASS.** The reviewed implementation range was the seven feature commits in `origin/master..9294028` plus the review-only M4 commit. No push or merge had been requested or performed in that round.
+
+## Delivery destination update
+
+On 2026-09-26 the owner explicitly requested push, PR, CI follow-up, and rebase merge on passing checks. Before pushing, `git ls-remote` showed that `origin/feature/009-gallery-metadata-search` already points to `cfcd140` from the abandoned feature-009 branch. Fetching that ref showed five commits unique to it and 150 commits unique to the current local branch because the old base predates squash merges. A normal push to that remote ref would be rejected; force-pushing would rewrite the stale branch. The owner had previously directed that the old branch be treated as stale, so it will be preserved untouched. The new PR head will be `origin/feature/009-gallery-metadata-search-fresh`, which does not yet exist. Local development remains on the matching `feature/009-gallery-metadata-search` branch.
+
+The pending push scope is the eight local commits in `origin/master..d31a050` plus this destination-record commit. No implementation file changed after the Round 4 PASS. No push or merge has occurred yet.
+
+## Round 5: final delivery-scope agreement
+
+The alternate reviewer inspected the destination update and local commit graph on 2026-09-26 and reported **PASS** for the eight reviewed commits plus this review-only destination-record commit to `origin/feature/009-gallery-metadata-search-fresh`. The reviewer agreed that a normal push preserves the stale remote branch and found no implementation change since Round 4. One non-blocking operational check remains: confirm that the fresh remote ref does not exist immediately before pushing, and use no `--force`.
+
+**Final adversarial gate: PASS.** Push and rebase merge are authorized by the owner's current request, subject to the requested PR CI passing. The record will be committed unchanged after the reviewer inspects this final text.
