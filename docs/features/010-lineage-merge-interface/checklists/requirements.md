@@ -32,4 +32,4 @@
 
 ## Notes
 
-All 16 checks pass after updating the spec against the merged 006, 008, and 009 contracts. The new acceptance cases cover gallery context, branch-scoped working changes, source and target staleness, and collapsed history. Product-owner approval of this revision remains required before planning or implementation.
+All 16 checks pass after updating the spec against the merged 006, 008, and 009 contracts. The new acceptance cases cover gallery context, branch-scoped working changes, source and target staleness, and collapsed history. The project owner approved this revision on 2026-09-26.

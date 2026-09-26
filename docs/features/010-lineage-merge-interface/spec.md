@@ -3,7 +3,7 @@
 **Feature Branch**: `feature/010-lineage-merge-interface`
 **Created**: 2026-09-03
 **Updated**: 2026-09-26
-**Status**: Draft — awaiting product-owner approval of this revision
+**Status**: Approved by project owner on 2026-09-26
 **Owner**: Project owner
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 
