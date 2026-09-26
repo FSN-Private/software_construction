@@ -2,6 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-09-03
+**Revalidated**: 2026-09-26
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -31,4 +32,4 @@
 
 ## Notes
 
-All 16 checks pass. Ready for product-owner approval, then clarification or planning.
+All 16 checks pass after updating the spec against the merged 006, 008, and 009 contracts. The new acceptance cases cover gallery context, branch-scoped working changes, source and target staleness, and collapsed history. Product-owner approval of this revision remains required before planning or implementation.
