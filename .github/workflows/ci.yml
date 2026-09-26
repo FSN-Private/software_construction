@@ -17,7 +17,7 @@ jobs:
   backend:
     name: ci / backend
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -40,7 +40,13 @@ jobs:
           VERSION_CONTROL_INTEGRATION: '1'
           VERSION_CONTROL_CAPACITY: '1'
         run: dotnet run --no-build --project tests/version-control/Platform.VersionControl.Tests.csproj
+      - run: npm --prefix apps/web ci --ignore-scripts
+      - name: Install browser engines for the live gallery reference
+        run: npx --prefix apps/web playwright install --with-deps chromium firefox msedge
       - name: Run ingest, gallery, and Windows-sync PostgreSQL/S3 checks
+        env:
+          GALLERY_CAPACITY: '1'
+          GALLERY_LIVE_BROWSER: '1'
         run: npm run test:ingest
       - name: Stop isolated ingest dependencies
         if: always()
@@ -51,7 +57,7 @@ jobs:
   web:
     name: ci / web
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -65,6 +71,10 @@ jobs:
       - run: npm --prefix apps/web run test
       - run: npm --prefix apps/web run test:accessibility
       - run: npm --prefix apps/web run build
+      - name: Install current browser engines
+        run: npx --prefix apps/web playwright install --with-deps chromium firefox msedge
+      - name: Check gallery in Chrome, Edge, and Firefox
+        run: npm --prefix apps/web run test:browser
 
   windows:
     name: ci / windows
