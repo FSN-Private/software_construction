@@ -153,9 +153,9 @@ function Thumbnail({
     )
       .then(async (response) => {
         if (!response.ok) throw new Error('Preview unavailable');
-        return (await response.json()) as { url: string };
+        return (await response.json()) as { locator: string };
       })
-      .then((result) => setUrl(result.url))
+      .then((result) => setUrl(result.locator))
       .catch(() => setUrl(undefined));
     return () => controller.abort();
   }, [baseUrl, token, library, card.previewState, card.previewRequestId]);
@@ -347,10 +347,10 @@ export function Gallery({
       throw new Error(
         'Full preview is pending; retry after rendering completes',
       );
-    const locator = await api<{ url: string }>(
+    const locator = await api<{ locator: string }>(
       `/renditions/${request.requestId}/derivative?library=${encodeURIComponent(library)}`,
     );
-    window.open(locator.url, '_blank', 'noopener,noreferrer');
+    window.open(locator.locator, '_blank', 'noopener,noreferrer');
   }
   async function updatePreference() {
     if (!preference) return;

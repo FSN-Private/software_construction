@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Amazon.S3;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -9,7 +10,7 @@ using static Platform.Storage.IngestDb;
 
 internal static class GalleryCapacityChecks
 {
-    public static async Task RunAsync(NpgsqlDataSource db)
+    public static async Task RunAsync(NpgsqlDataSource db, IAmazonS3 s3, string bucket)
     {
         const string owner = "gallery-capacity-owner", library = "capacity", branch = "main";
         await using var connection = await db.OpenConnectionAsync();
@@ -45,6 +46,8 @@ internal static class GalleryCapacityChecks
         var p95 = samples[(int)Math.Ceiling(samples.Count * 0.95) - 1];
         Console.WriteLine($"Gallery 100,000-asset server browse p95: {p95:F1} ms (25 measured runs; first 5 warmups; 40-card filtered page).");
         if (p95 >= 2000) throw new InvalidOperationException("Gallery 100,000-asset server browse p95 exceeded two seconds.");
+        if (Environment.GetEnvironmentVariable("GALLERY_LIVE_BROWSER") == "1")
+            await GalleryLiveBrowserChecks.RunAsync(db, s3, bucket, owner, library, sha);
     }
 
     private static async Task LongAsync(NpgsqlConnection connection, string sql, params object[] args)

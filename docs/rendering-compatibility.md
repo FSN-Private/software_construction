@@ -8,6 +8,8 @@ No renderer image or profile is approved until this record contains a reviewed i
 
 The active matrix version has one approved digest. Replacing it requires a new additive migration, immutable evidence, and owner approval; existing derivatives retain their original provenance and are never relabelled.
 
+Feature 009 consumer validation: the local `platform/darktable-renderer:5.6.1-runtime-candidate` successfully rendered a supported JPEG using gallery-patched XMP; the XMP checksum and unrelated `history_modversion` were preserved. This checks the gallery edit/renderer handoff only. It does not change the `rendering-v1` matrix status or replace the trusted Linux corpus and HTTP acceptance required by T026. See [feature 009 validation](features/009-gallery-metadata-search/validation.md).
+
 ## Prepared corpus input
 
 The native corpus uses `tests/rendering/corpus/IMG_9406.CR2`, the CC0 Canon EOS 1000D sample from raw.pixls.us. Its published SHA-256 is `08b0843a7968315b68bd3c71a96c952ebf275d5b5eba4b6094ae8b103522584c`; [the corpus provenance](../tests/rendering/corpus/PROVENANCE.md) records its source and license.
