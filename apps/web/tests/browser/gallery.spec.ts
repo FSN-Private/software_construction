@@ -710,7 +710,7 @@ test('500-version lineage keeps the first page bounded and usable', async ({
     },
   );
   const samples: number[] = [];
-  for (let run = 0; run < 20; run++) {
+  for (let run = 0; run < 25; run++) {
     const started = Date.now();
     await page.goto(`/?branch=main&asset=${assetOne}#id_token=fixture-token`);
     await page.getByRole('button', { name: 'View image history' }).click();

@@ -154,6 +154,13 @@ internal static class LineageIntegrationChecks
             Check(result.CommitId is not null, "Confirmation must create a commit.");
             var replay = await merge.ConfirmAsync(owner, library, "fixture", confirm, "lineage-confirm", "op-replay", default);
             Check(replay.CommitId == result.CommitId, "Duplicate confirmation must replay the same commit.");
+            var history = new LineageService(db, new RenderingService(db,
+                new VersionControlSelectedVersionResolver(new QueryService(db)), new ConfigurationBuilder().Build()), storage);
+            var mainHistory = await history.HistoryAsync(owner, library, asset, "main", false, 0, 100, default);
+            var sourceHistory = await history.HistoryAsync(owner, library, asset, "source", false, 0, 100, default);
+            Check(mainHistory.Nodes.Any(node => node.Commit.CommitId == source2.CommitId) &&
+                  sourceHistory.Nodes.All(node => node.Commit.CommitId != target2.CommitId),
+                "The indexed image history must import merge ancestry without mixing unrelated branch commits.");
             await using (var connection = await db.OpenConnectionAsync())
             {
                 Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_parents WHERE commit_id=$1", default, result.CommitId))! == 2,
@@ -169,6 +176,47 @@ internal static class LineageIntegrationChecks
                 await RejectCodeAsync(() => VersionControlAdapters.ValidateEntriesAsync(connection, owner,
                     [new(asset, edit, "modified", baseSha, new string('f', 64))], storage, default),
                     "content_not_authoritative");
+                await ExecuteAsync(connection,
+                    "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'lineage-index','lineage-index','branch',$3,false)",
+                    default, owner, library, result.CommitId);
+                Check((long)(await ScalarAsync(connection,
+                    "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index'",
+                    default, owner, library))! == mainHistory.Nodes.Count,
+                    "A branch created from existing history must backfill its reachability index.");
+                await ExecuteAsync(connection,
+                    "DELETE FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index'",
+                    default, owner, library);
+                await ExecuteAsync(connection,
+                    "SELECT vc_rebuild_lineage_reachable($1,$2,'lineage-index',$3::char(64))",
+                    default, owner, library, result.CommitId);
+                Check((long)(await ScalarAsync(connection,
+                    "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index'",
+                    default, owner, library))! == mainHistory.Nodes.Count,
+                    "The migration/recovery rebuild must reconstruct branch membership from immutable history.");
+                await ExecuteAsync(connection,
+                    "UPDATE vc_refs SET head_commit_id=$3 WHERE owner_id=$1 AND library_id=$2 AND normalized_name='lineage-index'",
+                    default, owner, library, root.CommitId);
+                Check((long)(await ScalarAsync(connection,
+                    "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index'",
+                    default, owner, library))! == 1,
+                    "A rewritten branch must remove displaced image commits from its index.");
+                await ExecuteAsync(connection,
+                    "UPDATE vc_refs SET head_commit_id=$3 WHERE owner_id=$1 AND library_id=$2 AND normalized_name='lineage-index'",
+                    default, owner, library, result.CommitId);
+                await ExecuteAsync(connection,
+                    "UPDATE vc_refs SET normalized_name='lineage-index-renamed' WHERE owner_id=$1 AND library_id=$2 AND normalized_name='lineage-index'",
+                    default, owner, library);
+                Check((long)(await ScalarAsync(connection,
+                    "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index-renamed'",
+                    default, owner, library))! == mainHistory.Nodes.Count,
+                    "Branch rename and rewrite must retain an exact image index.");
+                await ExecuteAsync(connection,
+                    "DELETE FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name='lineage-index-renamed'",
+                    default, owner, library);
+                Check((long)(await ScalarAsync(connection,
+                    "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='lineage-index-renamed'",
+                    default, owner, library))! == 0,
+                    "Deleting a branch must remove its derived image index.");
             }
             var overlapTargetSha = sourceSha;
             var overlapSourceSha = await StoreAsync(db, storage, Xmp("2", "base"));
@@ -211,9 +259,11 @@ internal static class LineageIntegrationChecks
                 await ExecuteAsync(connection, "DELETE FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id='device-conflict'",
                     default, owner, library);
             var operations = new OperationService(db, new QueryService(db), commits);
-            _ = await new WorkingService(db, storage).PutAsync(owner, library, "__gallery_web__",
+            var galleryWorking = await new WorkingService(db, storage).PutAsync(owner, library, "__gallery_web__",
                 new(asset, edit, "main", "modified", proposal.Affected.Single().ProposedXmpSha256,
                     target2Sha, "image.dng", "active", 0), "op-gallery-working", default);
+            var galleryStage = await new WorkingService(db, storage).StageAsync(owner, library, "__gallery_web__", "main",
+                new([galleryWorking.Id], result.CommitId, 0), "op-gallery-stage", default);
             Check((await operations.CheckoutStateAsync(owner, library, "__lineage_web__", default)).GalleryWorkingCount == 1,
                 "Browser checkout must see gallery web working changes.");
             await RejectCodeAsync(() => operations.CheckoutAsync(owner, library, "__lineage_web__",
@@ -238,6 +288,13 @@ internal static class LineageIntegrationChecks
                 "lineage-stash-restore", "op-stash-restore", default);
             Check((await operations.CheckoutStateAsync(owner, library, "__lineage_web__", default)).GalleryWorkingCount == 1,
                 "Restoring a web stash must restore the gallery working identity.");
+            await using (var connection = await db.OpenConnectionAsync())
+                Check((long)(await ScalarAsync(connection, """
+                    SELECT count(*) FROM vc_staging_sets s JOIN vc_staged_entries e ON e.staging_set_id=s.id
+                    WHERE s.id=$1 AND s.owner_id=$2 AND s.library_id=$3 AND s.client_id='__gallery_web__'
+                      AND s.status='open' AND e.working_change_id=$4
+                    """, default, galleryStage, owner, library, galleryWorking.Id))! == 1,
+                    "Restoring a web stash must reopen the gallery staging set and preserve its selected change.");
             _ = await new WorkingService(db, storage).PutAsync(owner, library, "second-device",
                 new(asset, edit, "main", "modified", proposal.Affected.Single().ProposedXmpSha256,
                     sourceSha, "image.dng", "active", 0), "op-device-conflict", default);

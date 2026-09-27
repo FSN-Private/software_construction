@@ -64,3 +64,9 @@ T001 precedes implementation. T002 and T004 establish server reads; T003 follows
 ## Phase 5: Convergence
 
 - [x] T017 Link successful tag create/remove reflog records to audit outcomes with an additive operation identifier and verify owner, tag name, affected commit, and outcome can be reconstructed by one operation ID (FR-018, AC-010; partial). — Migration 019 links exact reflog and audit event IDs; disposable integration checks both accepted tag actions and their operation IDs.
+
+## Phase 6: Pre-push review remediation
+
+- [x] T018 Replace unbounded initial history traversal with the indexed asset-entry lookup and a derived branch-reachability index, maintained atomically across branch create, commit, merge, rename, delete, and rewrite; verify exact lineage, pagination, migration backfill, and reference-scale first-page behavior (NFR-001/014, SC-003; review B-001).
+- [x] T019 Restore every allowed client staging set in a preserved web stash, and verify a staged gallery change remains staged after branch switch and restore (FR-021, AC-013; review N-001).
+- [ ] T020 Run affected .NET, PostgreSQL/S3, browser, capacity, and documentation checks; update validation and review dispositions, commit remediation milestone, and obtain a fresh independent pre-push review of the full revised range (NFR-001/010/014, SC-003; review B-001/N-001). Validation complete; review pending.

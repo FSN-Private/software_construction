@@ -24,26 +24,31 @@ public sealed class LineageService(NpgsqlDataSource dataSource, RenderingService
         var head = await QueryService.ResolveAsync(connection, owner, library, branch, cancellationToken);
         var commits = new List<CommitView>();
         await using (var command = Command(connection, """
-            WITH RECURSIVE reachable(id) AS (
-                SELECT $3::char(64)
-                UNION
-                SELECT parent.parent_id FROM reachable r JOIN vc_commit_parents parent ON parent.commit_id=r.id
-            ), matched(id) AS (
-                SELECT DISTINCT entry.commit_id FROM vc_commit_entries entry JOIN reachable r ON r.id=entry.commit_id WHERE entry.asset_id=$4
-            ), connecting(id) AS (
-                SELECT id FROM matched
-                UNION
-                SELECT parent.commit_id FROM vc_commit_parents parent JOIN connecting child ON child.id=parent.parent_id JOIN reachable r ON r.id=parent.commit_id
+            WITH image AS MATERIALIZED (SELECT DISTINCT commit_id FROM vc_commit_entries WHERE asset_id=$4),
+            eligible AS MATERIALIZED (
+                SELECT image.commit_id, reachable.received_at FROM image
+                JOIN LATERAL (
+                    SELECT received_at FROM vc_lineage_reachable lineage
+                    WHERE lineage.owner_id=$1 AND lineage.library_id=$2 AND lineage.normalized_ref=$3
+                      AND lineage.commit_id=image.commit_id
+                    OFFSET 0
+                ) reachable ON true
+            ), page AS MATERIALIZED (
+                SELECT eligible.commit_id,eligible.received_at,COALESCE(visibility.hidden,false) AS hidden
+                FROM eligible
+                LEFT JOIN vc_visibility visibility ON visibility.commit_id=eligible.commit_id
+                    AND visibility.owner_id=$1 AND visibility.library_id=$2
+                WHERE $5 OR NOT COALESCE(visibility.hidden,false)
+                ORDER BY eligible.received_at DESC,eligible.commit_id
+                OFFSET $6 LIMIT $7
             )
-            SELECT commit.id,commit.manifest_bytes,COALESCE(visibility.hidden,false)
-            FROM connecting c JOIN vc_commits commit ON commit.id=c.id AND commit.owner_id=$1 AND commit.library_id=$2
-            LEFT JOIN vc_visibility visibility ON visibility.commit_id=commit.id AND visibility.owner_id=$1 AND visibility.library_id=$2
-            WHERE $5 OR NOT COALESCE(visibility.hidden,false)
-            ORDER BY commit.received_at DESC,commit.id
-            OFFSET $6 LIMIT $7
-            """, owner, library, head, asset, showHidden, offset, limit + 1))
+            SELECT commit.id,commit.manifest_bytes,page.hidden
+            FROM page JOIN vc_commits commit ON commit.id=page.commit_id
+                AND commit.owner_id=$1 AND commit.library_id=$2
+            ORDER BY page.received_at DESC,page.commit_id
+            """, owner, library, branch, asset, showHidden, offset, limit + 1))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-            while (await reader.ReadAsync(cancellationToken)) commits.Add(ReadCommit(reader, library));
+            while (await reader.ReadAsync(cancellationToken)) commits.Add(ReadCommit(reader, library, asset));
 
         var commitIds = commits.Select(commit => commit.CommitId).ToArray();
         var refs = new List<RefView>();
@@ -92,7 +97,7 @@ public sealed class LineageService(NpgsqlDataSource dataSource, RenderingService
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
             {
-                var commit = ReadCommit(reader, library);
+                var commit = ReadCommit(reader, library, asset);
                 graph.Add(commit.CommitId, new(commit.CommitId, commit.Parents, commit.AuthorId, commit.AuthoredAt,
                     commit.ReceivedAt, commit.Message, commit.Changes, commit.Hidden));
             }
@@ -162,7 +167,7 @@ public sealed class LineageService(NpgsqlDataSource dataSource, RenderingService
     private static bool IsCommitId(string? value) => value is { Length: 64 } &&
         value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
-    private static CommitView ReadCommit(NpgsqlDataReader reader, string library)
+    private static CommitView ReadCommit(NpgsqlDataReader reader, string library, Guid asset)
     {
         var id = reader.GetString(0).Trim();
         var bytes = (byte[])reader[1];
@@ -172,7 +177,8 @@ public sealed class LineageService(NpgsqlDataSource dataSource, RenderingService
             if (VersionControlManifestCodec.Digest(bytes) != id || !VersionControlManifestCodec.Write(manifest).AsSpan().SequenceEqual(bytes) || manifest.LibraryId != library)
                 throw new VersionControlProblem("graph_corrupt");
             return new(id, manifest.Parents, manifest.AuthorId, manifest.AuthoredAt, manifest.ReceivedAt, manifest.Message,
-                manifest.Entries.Select(entry => new ChangeView(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)).ToArray(), reader.GetBoolean(2));
+                manifest.Entries.Where(entry => entry.AssetId == asset)
+                    .Select(entry => new ChangeView(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)).ToArray(), reader.GetBoolean(2));
         }
         catch (VersionControlProblem) { throw; }
         catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or NotSupportedException or InvalidOperationException or KeyNotFoundException)

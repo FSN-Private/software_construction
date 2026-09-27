@@ -189,7 +189,8 @@ export function Lineage({
       <p>
         Image <code>{asset}</code> on branch <strong>{branch}</strong>. This is
         an image-filtered view of library-wide commits; parent IDs remain the
-        exact library history.
+        exact library history. A parent ID absent from this view is an unshown
+        library commit.
       </p>
       {page && (
         <p>
