@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { idToken, platformConfig } from './platform-config';
 import { Library } from './Library';
 import { Gallery } from './Gallery';
+import { reauthenticationReturnPath } from './recent-auth';
 
 type Status = {
   ready?: string;
@@ -21,10 +22,11 @@ export function App() {
 
   useEffect(() => {
     if (!config || !token) return;
+    const returnPath = reauthenticationReturnPath();
     window.history.replaceState(
       {},
       document.title,
-      window.location.pathname + window.location.search,
+      returnPath ?? window.location.pathname + window.location.search,
     );
     const headers = {
       Authorization: `Bearer ${token}`,

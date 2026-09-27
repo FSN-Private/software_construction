@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Lineage } from './Lineage';
 import './gallery.css';
 
 type Card = {
@@ -425,6 +426,32 @@ export function Gallery({
     }
   }
 
+  if (selected && params.get('history') === '1')
+    return (
+      <Lineage
+        key={`${selected}/${params.get('branch') ?? 'main'}`}
+        baseUrl={baseUrl}
+        token={token}
+        library={library}
+        asset={selected}
+        branch={params.get('branch') ?? 'main'}
+        onSwitchBranch={(nextBranch) => {
+          const next = new URLSearchParams(location);
+          next.set('branch', nextBranch);
+          next.delete('cursor');
+          navigate(next);
+        }}
+        onBack={() => {
+          if (window.history.state?.galleryHistory) window.history.back();
+          else {
+            const next = new URLSearchParams(location);
+            next.delete('history');
+            navigate(next);
+          }
+        }}
+      />
+    );
+
   return (
     <section aria-labelledby="gallery-heading" className="gallery">
       <h2 id="gallery-heading">Gallery</h2>
@@ -516,6 +543,16 @@ export function Gallery({
             </p>
           )}
           <div className="gallery-actions">
+            <button
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(location);
+                next.set('history', '1');
+                navigate(next, { galleryHistory: true });
+              }}
+            >
+              View image history
+            </button>
             <button
               type="button"
               disabled={busy}

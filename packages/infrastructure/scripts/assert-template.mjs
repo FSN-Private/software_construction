@@ -81,8 +81,9 @@ if (iamCallbacks.length !== 3 || !iamCallbacks.every((route) => route.Properties
 const canonicalRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/deployment-recovery.md';
 const ingestRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/ingest-storage.md';
 const versionControlRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/version-control-integrity.md';
+const lineageRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/lineage-operations.md';
 const renderingRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/rendering-operations.md';
-if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').some((resource) => !resource.Properties?.AlarmDescription?.includes(canonicalRunbook) && !resource.Properties?.AlarmDescription?.includes(ingestRunbook) && !resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && !resource.Properties?.AlarmDescription?.includes(renderingRunbook))) throw new Error('Every operations alarm must identify its canonical recovery runbook.');
+if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').some((resource) => !resource.Properties?.AlarmDescription?.includes(canonicalRunbook) && !resource.Properties?.AlarmDescription?.includes(ingestRunbook) && !resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && !resource.Properties?.AlarmDescription?.includes(lineageRunbook) && !resource.Properties?.AlarmDescription?.includes(renderingRunbook))) throw new Error('Every operations alarm must identify its canonical recovery runbook.');
 if (resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm').filter((resource) => resource.Properties?.AlarmDescription?.includes(renderingRunbook)).length < 2) throw new Error('Renderer queue age and dead-letter alarms must link the rendering runbook.');
 for (const metric of ['Quarantined', 'Repairs', 'IntegrityDrift']) {
   if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === metric)) throw new Error(`Ingest operations require the ${metric} metric filter.`);
@@ -94,6 +95,11 @@ for (const metric of ['IntegrityFailures', 'IntegrityHeartbeats']) {
 const versionControlHeartbeatAlarm = resources.find((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(versionControlRunbook) && resource.Properties?.TreatMissingData === 'breaching');
 if (!versionControlHeartbeatAlarm) throw new Error('Version-control heartbeat loss must alert within fifteen minutes and link its runbook.');
 if (versionControlHeartbeatAlarm.Properties.ActionsEnabled !== false) throw new Error('Non-production heartbeat actions must stay disabled until a healthy application deployment enables them.');
+for (const metric of ['Failures', 'SlowRequests', 'GraphSize', 'Comparisons', 'MergePrepares', 'MergeConflicts', 'MergeConfirms', 'RewriteAttempts']) {
+  if (!resources.some((resource) => resource.Type === 'AWS::Logs::MetricFilter' && resource.Properties?.MetricTransformations?.[0]?.MetricName === metric)) throw new Error(`Lineage operations require the ${metric} metric filter.`);
+}
+const lineageAlarms = resources.filter((resource) => resource.Type === 'AWS::CloudWatch::Alarm' && resource.Properties?.AlarmDescription?.includes(lineageRunbook));
+if (lineageAlarms.length !== 2 || lineageAlarms.some((alarm) => alarm.Properties?.Period !== 300 || alarm.Properties?.EvaluationPeriods !== 3)) throw new Error('Sustained lineage failure and latency must alert within fifteen minutes.');
 const budget = resources.find((resource) => resource.Type === 'AWS::Budgets::Budget');
 if (budget?.Properties?.NotificationsWithSubscribers?.length !== 2) throw new Error('Budget must alert at 80% and 100%.');
 if (Number(budget?.Properties?.Budget?.BudgetLimit?.Amount) > 25) throw new Error('Non-production monthly budget must not exceed USD 25.');

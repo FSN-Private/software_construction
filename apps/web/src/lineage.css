@@ -1,0 +1,66 @@
+.lineage {
+  margin-block: 1rem;
+}
+.lineage code,
+.lineage td {
+  overflow-wrap: anywhere;
+}
+.lineage-graph {
+  list-style: none;
+  padding-inline-start: 1.5rem;
+  border-inline-start: 0.2rem solid #526d88;
+}
+.lineage-graph li {
+  position: relative;
+  padding: 0.6rem;
+  margin-block: 0.8rem;
+  border: 1px solid #94a4b4;
+}
+.lineage-graph li::before {
+  content: '';
+  position: absolute;
+  border-block-start: 0.2rem solid #526d88;
+  width: 1.5rem;
+  inset-inline-start: -1.5rem;
+  inset-block-start: 1.3rem;
+}
+.lineage-table-scroll {
+  overflow-x: auto;
+}
+.lineage-comparison {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+.lineage-comparison img {
+  max-width: 100%;
+}
+.lineage table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.lineage th,
+.lineage td {
+  border: 1px solid #94a4b4;
+  padding: 0.4rem;
+  text-align: start;
+}
+.lineage :focus-visible {
+  outline: 3px solid #1260c4;
+  outline-offset: 3px;
+}
+.lineage > section,
+.lineage > section > section {
+  border-block-start: 1px solid #94a4b4;
+  padding-block: 1rem;
+}
+.lineage label {
+  display: block;
+  margin-block: 0.4rem;
+}
+.lineage pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+}
