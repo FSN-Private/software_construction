@@ -82,6 +82,62 @@ try {
   )
     throw new Error('Gallery loading and errors must be announced.');
   console.log('Rendered gallery accessibility checks passed.');
+  const { Comparison } = await server.ssrLoadModule('/src/Comparison.tsx');
+  const comparison = renderToStaticMarkup(
+    createElement(Comparison, {
+      baseUrl: 'https://example.invalid',
+      token: 'test-only',
+      library: 'main',
+      value: {
+        targetCommitId: 'a'.repeat(64),
+        sourceCommitId: 'b'.repeat(64),
+        baseCommitId: null,
+        targetStates: [
+          {
+            commitId: 'a'.repeat(64),
+            assetId: '10000000-0000-0000-0000-000000000001',
+            editId: '30000000-0000-0000-0000-000000000001',
+            xmpSha256: 'c'.repeat(64),
+            path: 'image.raw',
+            lifecycle: 'active',
+            previewState: 'failed',
+            previewRequestId: null,
+            previewProvenance: null,
+          },
+        ],
+        sourceStates: [],
+        differences: [],
+      },
+    }),
+  );
+  if (
+    !comparison.includes('aria-labelledby="comparison-heading"') ||
+    !comparison.includes('aria-label="Target preview"') ||
+    !comparison.includes('Preview: failed') ||
+    !comparison.includes('No XMP, path, or lifecycle differences')
+  )
+    throw new Error(
+      'Comparison must retain textual and accessible preview status.',
+    );
+  console.log('Rendered lineage comparison accessibility checks passed.');
+  const { MergeReview } = await server.ssrLoadModule('/src/MergeReview.tsx');
+  const merge = renderToStaticMarkup(
+    createElement(MergeReview, {
+      baseUrl: 'https://example.invalid',
+      token: 'test-only',
+      library: 'main',
+      targetBranch: 'main',
+      targetHead: 'a'.repeat(64),
+      onPublished: () => {},
+    }),
+  );
+  if (
+    !merge.includes('aria-labelledby="merge-review-heading"') ||
+    !merge.includes('Source branch') ||
+    !merge.includes('Prepare merge')
+  )
+    throw new Error('Merge review must expose labelled keyboard controls.');
+  console.log('Rendered merge review accessibility checks passed.');
 } finally {
   await server.close();
   delete globalThis.sessionStorage;
