@@ -48,7 +48,7 @@
 
 - Manual keyboard and screen-reader exercise against the deployed UI, plus a formal WCAG 2.2 AA review, still require a human and assistive technology environment.
 - Pre-production rollout/rollback with the deployed Cognito hosted UI logout-to-login path, live alert delivery, and production-like 1-million-entry load require release authorization and environment access. The local persisted reference-scale fixture verifies the query and migration behavior, but does not claim that deployment exercise.
-- No push was requested. An alternate-model review was run for readiness; the initial performance finding, hidden-ancestry finding, and sparse-history performance finding have been remediated and await independent follow-up review.
+- No push was requested. The alternate-model review outcome and each finding disposition are recorded in `reviews/pre-push-review.md`; its gate does not authorize a push.
 
 ## Convergence
 
