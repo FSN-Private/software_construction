@@ -440,6 +440,7 @@ async function fixture(
           headCommitId: visible,
           offset: 0,
           nextOffset: null,
+          hasHiddenHistory: !showHidden,
           nodes: [
             {
               commit: {
@@ -452,7 +453,7 @@ async function fixture(
               },
               branches: ['main'],
               tags: ['favorite'],
-              hiddenParentIds: showHidden ? [] : [hidden],
+              hiddenParentIds: [],
             },
             ...(showHidden
               ? [
@@ -613,9 +614,9 @@ test('gallery history retains browse context and exposes graph and table', async
       name: 'Exact commits and parent relationships for this image',
     }),
   ).toBeVisible();
-  await expect(page.getByText(/Hidden ancestry:/)).toContainText(
-    '2'.repeat(64),
-  );
+  await expect(
+    page.getByText(/Hidden image history exists on this branch/),
+  ).toBeVisible();
   await page.getByRole('checkbox', { name: 'Show hidden commits' }).check();
   await expect(
     page.getByRole('button', { name: /Intermediate edit/ }),

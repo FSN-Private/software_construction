@@ -5,7 +5,8 @@ namespace Platform.Contracts.Lineage;
 
 public sealed record LineageNodeView(CommitView Commit, IReadOnlyList<string> Branches, IReadOnlyList<string> Tags, IReadOnlyList<string> HiddenParentIds);
 
-public sealed record LineagePageView(Guid AssetId, string Branch, string HeadCommitId, bool ShowHidden, int Offset, int? NextOffset, IReadOnlyList<LineageNodeView> Nodes);
+public sealed record LineagePageView(Guid AssetId, string Branch, string HeadCommitId, bool ShowHidden, int Offset, int? NextOffset,
+    IReadOnlyList<LineageNodeView> Nodes, bool HasHiddenHistory);
 
 public sealed record ImageVersionView(string CommitId, Guid AssetId, Guid? EditId, string? XmpSha256, string? Path, string? Lifecycle,
     string PreviewState, Guid? PreviewRequestId = null, RenderProvenance? PreviewProvenance = null);
