@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Platform.Api.Features.VersionControl.Integrity;
 using Platform.Api.Features.VersionControl.Publishing;
@@ -11,6 +12,7 @@ using Platform.Api.Features.VersionControl.Visibility;
 using Platform.Api.Features.VersionControl.MergePublishing;
 using Platform.Api.Features.VersionControl.Projection;
 using Platform.Api.Telemetry;
+using Platform.Api.Features.Lineage;
 using Platform.Contracts;
 using Platform.Contracts.VersionControl;
 
@@ -41,14 +43,31 @@ public static class VersionControlEndpoints
         group.MapDelete("/refs/{**name}", async (HttpContext context, string library, string name, [FromBody] RefRequest request, CancellationToken cancellationToken) => Results.Ok(await Service<RefService>(context).DeleteAsync(Owner(context), library, name, request with { ExpectedVersion = Version(context) }, IdempotencyKey(context), OperationId(context), cancellationToken)));
         group.MapGet("/graph/{**reference}", async (HttpContext context, string library, string reference, Guid? asset, bool showHidden, int offset, int limit, CancellationToken cancellationToken) => Results.Ok(await Service<QueryService>(context).ProjectAsync(Owner(context), library, reference, asset, showHidden, offset, limit == 0 ? 100 : limit, cancellationToken)));
         group.MapGet("/compare", async (HttpContext context, string library, string ours, string theirs, CancellationToken cancellationToken) => Results.Ok(await Service<QueryService>(context).CompareAsync(Owner(context), library, ours, theirs, cancellationToken)));
-        group.MapPost("/checkout", async (HttpContext context, string library, CheckoutRequest request, CancellationToken cancellationToken) => Results.Ok(await Service<OperationService>(context).CheckoutAsync(Owner(context), library, Client(context), request with { ExpectedVersion = Version(context) }, IdempotencyKey(context), OperationId(context), cancellationToken)));
+        group.MapGet("/checkout", async (HttpContext context, string library, CancellationToken cancellationToken) => Results.Ok(await Service<OperationService>(context).CheckoutStateAsync(Owner(context), library, Client(context), cancellationToken)));
+        group.MapPost("/checkout", async (HttpContext context, string library, CheckoutRequest request, CancellationToken cancellationToken) => Results.Ok(await Service<OperationService>(context).CheckoutAsync(Owner(context), library, Client(context), request with { ExpectedVersion = CheckoutVersion(context) }, IdempotencyKey(context), OperationId(context), cancellationToken)));
         group.MapGet("/stashes", async (HttpContext context, string library, CancellationToken cancellationToken) => Results.Ok(await Service<OperationService>(context).ListStashesAsync(Owner(context), library, Client(context), cancellationToken)));
         group.MapPost("/stashes/{stashId:guid}/restore", async (HttpContext context, string library, Guid stashId, CancellationToken cancellationToken) => Results.Ok(await Service<OperationService>(context).RestoreStashAsync(Owner(context), library, Client(context), stashId, IdempotencyKey(context), OperationId(context), cancellationToken)));
         group.MapPost("/restore", async (HttpContext context, string library, RestoreRequest request, CancellationToken cancellationToken) => Results.Created($"/v1/libraries/{library}/version-control/commits", await Service<OperationService>(context).RestoreAsync(Owner(context), library, Client(context), request, IdempotencyKey(context), OperationId(context), cancellationToken)));
         group.MapGet("/rewrite/preview", async (HttpContext context, string library, string branch, string newHead, CancellationToken cancellationToken) => Results.Ok(await Service<RewriteService>(context).PreviewAsync(Owner(context), library, branch, newHead, cancellationToken)));
-        group.MapPost("/rewrite", async (HttpContext context, string library, RewriteRequest request, CancellationToken cancellationToken) => Results.Ok(await Service<RewriteService>(context).ApplyAsync(Owner(context), library, request, IdempotencyKey(context), OperationId(context), cancellationToken)));
-        group.MapPost("/recovery/{reflogId:guid}", async (HttpContext context, string library, Guid reflogId, RefRequest request, CancellationToken cancellationToken) => Results.Created($"/v1/libraries/{library}/version-control/refs/{request.Name}", await Service<RewriteService>(context).RecoverAsync(Owner(context), library, reflogId, request.Name, IdempotencyKey(context), OperationId(context), cancellationToken)));
-        group.MapPost("/recovery/expire", async (HttpContext context, string library, CancellationToken cancellationToken) => Results.Ok(new { expired = await Service<RewriteService>(context).ExpireAsync(Owner(context), library, cancellationToken), operationId = OperationId(context) }));
+        group.MapPost("/rewrite", async (HttpContext context, string library, RewriteRequest request, CancellationToken cancellationToken) =>
+        {
+            LineageTelemetry.RewriteAttempts.Add(1);
+            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Platform.Lineage")
+                .LogInformation("Lineage rewrite attempt {AuditEventType} {OperationId}",
+                    "lineage.rewrite.attempted", OperationId(context));
+            RecentAuthentication.Require(context);
+            return Results.Ok(await Service<RewriteService>(context).ApplyAsync(Owner(context), library, request, IdempotencyKey(context), OperationId(context), cancellationToken));
+        });
+        group.MapPost("/recovery/{reflogId:guid}", async (HttpContext context, string library, Guid reflogId, RefRequest request, CancellationToken cancellationToken) =>
+        {
+            RecentAuthentication.Require(context);
+            return Results.Created($"/v1/libraries/{library}/version-control/refs/{request.Name}", await Service<RewriteService>(context).RecoverAsync(Owner(context), library, reflogId, request.Name, IdempotencyKey(context), OperationId(context), cancellationToken));
+        });
+        group.MapPost("/recovery/expire", async (HttpContext context, string library, CancellationToken cancellationToken) =>
+        {
+            RecentAuthentication.Require(context);
+            return Results.Ok(new { expired = await Service<RewriteService>(context).ExpireAsync(Owner(context), library, cancellationToken), operationId = OperationId(context) });
+        });
         group.MapGet("/reflog", async (HttpContext context, string library, CancellationToken cancellationToken) => Results.Ok(await Service<RewriteService>(context).ListAsync(Owner(context), library, cancellationToken)));
         group.MapPut("/visibility", async (HttpContext context, string library, VisibilityRequest request, CancellationToken cancellationToken) => Results.Ok(await Service<VisibilityService>(context).SetAsync(Owner(context), library, request, OperationId(context), cancellationToken)));
         group.MapPost("/merges", async (HttpContext context, string library, MergeRequest request, CancellationToken cancellationToken) => Results.Created($"/v1/libraries/{library}/version-control/commits", await Service<MergeService>(context).PublishAsync(Owner(context), library, Client(context), request, IdempotencyKey(context), OperationId(context), cancellationToken)));
@@ -81,22 +100,65 @@ public static class VersionControlEndpoints
     internal static string Client(HttpContext context) => !string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]) ? context.Request.Headers["X-Client-Id"].ToString() : throw new VersionControlProblem("client_id_required", 400);
     internal static string IdempotencyKey(HttpContext context) => context.Request.Headers[RequestContracts.IdempotencyHeader].ToString();
     internal static long Version(HttpContext context) => RequestContracts.TryGetLifecycleVersion(context, out var version) ? version : throw new VersionControlProblem("lifecycle_version_required", 400);
+    private static long CheckoutVersion(HttpContext context) =>
+        long.TryParse(context.Request.Headers[RequestContracts.LifecycleVersionHeader].FirstOrDefault()?.Trim('"'),
+            System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var version) && version >= 0
+            ? version : throw new VersionControlProblem("lifecycle_version_required", 400);
 }
 
-public sealed class VersionControlGuard(ILogger<VersionControlGuard> logger) : IEndpointFilter
+public sealed class VersionControlGuard(ILogger<VersionControlGuard> logger, IConfiguration configuration) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
     {
         var context = invocation.HttpContext;
-        try { return await next(invocation); }
+        var lineage = context.Request.Path.Value?.Contains("/lineage/", StringComparison.Ordinal) == true;
+        var started = Stopwatch.GetTimestamp();
+        if (LineageMutationGate.Blocked(configuration, context.Request.Method, context.Request.Path))
+            return VersionControlEndpoints.Problem(context, "history_mutations_disabled", 503, "History changes are temporarily unavailable");
+        try
+        {
+            var result = await next(invocation);
+            if (lineage)
+            {
+                var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                LineageTelemetry.OperationDuration.Record(duration);
+                var budgetMs = context.Request.Path.Value?.EndsWith("/history", StringComparison.Ordinal) == true ? 2000 : 3000;
+                if (duration >= budgetMs)
+                    logger.LogWarning("Lineage request slow {AuditEventType} {OperationId} {DurationMs}",
+                        "lineage.operation.slow", VersionControlEndpoints.OperationId(context), duration);
+            }
+            return result;
+        }
         catch (VersionControlProblem error)
         {
+            if (lineage)
+            {
+                if (error.Code is "stale_head" or "stale_review" or "stale_working_state") LineageTelemetry.StaleRejects.Add(1);
+                logger.LogWarning("Lineage request rejected {AuditEventType} {OperationId} {ReasonCode}",
+                    "lineage.operation.failed", VersionControlEndpoints.OperationId(context), error.Code);
+            }
             logger.LogWarning("Version-control request rejected {AuditEventType} {OperationId} {ReasonCode}", "version-control.rejected", VersionControlEndpoints.OperationId(context), error.Code);
             return VersionControlEndpoints.Problem(context, error.Code, error.Status, error.Code.Replace('_', ' '), new(error.Extensions));
         }
         catch (Npgsql.NpgsqlException)
         {
+            if (lineage) logger.LogWarning("Lineage dependency failed {AuditEventType} {OperationId}",
+                "lineage.operation.failed", VersionControlEndpoints.OperationId(context));
             return VersionControlEndpoints.Problem(context, "version_control_unavailable", 503, "Version control is unavailable; retry with the same request");
         }
+    }
+}
+
+public static class LineageMutationGate
+{
+    public static bool Blocked(IConfiguration configuration, string method, PathString path)
+    {
+        if (configuration.GetValue<bool?>("Lineage:MutationsEnabled") != false ||
+            method is "GET" or "HEAD" or "OPTIONS") return false;
+        var value = path.Value ?? "";
+        if (value.EndsWith("/lineage/merges/prepare", StringComparison.Ordinal) ||
+            value.EndsWith("/lineage/merges/review", StringComparison.Ordinal)) return false;
+        return value.Contains("/version-control/", StringComparison.Ordinal) ||
+               value.Contains("/lineage/", StringComparison.Ordinal);
     }
 }

@@ -29,7 +29,8 @@ public sealed class ManifestService(NpgsqlDataSource db)
             ["holds"] = "SELECT h.* FROM lifecycle_holds h JOIN assets a ON a.id=h.asset_id WHERE a.owner_id=$1 ORDER BY h.id",
             ["audit"] = "SELECT e.* FROM audit_events e WHERE owner_id=$1 ORDER BY id",
             ["provenance"] = "SELECT s.id,s.batch_id,s.asset_id,s.edit_id,s.expected_sha256,s.expected_length,s.category,s.operation_id,s.verified_at FROM upload_sessions s WHERE s.owner_id=$1 AND s.state='completed' ORDER BY s.id",
-            ["objects"] = "SELECT c.* FROM content_objects c WHERE c.sha256 IN (SELECT original_sha256 FROM assets WHERE owner_id=$1 UNION SELECT e.xmp_sha256 FROM edit_identities e JOIN assets a ON a.id=e.asset_id WHERE a.owner_id=$1) ORDER BY c.sha256"
+            ["merge_provenance"] = "SELECT m.* FROM lineage_merge_content m WHERE m.owner_id=$1 ORDER BY m.library_id,m.asset_id,m.edit_id,m.sha256",
+            ["objects"] = "SELECT c.* FROM content_objects c WHERE c.sha256 IN (SELECT original_sha256 FROM assets WHERE owner_id=$1 UNION SELECT e.xmp_sha256 FROM edit_identities e JOIN assets a ON a.id=e.asset_id WHERE a.owner_id=$1 UNION SELECT g.sha256 FROM gallery_web_content g WHERE g.owner_id=$1 UNION SELECT m.sha256 FROM lineage_merge_content m WHERE m.owner_id=$1 UNION SELECT ce.content_sha256 FROM vc_commit_entries ce JOIN vc_commits vc ON vc.id=ce.commit_id WHERE vc.owner_id=$1 AND ce.content_sha256 IS NOT NULL UNION SELECT ce.base_content_sha256 FROM vc_commit_entries ce JOIN vc_commits vc ON vc.id=ce.commit_id WHERE vc.owner_id=$1 AND ce.base_content_sha256 IS NOT NULL) ORDER BY c.sha256"
         };
         foreach (var (category, sql) in queries)
         {

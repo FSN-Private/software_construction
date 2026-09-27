@@ -69,7 +69,9 @@ public sealed class IntegrityService(NpgsqlDataSource dataSource, S3ObjectStore?
                     SELECT 1 FROM content_objects o WHERE o.sha256=digest AND o.category='xmp' AND o.integrity_state='authoritative'
                       AND o.storage_key<>'' AND o.storage_version IS NOT NULL
                       AND (EXISTS(SELECT 1 FROM edit_identities x JOIN assets a ON a.id=x.asset_id WHERE x.id=e.edit_id AND x.asset_id=e.asset_id AND a.owner_id=$1 AND x.xmp_sha256=o.sha256)
-                           OR EXISTS(SELECT 1 FROM upload_sessions u JOIN assets a ON a.id=u.asset_id WHERE u.owner_id=$1 AND a.owner_id=$1 AND u.asset_id=e.asset_id AND u.edit_id IS NOT DISTINCT FROM e.edit_id AND u.expected_sha256=o.sha256 AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL))))
+                           OR EXISTS(SELECT 1 FROM upload_sessions u JOIN assets a ON a.id=u.asset_id WHERE u.owner_id=$1 AND a.owner_id=$1 AND u.asset_id=e.asset_id AND u.edit_id IS NOT DISTINCT FROM e.edit_id AND u.expected_sha256=o.sha256 AND u.category='xmp' AND u.state='completed' AND u.verified_at IS NOT NULL)
+                           OR EXISTS(SELECT 1 FROM gallery_web_content g WHERE g.owner_id=$1 AND g.library_id=$2 AND g.asset_id=e.asset_id AND g.edit_id=e.edit_id AND g.sha256=o.sha256)
+                           OR EXISTS(SELECT 1 FROM lineage_merge_content m WHERE m.owner_id=$1 AND m.library_id=$2 AND m.asset_id=e.asset_id AND m.edit_id=e.edit_id AND m.sha256=o.sha256))))
             LIMIT 1
             """, cancellationToken, owner, library) is not null;
         if (invalidProvenance && !result.Codes.Contains("invalid_content_provenance", StringComparer.Ordinal))

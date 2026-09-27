@@ -44,8 +44,10 @@ public sealed class RefService(NpgsqlDataSource dataSource, IntegrityService? in
             await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,$3,$4,$5,$6,false)", cancellationToken, owner, library, name, request.Name, kind, request.CommitId);
         }
         catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation) { throw Conflict(); }
-        await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at) VALUES($1,$2,$3,$4,NULL,$5,$2,'create',$6,$7)", cancellationToken, Guid.NewGuid(), owner, library, name, request.CommitId, $"created {kind}", Now);
-        await VersionControlAdapters.AuditAsync(connection, owner, operationId, $"version-control.{kind}.created", StableResource(name), "accepted", cancellationToken);
+        var tagAuditId = kind == "tag" ? await TagAuditAsync(connection, owner, operationId,
+            "created", name, request.CommitId, cancellationToken) : (Guid?)null;
+        await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at,audit_event_id) VALUES($1,$2,$3,$4,NULL,$5,$2,'create',$6,$7,$8)", cancellationToken, Guid.NewGuid(), owner, library, name, request.CommitId, $"created {kind}", Now, tagAuditId);
+        if (kind != "tag") await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.branch.created", StableResource(name), "accepted", cancellationToken);
         var graph = await QueryService.LoadAsync(connection, owner, library, cancellationToken);
         await ProjectionWriter.ReplaceAsync(connection, owner, library, name, request.CommitId, graph, Now, cancellationToken);
         await HistoryRetention.UpdateExpiryAsync(connection, RewriteService.Reachable(graph, request.CommitId), null, cancellationToken);
@@ -127,9 +129,11 @@ public sealed class RefService(NpgsqlDataSource dataSource, IntegrityService? in
         await ExecuteAsync(connection, "DELETE FROM vc_materialized_state WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, name);
         var expiry = Now.AddDays(90);
         var recoveryId = Guid.NewGuid();
-        await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at,recovery_expires_at) VALUES($1,$2,$3,$4,$5,NULL,$2,'delete','confirmed ref deletion',$6,$7)", cancellationToken, recoveryId, owner, library, name, existing.Head, Now, expiry);
+        var deletedTagAuditId = existing.Kind == "tag" ? await TagAuditAsync(connection, owner, operationId,
+            "deleted", name, existing.Head, cancellationToken) : (Guid?)null;
+        await ExecuteAsync(connection, "INSERT INTO vc_reflog(id,owner_id,library_id,normalized_name,old_head,new_head,actor_id,operation,reason,occurred_at,recovery_expires_at,audit_event_id) VALUES($1,$2,$3,$4,$5,NULL,$2,'delete','confirmed ref deletion',$6,$7,$8)", cancellationToken, recoveryId, owner, library, name, existing.Head, Now, expiry, deletedTagAuditId);
         if (existing.Head is not null) await HistoryRetention.ReconcileAsync(connection, graph, owner, library, RewriteService.Reachable(graph, existing.Head), Now, cancellationToken);
-        await VersionControlAdapters.AuditAsync(connection, owner, operationId, $"version-control.{existing.Kind}.deleted", StableResource(name), "accepted", cancellationToken);
+        if (existing.Kind != "tag") await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.branch.deleted", StableResource(name), "accepted", cancellationToken);
         var result = new VersionControlResult(operationId, existing.Head, name, existing.Version + 1, RecoveryId: recoveryId);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, existing.Head, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -141,6 +145,18 @@ public sealed class RefService(NpgsqlDataSource dataSource, IntegrityService? in
     {
         var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
         return new Guid(bytes.AsSpan(0, 16));
+    }
+
+    private static async Task<Guid> TagAuditAsync(NpgsqlConnection connection, string owner,
+        string operationId, string action, string name, string? commitId, CancellationToken ct)
+    {
+        if (commitId is null) throw new VersionControlProblem("ref_not_found", 404);
+        var auditId = Guid.NewGuid();
+        await ExecuteAsync(connection, """
+            INSERT INTO audit_events(id,owner_id,operation_id,event_type,resource_id,outcome)
+            VALUES($1,$2,$3,$4,$5,'accepted')
+            """, ct, auditId, owner, operationId, $"version-control.tag.{action}", StableResource(name));
+        return auditId;
     }
 
     private static async Task<(string Kind, string? Head, bool Protected, long Version)?> ReadForUpdateAsync(NpgsqlConnection connection, string owner, string library, string name, CancellationToken cancellationToken)

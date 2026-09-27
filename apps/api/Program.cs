@@ -55,6 +55,8 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton(sp => new CommitService(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<S3ObjectStore>()));
     builder.Services.AddSingleton<RefService>();
     builder.Services.AddSingleton<QueryService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Lineage.LineageService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Lineage.LineageMergeService>();
     builder.Services.AddSingleton<Platform.Contracts.Rendering.ISelectedVersionResolver, Platform.Api.Features.Rendering.VersionControlSelectedVersionResolver>();
     builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderingService>();
     builder.Services.AddSingleton<Platform.Api.Features.Rendering.RenderOperationsService>();
@@ -92,7 +94,8 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 app.UsePlatformTelemetry();
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.Value?.Contains("/gallery", StringComparison.Ordinal) == true)
+    if (context.Request.Path.Value?.Contains("/gallery", StringComparison.Ordinal) == true ||
+        context.Request.Path.Value?.Contains("/lineage", StringComparison.Ordinal) == true)
         context.Response.Headers.CacheControl = "private, no-store";
     await next(context);
 });
@@ -103,6 +106,7 @@ IngestEndpoints.Map(app);
 Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
+Platform.Api.Features.Lineage.LineageEndpoints.Map(app);
 WindowsSyncEndpoints.Map(app);
 Platform.Api.Features.Rendering.RenderingEndpoints.Map(app);
 GalleryEndpoints.Map(app);
