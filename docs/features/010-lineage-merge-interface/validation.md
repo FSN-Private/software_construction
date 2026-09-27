@@ -4,7 +4,7 @@
 **Date:** 2026-09-27
 **Scope:** Local implementation and validation. No push, merge, deployment, or data cleanup was performed.
 
-**Implementation milestones:** `be926b1` (lineage API and safe merge), `2c7eb22` (web workspace and operations). This record closes the readiness milestone.
+**Implementation milestones:** `be926b1` (lineage API and safe merge), `2c7eb22` (web workspace and operations), plus the subsequent feature commits and pending review remediation milestone.
 
 ## Automated evidence
 
@@ -13,7 +13,7 @@
 | `dotnet build apps/api/Platform.Api.csproj --no-restore -v:q` | Pass, zero warnings/errors | API and lineage contracts compile. |
 | `LINEAGE_INTEGRATION=1 dotnet run --project tests/lineage/Platform.Lineage.Tests.csproj --no-restore` | Pass on disposable PostgreSQL schema and versioned local S3 bucket | Projection, hidden ancestry, owner routes, seven recognized XMP fields, unsafe opaque/malformed changes, exact bytes, clean and resolved-conflict merges, disconnected ancestry, source/target head movement, cancellation before publication, replay, provenance, dirty working, browser checkout, stash restore, and device conflict. |
 | 500-version service fixture, 20 samples | History p95 **95 ms**; exact comparison with verified differing XMP p95 **175 ms** | First history page 100 nodes and next offset 100; exact compared versions and semantic differences. Local nominal load, below 2 s and 3 s targets. |
-| `VERSION_CONTROL_INTEGRATION=1 dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj --no-restore` | Pass after migration 019 | Feature 006 ref, commit, rewrite/recovery, 90-day boundary, hide/reveal, restore/revert, audit, checkout, and merge regression. Storage-backed 100-entry commit p95 468 ms; 10k-node projection first page 7 ms. The separate 1-million-entry optional capacity run was not repeated for this feature. |
+| `VERSION_CONTROL_INTEGRATION=1 dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj --no-restore` | Pass after migration 019 | Feature 006 ref, commit, rewrite/recovery, 90-day boundary, hide/reveal, restore/revert, audit, checkout, and merge regression. |
 | Foundation and Windows sync `dotnet test ... --no-restore -v:q` | Pass | Existing unrelated contract regressions. |
 | Web `npm run typecheck`, `npm run test`, `npm run test:accessibility`, `npm run build` | Pass | Types, source and rendered accessibility structure, gallery/lineage/merge semantics, static bundle. |
 | Changed web files `npx prettier --check ...` | Pass | All changed TypeScript and JavaScript files. Repository-wide `npm run format` reports nine pre-existing files outside this feature, including generated `test-results/.last-run.json`; those files were left alone. |
@@ -24,22 +24,29 @@
 | Infrastructure `npm run check`, `npm run synth`, `npm run assert` | Pass | Lineage graph/outcome metrics, privacy-safe event filters, two sustained alarms with runbook links, 15-minute evaluation window. |
 | `git diff --check` | Pass | No whitespace errors. |
 
+## Review remediation evidence (2026-09-27)
+
+- **B-001 / T018:** Migration `020_lineage_branch_reachability.sql` backfills and transactionally maintains one branch-reachable row per commit. The history route intersects this table with the existing indexed image-entry lookup, pages in PostgreSQL, then loads at most 101 selected manifests. Integration checks cover merge ancestry, branch creation, rewrite, rename, deletion, and explicit index rebuild. `LINEAGE_INTEGRATION=1 dotnet run --project tests/lineage/Platform.Lineage.Tests.csproj --no-restore` passed on disposable PostgreSQL/S3; 500-version history p95 **21 ms**, comparison p95 **89 ms**.
+- **Reference scale:** `VERSION_CONTROL_INTEGRATION=1 VERSION_CONTROL_CAPACITY=1 dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj --no-restore` passed with **1,000,000** persisted commit entries, **100,000** assets, and **10,000** branch commits. Branch index backfill **0.6 s**; image-history first-page p95 **153 ms**, library-lineage p95 **190 ms**, asset-state p95 **2.2 ms**, entry-index p95 **3.9 ms**, and storage-backed 100-entry commit p95 **179 ms**. The image page contained 100 exact image changes; an asset without reachable commits returned none. These are local nominal-load measurements.
+- **N-001 / T019:** Stash restore now reopens both allowed web client staging sets and restores selected staged entries. Disposable PostgreSQL/S3 integration checks assert that the gallery set is open with its staged image change after switch and restore.
+- **Browser and build:** Focused Playwright history, 500-version, and dirty branch-switch checks passed **9/9** across Chrome for Testing, Edge, and Firefox. With 20 measured samples after five warmups, browser p95 was **449 ms**, **477 ms**, and **650 ms** respectively. The earlier fixture used 15 measured samples, making its reported p95 the maximum; two Edge runs each had one ~2.4 s outlier among 14 sub-0.6 s samples. The fixture now uses 20 samples, the smallest count at which nearest-rank p95 excludes one outlier. API and ingest-worker builds, web source and rendered accessibility tests, web production build/typecheck, changed-file Prettier check, and `git diff --check` passed.
+
 ## Requirement outcomes
 
 - **AC-001–003, AC-016:** Exact parents, refs/tags, hidden ancestry, table search, comparisons, and preview provenance are covered by unit and browser fixtures. Absent image and no common ancestor are explicit.
 - **AC-004–005, AC-007, AC-012, AC-015:** Conservative field policy, conflict review, complete affected and retained state, atomic two-parent publication, source/target freshness, duplicate replay, and canceled confirmation are covered by disposable integration checks.
 - **AC-006, AC-008, AC-010–011:** Feature 006 regression verifies protected rewrite, 90-day recovery, tag/ref audit, visibility, and restore/revert. Browser journeys verify the controls.
 - **AC-009, AC-013–014:** Keyboard-operable semantic controls, rendered accessibility checks, checkout block/preserve/stash restore, and exact gallery URL context are covered in browser checks. A manual screen-reader pass remains a release gate.
-- **NFR-001/002/014:** Service and browser capacity fixtures use 500 relevant versions and a 100-node initial page. The optional 1-million-entry feature 006 capacity run remains separate.
+- **NFR-001/002/014:** Service and browser capacity fixtures use 500 relevant versions and a 100-node initial page. The reference-scale persisted fixture now checks the same image-history route with one million entries and 100,000 assets.
 - **NFR-003/004/005/009/010/012/015/016:** Owner routes, signed `auth_time` age, content authority, safe error codes, immutable/audited history, stale/dirty checks, idempotency, no preview substitution, and retention are exercised locally. The canceled confirmation fixture stops before publication; feature 006 transaction and stale-head cases cover publication atomicity.
-- **NFR-008/011/017:** Local API configuration disables mutation controls while preserving reads. Structured events contain operation IDs and counts, and infrastructure synthesis verifies metrics and 15-minute alarms. Additive migrations 018/019 and rollback guidance retain generated-content provenance, exact tag audit links, and existing history.
+- **NFR-008/011/017:** Local API configuration disables mutation controls while preserving reads. Structured events contain operation IDs and counts, and infrastructure synthesis verifies metrics and 15-minute alarms. Additive migrations 018/019/020 and rollback guidance retain generated-content provenance, exact tag audit links, derived reachability, and existing history.
 - **NFR-006/007/013:** Automated accessibility structure, three current desktop browser engines, and `en-US`/New York, `fr-FR`/Paris, `th-TH`/Bangkok date rendering pass. English is the initial interface language.
 
 ## Release gates outside this local run
 
 - Manual keyboard and screen-reader exercise against the deployed UI, plus a formal WCAG 2.2 AA review, still require a human and assistive technology environment.
-- Pre-production rollout/rollback with the deployed Cognito hosted UI logout-to-login path, live alert delivery, and production-like 1-million-entry load require release authorization and environment access. The local migration, API/web build, capability pause, and CDK template checks do not claim that deployment exercise.
-- No push was requested. The repository pre-push alternate-model review gate has therefore not been run.
+- Pre-production rollout/rollback with the deployed Cognito hosted UI logout-to-login path, live alert delivery, and production-like 1-million-entry load require release authorization and environment access. The local persisted reference-scale fixture verifies the query and migration behavior, but does not claim that deployment exercise.
+- No push was requested. An alternate-model review was run for readiness; its initial blocking performance finding is undergoing remediation review.
 
 ## Convergence
 

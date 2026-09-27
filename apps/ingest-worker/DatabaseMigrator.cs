@@ -25,6 +25,7 @@ public static class DatabaseMigrator
         "017_gallery_edit_idempotency.sql",
         "018_lineage_merge_content.sql",
         "019_tag_audit_link.sql",
+        "020_lineage_branch_reachability.sql",
     ];
 
     public static Task ApplyAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) => ApplyAsync(dataSource, null, null, cancellationToken);

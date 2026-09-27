@@ -19,6 +19,9 @@ using Amazon.S3.Model;
 using Platform.Storage;
 using NpgsqlTypes;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Configuration;
+using Platform.Api.Features.Lineage;
+using Platform.Api.Features.Rendering;
 
 internal static class CommitChecks
 {
@@ -468,7 +471,10 @@ internal static class CommitChecks
                 foreach (var asset in additionalAssets) { await writer.StartRowAsync(); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync("active", NpgsqlDbType.Text); await writer.WriteAsync("dng", NpgsqlDbType.Text); }
                 await writer.CompleteAsync();
             }
+            var indexTimer = Stopwatch.StartNew();
             await ExecuteAsync(connection, "INSERT INTO vc_refs(owner_id,library_id,normalized_name,display_name,kind,head_commit_id,protected) VALUES($1,$2,'capacity','capacity','branch',$3,false)", default, owner, library, parent);
+            indexTimer.Stop();
+            Console.WriteLine($"Reference-scale branch reachability backfill: {indexTimer.Elapsed.TotalSeconds:F1} s.");
             await using (var writer = await connection.BeginBinaryImportAsync("COPY vc_materialized_state(owner_id,library_id,normalized_ref,source_commit_id,asset_id,edit_id,content_sha256,rebuilt_at) FROM STDIN (FORMAT BINARY)"))
             {
                 for (var index = 0; index < assets.Length; index++)
@@ -485,10 +491,19 @@ internal static class CommitChecks
         }
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_000, "Persisted capacity must contain 100,000 library assets.");
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id WHERE c.owner_id=$1 AND c.library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million immutable commit entries.");
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='capacity'", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == commitCount,
+            "The reference branch reachability index must cover every exact commit.");
         Check((await new IntegrityService(db).VerifyAsync(owner, library, default)).Healthy, "Persisted capacity history must pass production graph/content provenance verification.");
         var queries = new QueryService(db);
         var projection = new ProjectionService(db, new IntegrityService(db));
+        using var lineageS3 = new AmazonS3Client(new AnonymousAWSCredentials(),
+            new AmazonS3Config { ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true });
+        var lineageStorage = new S3ObjectStore(lineageS3, "not-used", "not-used");
+        var imageLineage = new LineageService(db,
+            new RenderingService(db, new VersionControlSelectedVersionResolver(queries),
+                new ConfigurationBuilder().Build()), lineageStorage);
         var lineage = new List<double>();
+        var imageLineageTimes = new List<double>();
         var state = new List<double>();
         var entryLookup = new List<double>();
         for (var sample = 0; sample < 20; sample++)
@@ -497,6 +512,14 @@ internal static class CommitChecks
             Check((await queries.ProjectAsync(owner, library, "capacity", null, false, 0, 100, default)).Count == 100, "Persisted 10,000-node lineage must return a complete first page.");
             timer.Stop(); lineage.Add(timer.Elapsed.TotalMilliseconds);
             timer.Restart();
+            var imagePage = await imageLineage.HistoryAsync(owner, library, assets[0], "capacity", false, 0, 100, default);
+            timer.Stop(); imageLineageTimes.Add(timer.Elapsed.TotalMilliseconds);
+            Check(imagePage.Nodes.Count == 100 && imagePage.NextOffset == 100 &&
+                  imagePage.Nodes[0].Commit.CommitId == commitIds[^1] &&
+                  imagePage.Nodes.All(node => node.Commit.Changes.Count == 1 &&
+                      node.Commit.Changes[0].AssetId == assets[0]),
+                "Reference-scale image history must return only its latest 100 exact image changes.");
+            timer.Restart();
             Check((await projection.AssetAsync(owner, library, "capacity", assets[0], default)).Count == 1, "Persisted capacity state must resolve the indexed asset.");
             timer.Stop(); state.Add(timer.Elapsed.TotalMilliseconds);
             timer.Restart();
@@ -504,10 +527,14 @@ internal static class CommitChecks
             timer.Stop(); entryLookup.Add(timer.Elapsed.TotalMilliseconds);
         }
         var lineageP95 = lineage.Order().ElementAt(18);
+        var imageLineageP95 = imageLineageTimes.Order().ElementAt(18);
         var stateP95 = state.Order().ElementAt(18);
         var entryLookupP95 = entryLookup.Order().ElementAt(18);
-        Check(lineageP95 <= 2000 && stateP95 <= 200 && entryLookupP95 <= 200, $"Persisted reference-scale p95 targets must hold: lineage {lineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
-        Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node lineage p95 {lineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
+        Check(lineageP95 <= 2000 && imageLineageP95 <= 2000 && stateP95 <= 200 && entryLookupP95 <= 200,
+            $"Persisted reference-scale p95 targets must hold: library lineage {lineageP95:F0} ms, image lineage {imageLineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
+        Check((await imageLineage.HistoryAsync(owner, library, additionalAssets[0], "capacity", false, 0, 100, default)).Nodes.Count == 0,
+            "An asset without a reachable commit must not acquire unrelated branch history.");
+        Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node library lineage p95 {lineageP95:F0} ms; image lineage p95 {imageLineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
     }
 
     private static async Task NormalizedPageIndexConstraintsAsync(NpgsqlDataSource db, string root, string other)

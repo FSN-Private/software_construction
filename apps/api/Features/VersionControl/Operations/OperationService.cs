@@ -137,11 +137,14 @@ public sealed class OperationService
             INSERT INTO vc_working_changes(id,owner_id,library_id,client_id,branch_name,asset_id,edit_id,base_commit_id,base_content_sha256,current_content_sha256,change_kind,display_path,lifecycle_state,version,created_at,updated_at)
             SELECT id,owner_id,library_id,client_id,branch_name,asset_id,edit_id,base_commit_id,base_content_sha256,current_content_sha256,change_kind,display_path,lifecycle_state,version,created_at,updated_at
             FROM jsonb_to_recordset(($1::jsonb)->'working') AS w(id uuid,owner_id text,library_id text,client_id text,branch_name text,asset_id uuid,edit_id uuid,base_commit_id char(64),base_content_sha256 char(64),current_content_sha256 char(64),change_kind text,display_path text,lifecycle_state text,version bigint,created_at timestamptz,updated_at timestamptz);
-            UPDATE vc_staging_sets s SET status='open',version=j.version FROM jsonb_to_recordset(($1::jsonb)->'sets') AS j(id uuid,version bigint) WHERE s.id=j.id AND s.owner_id=$2 AND s.library_id=$3 AND s.client_id=$4 AND s.status='abandoned';
+            UPDATE vc_staging_sets s SET status='open',version=j.version FROM jsonb_to_recordset(($1::jsonb)->'sets') AS j(id uuid,version bigint) WHERE s.id=j.id AND s.owner_id=$2 AND s.library_id=$3 AND s.client_id=ANY($6) AND s.status='abandoned';
             INSERT INTO vc_staged_entries(staging_set_id,ordinal,working_change_id,working_version)
-            SELECT "setId",ordinal,"workingId","workingVersion" FROM jsonb_to_recordset(($1::jsonb)->'staged') AS e("setId" uuid,ordinal integer,"workingId" uuid,"workingVersion" bigint);
+            SELECT e."setId",e.ordinal,e."workingId",e."workingVersion"
+            FROM jsonb_to_recordset(($1::jsonb)->'staged') AS e("setId" uuid,ordinal integer,"workingId" uuid,"workingVersion" bigint)
+            JOIN vc_staging_sets s ON s.id=e."setId" AND s.owner_id=$2 AND s.library_id=$3
+                AND s.client_id=ANY($6) AND s.status='open';
             DELETE FROM vc_stashes WHERE id=$5;
-            """, cancellationToken, snapshot, owner, library, client, stashId);
+            """, cancellationToken, snapshot, owner, library, client, stashId, clients);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.stash.restored", stashId, "accepted", cancellationToken);
         var result = new VersionControlResult(operationId, StashId: stashId);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, null, result, cancellationToken);
