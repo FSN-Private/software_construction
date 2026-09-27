@@ -291,7 +291,9 @@ export function Lineage({
                     </td>
                     <td>
                       {node.commit.hidden ? 'Hidden' : 'Visible'}
-                      {node.hiddenParentIds.length > 0 ? '; hidden parent' : ''}
+                      {node.hiddenParentIds.length > 0
+                        ? '; hidden ancestry'
+                        : ''}
                     </td>
                   </tr>
                 ))}

@@ -303,6 +303,7 @@ internal static class LineageIntegrationChecks
             await RejectCodeAsync(() => operations.CheckoutAsync(owner, library, "__lineage_web__",
                 new("source", "preserve", false, 2), "lineage-device-block", "op-device-block", default),
                 "device_conflict");
+            await HiddenConnectorHistoryAsync(db, storage, commits, history, owner, library, asset, edit, root.CommitId!, baseSha, at);
             Console.WriteLine("PostgreSQL/S3 lineage merge checks passed.");
         }
         finally
@@ -311,6 +312,83 @@ internal static class LineageIntegrationChecks
             await using var drop = admin.CreateCommand($"DROP SCHEMA {schema} CASCADE");
             await drop.ExecuteNonQueryAsync();
         }
+    }
+
+    private static async Task HiddenConnectorHistoryAsync(NpgsqlDataSource db, S3ObjectStore storage,
+        CommitService commits, LineageService history, string owner, string library, Guid asset, Guid edit,
+        string rootId, string baseSha, DateTimeOffset at)
+    {
+        var otherAsset = Guid.NewGuid();
+        var otherEdit = Guid.NewGuid();
+        var otherSha = await StoreAsync(db, storage, Xmp("0", "connector one"));
+        var otherNextSha = await StoreAsync(db, storage, Xmp("0", "connector two"));
+        var otherMergeSha = await StoreAsync(db, storage, Xmp("0", "connector merge"));
+        var hiddenSha = await StoreAsync(db, storage, Xmp("1", "hidden image"));
+        var visibleSha = await StoreAsync(db, storage, Xmp("2", "visible image"));
+        var mergedSha = await StoreAsync(db, storage, Xmp("3", "visible after merge"));
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, """
+                INSERT INTO assets(id,owner_id,state,format) VALUES($1,$2,'active','dng');
+                INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance)
+                    VALUES($3,$1,0,$4,'fixture');
+                INSERT INTO gallery_web_content(owner_id,library_id,branch_name,asset_id,edit_id,sha256)
+                    VALUES($2,$5,'hidden-gap',$1,$3,$4),($2,$5,'hidden-gap',$1,$3,$6),
+                          ($2,$5,'hidden-merge',$1,$3,$4),
+                          ($2,$5,'hidden-gap',$7,$8,$9),($2,$5,'hidden-gap',$7,$8,$10),
+                          ($2,$5,'hidden-gap',$7,$8,$11),($2,$5,'hidden-merge',$7,$8,$9),
+                          ($2,$5,'hidden-gap',$1,$3,$12)
+                """, default, otherAsset, owner, otherEdit, otherSha, library, otherNextSha,
+                asset, edit, hiddenSha, visibleSha, mergedSha, otherMergeSha);
+        var refs = new RefService(db);
+        _ = await refs.CreateAsync(owner, library, "branch", new RefRequest("hidden-gap", rootId), "gap-ref", "gap-ref", default);
+        _ = await refs.CreateAsync(owner, library, "branch", new RefRequest("hidden-merge", rootId), "merge-ref", "merge-ref", default);
+        var connector = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", rootId, "Other image", at.AddMinutes(1)), "gap-connector", "gap-connector", default,
+            preparedEntries: [new(otherAsset, otherEdit, "added", null, otherSha, "other.dng", "active")]);
+        var hidden = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", connector.CommitId, "Hidden image", at.AddMinutes(2)), "gap-hidden", "gap-hidden", default,
+            preparedEntries: [new(asset, edit, "modified", baseSha, hiddenSha, "image.dng", "active")]);
+        var connector2 = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", hidden.CommitId, "Other image again", at.AddMinutes(3)), "gap-connector2", "gap-connector2", default,
+            preparedEntries: [new(otherAsset, otherEdit, "modified", otherSha, otherNextSha, "other.dng", "active")]);
+        var visible = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", connector2.CommitId, "Visible image", at.AddMinutes(4)), "gap-visible", "gap-visible", default,
+            preparedEntries: [new(asset, edit, "modified", hiddenSha, visibleSha, "image.dng", "active")]);
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection,
+                "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
+                default, owner, library, hidden.CommitId);
+        var normal = await history.HistoryAsync(owner, library, asset, "hidden-gap", false, 0, 100, default);
+        Check(normal.Nodes[0].Commit.CommitId == visible.CommitId &&
+              normal.Nodes[0].HiddenParentIds.SequenceEqual([hidden.CommitId!]) &&
+              normal.Nodes.All(node => node.Commit.CommitId != hidden.CommitId),
+            "A hidden image commit beyond unrelated connectors must remain visibly collapsed.");
+        var revealed = await history.HistoryAsync(owner, library, asset, "hidden-gap", true, 0, 100, default);
+        Check(revealed.Nodes.Any(node => node.Commit.CommitId == hidden.CommitId && node.Commit.Hidden &&
+              node.Commit.Parents.SequenceEqual([connector.CommitId!])),
+            "Show-hidden must reveal exact hidden image identity and canonical connector parent.");
+
+        var sourceConnector = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-merge", rootId, "Source other image", at.AddMinutes(5)), "merge-connector", "merge-connector", default,
+            preparedEntries: [new(otherAsset, otherEdit, "added", null, otherSha, "other.dng", "active")]);
+        var sourceHidden = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-merge", sourceConnector.CommitId, "Source hidden image", at.AddMinutes(6)), "merge-hidden", "merge-hidden", default,
+            preparedEntries: [new(asset, edit, "modified", baseSha, hiddenSha, "image.dng", "active")]);
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection,
+                "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
+                default, owner, library, sourceHidden.CommitId);
+        var merge = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", visible.CommitId, "Join hidden path", at.AddMinutes(7)), "gap-merge", "gap-merge", default,
+            new MergeEvidence(rootId, sourceHidden.CommitId!, visible.CommitId!, [], "hidden-merge"),
+            [new(otherAsset, otherEdit, "modified", otherNextSha, otherMergeSha, "other.dng", "active")]);
+        var afterMerge = await commits.PublishAsync(owner, library, "fixture",
+            new(Guid.Empty, "hidden-gap", merge.CommitId, "Visible after merge", at.AddMinutes(8)), "gap-after-merge", "gap-after-merge", default,
+            preparedEntries: [new(asset, edit, "modified", visibleSha, mergedSha, "image.dng", "active")]);
+        var mergedHistory = await history.HistoryAsync(owner, library, asset, "hidden-gap", false, 0, 100, default);
+        Check(mergedHistory.Nodes[0].Commit.CommitId == afterMerge.CommitId &&
+              mergedHistory.Nodes[0].HiddenParentIds.Contains(sourceHidden.CommitId!),
+            "A hidden image commit on an omitted merge-parent path must remain visibly collapsed.");
     }
 
     private static async Task<string> CapacityAsync(NpgsqlDataSource db, S3ObjectStore storage,

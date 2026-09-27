@@ -534,7 +534,24 @@ internal static class CommitChecks
             $"Persisted reference-scale p95 targets must hold: library lineage {lineageP95:F0} ms, image lineage {imageLineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
         Check((await imageLineage.HistoryAsync(owner, library, additionalAssets[0], "capacity", false, 0, 100, default)).Nodes.Count == 0,
             "An asset without a reachable commit must not acquire unrelated branch history.");
+        await ExecuteAsync(connection,
+            "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
+            default, owner, library, commitIds[^2]);
+        var hiddenImageTimes = new List<double>();
+        for (var sample = 0; sample < 20; sample++)
+        {
+            var timer = Stopwatch.StartNew();
+            var visiblePage = await imageLineage.HistoryAsync(owner, library, assets[0], "capacity", false, 0, 100, default);
+            timer.Stop(); hiddenImageTimes.Add(timer.Elapsed.TotalMilliseconds);
+            Check(visiblePage.Nodes[0].HiddenParentIds.Contains(commitIds[^2]) &&
+                  visiblePage.Nodes.All(node => node.Commit.CommitId != commitIds[^2]),
+                "Reference-scale normal history must mark and omit a hidden image version.");
+        }
+        var hiddenImageP95 = hiddenImageTimes.Order().ElementAt(18);
+        Check(hiddenImageP95 <= 2000,
+            $"Persisted reference-scale history with hidden ancestry must remain usable: p95 {hiddenImageP95:F0} ms.");
         Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node library lineage p95 {lineageP95:F0} ms; image lineage p95 {imageLineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
+        Console.WriteLine($"Reference-scale image history with hidden ancestry p95 {hiddenImageP95:F0} ms.");
     }
 
     private static async Task NormalizedPageIndexConstraintsAsync(NpgsqlDataSource db, string root, string other)
