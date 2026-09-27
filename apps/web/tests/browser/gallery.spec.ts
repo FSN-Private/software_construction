@@ -430,6 +430,8 @@ async function fixture(
     if (path.includes('/lineage/images/') && path.endsWith('/history')) {
       const visible = '1'.repeat(64);
       const hidden = '2'.repeat(64);
+      const connector = '4'.repeat(64);
+      const earlierConnector = '5'.repeat(64);
       const showHidden = url.searchParams.get('showHidden') === 'true';
       return route.fulfill({
         json: {
@@ -442,7 +444,7 @@ async function fixture(
             {
               commit: {
                 commitId: visible,
-                parents: [hidden],
+                parents: [connector],
                 authorId: 'owner',
                 authoredAt: '2026-09-26T00:00:00Z',
                 message: 'Color edit',
@@ -457,7 +459,7 @@ async function fixture(
                   {
                     commit: {
                       commitId: hidden,
-                      parents: [],
+                      parents: [earlierConnector],
                       authorId: 'owner',
                       authoredAt: '2026-09-25T00:00:00Z',
                       message: 'Intermediate edit',
@@ -611,7 +613,9 @@ test('gallery history retains browse context and exposes graph and table', async
       name: 'Exact commits and parent relationships for this image',
     }),
   ).toBeVisible();
-  await expect(page.getByText(/Hidden ancestry:/)).toBeVisible();
+  await expect(page.getByText(/Hidden ancestry:/)).toContainText(
+    '2'.repeat(64),
+  );
   await page.getByRole('checkbox', { name: 'Show hidden commits' }).check();
   await expect(
     page.getByRole('button', { name: /Intermediate edit/ }),
