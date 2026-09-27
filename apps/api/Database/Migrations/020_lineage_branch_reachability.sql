@@ -12,8 +12,6 @@ CREATE TABLE vc_lineage_reachable (
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE INDEX vc_visibility_hidden_scope ON vc_visibility(owner_id, library_id) WHERE hidden;
-
 CREATE FUNCTION vc_rebuild_lineage_reachable(p_owner text, p_library text, p_ref text, p_head char(64))
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN

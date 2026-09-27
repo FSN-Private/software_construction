@@ -26,6 +26,7 @@ type HistoryPage = {
   offset: number;
   nextOffset: number | null;
   nodes: Node[];
+  hasHiddenHistory: boolean;
 };
 
 export function Lineage({
@@ -212,6 +213,12 @@ export function Lineage({
       {!page && !error && <p role="status">Loading image history…</p>}
       {page && (
         <>
+          {page.hasHiddenHistory && !showHidden && (
+            <p role="status">
+              Hidden image history exists on this branch. Show hidden commits to
+              inspect exact versions.
+            </p>
+          )}
           <h4>Lineage graph</h4>
           {page.nodes.length === 0 ? (
             <p>No committed image history is available on this branch.</p>

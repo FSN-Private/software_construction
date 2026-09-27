@@ -359,12 +359,12 @@ internal static class LineageIntegrationChecks
                 "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
                 default, owner, library, hidden.CommitId);
         var normal = await history.HistoryAsync(owner, library, asset, "hidden-gap", false, 0, 100, default);
-        Check(normal.Nodes[0].Commit.CommitId == visible.CommitId &&
-              normal.Nodes[0].HiddenParentIds.SequenceEqual([hidden.CommitId!]) &&
+        Check(normal.Nodes[0].Commit.CommitId == visible.CommitId && normal.HasHiddenHistory &&
+              normal.Nodes[0].Commit.Parents.SequenceEqual([connector2.CommitId!]) &&
               normal.Nodes.All(node => node.Commit.CommitId != hidden.CommitId),
-            "A hidden image commit beyond unrelated connectors must remain visibly collapsed.");
+            "A hidden image commit beyond unrelated connectors must produce a branch-scoped collapsed marker.");
         var revealed = await history.HistoryAsync(owner, library, asset, "hidden-gap", true, 0, 100, default);
-        Check(revealed.Nodes.Any(node => node.Commit.CommitId == hidden.CommitId && node.Commit.Hidden &&
+        Check(!revealed.HasHiddenHistory && revealed.Nodes.Any(node => node.Commit.CommitId == hidden.CommitId && node.Commit.Hidden &&
               node.Commit.Parents.SequenceEqual([connector.CommitId!])),
             "Show-hidden must reveal exact hidden image identity and canonical connector parent.");
 
@@ -387,8 +387,9 @@ internal static class LineageIntegrationChecks
             preparedEntries: [new(asset, edit, "modified", visibleSha, mergedSha, "image.dng", "active")]);
         var mergedHistory = await history.HistoryAsync(owner, library, asset, "hidden-gap", false, 0, 100, default);
         Check(mergedHistory.Nodes[0].Commit.CommitId == afterMerge.CommitId &&
-              mergedHistory.Nodes[0].HiddenParentIds.Contains(sourceHidden.CommitId!),
-            "A hidden image commit on an omitted merge-parent path must remain visibly collapsed.");
+              mergedHistory.HasHiddenHistory &&
+              mergedHistory.Nodes.All(node => node.Commit.CommitId != sourceHidden.CommitId),
+            "A hidden image commit on an omitted merge-parent path must remain visibly indicated.");
     }
 
     private static async Task<string> CapacityAsync(NpgsqlDataSource db, S3ObjectStore storage,

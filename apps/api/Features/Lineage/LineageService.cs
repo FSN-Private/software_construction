@@ -58,34 +58,34 @@ public sealed class LineageService(NpgsqlDataSource dataSource, RenderingService
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) refs.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetBoolean(3), reader.GetInt64(4)));
         }
-        var hidden = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        if (!showHidden && commitIds.Length > 0 && await ScalarAsync(connection,
-                "SELECT 1 FROM vc_visibility WHERE owner_id=$1 AND library_id=$2 AND hidden=true LIMIT 1",
-                cancellationToken, owner, library) is not null)
+        var hidden = new HashSet<string>(StringComparer.Ordinal);
+        var parentIds = commits.SelectMany(commit => commit.Parents).Distinct(StringComparer.Ordinal).ToArray();
+        if (!showHidden && parentIds.Length > 0)
         {
-            await using var command = Command(connection, """
-                WITH RECURSIVE segment(start_id,id) AS (
-                    SELECT parent.commit_id,parent.parent_id FROM vc_commit_parents parent
-                    WHERE parent.commit_id::text=ANY($3)
-                    UNION
-                    SELECT segment.start_id,parent.parent_id FROM segment
-                    JOIN vc_commit_parents parent ON parent.commit_id=segment.id
-                    WHERE NOT EXISTS (SELECT 1 FROM vc_commit_entries entry
-                                      WHERE entry.commit_id=segment.id AND entry.asset_id=$4)
-                )
-                SELECT segment.start_id,segment.id FROM segment
-                JOIN vc_visibility visibility ON visibility.commit_id=segment.id
-                    AND visibility.owner_id=$1 AND visibility.library_id=$2 AND visibility.hidden=true
-                """, owner, library, commitIds, asset);
+            await using var command = Command(connection,
+                "SELECT commit_id FROM vc_visibility WHERE owner_id=$1 AND library_id=$2 AND hidden=true AND commit_id::text=ANY($3)",
+                owner, library, parentIds);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var start = reader.GetString(0).Trim();
-                if (!hidden.TryGetValue(start, out var ancestors)) hidden[start] = ancestors = [];
-                ancestors.Add(reader.GetString(1).Trim());
-            }
+            while (await reader.ReadAsync(cancellationToken)) hidden.Add(reader.GetString(0).Trim());
         }
-        var page = LineageProjection.Build(asset, branch, head, showHidden, offset, limit, commits, refs, hidden);
+        var hasHiddenHistory = !showHidden && await ScalarAsync(connection, """
+            WITH image AS MATERIALIZED (SELECT DISTINCT commit_id FROM vc_commit_entries WHERE asset_id=$4)
+            SELECT 1 FROM image
+            JOIN LATERAL (
+                SELECT 1 FROM vc_visibility visibility
+                WHERE visibility.owner_id=$1 AND visibility.library_id=$2
+                  AND visibility.commit_id=image.commit_id AND visibility.hidden=true
+                OFFSET 0
+            ) hidden ON true
+            JOIN LATERAL (
+                SELECT 1 FROM vc_lineage_reachable reachable
+                WHERE reachable.owner_id=$1 AND reachable.library_id=$2
+                  AND reachable.normalized_ref=$3 AND reachable.commit_id=image.commit_id
+                OFFSET 0
+            ) branch_member ON true
+            LIMIT 1
+            """, cancellationToken, owner, library, branch, asset) is not null;
+        var page = LineageProjection.Build(asset, branch, head, showHidden, offset, limit, commits, refs, hidden, hasHiddenHistory);
         LineageTelemetry.GraphSize.Record(page.Nodes.Count);
         await transaction.CommitAsync(cancellationToken);
         return page;

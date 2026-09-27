@@ -18,14 +18,16 @@ var visible = Commit("visible", ["hidden"], false);
 var refs = new[] { new RefView("main", "branch", "visible", true, 2), new RefView("favorite", "tag", "visible", false, 1) };
 var fetched = new[] { visible, Commit("root", [], false) };
 var page = LineageProjection.Build(asset, "main", "visible", false, 0, 1, fetched, refs,
-    new Dictionary<string, List<string>> { ["visible"] = ["hidden"] });
+    new HashSet<string> { "hidden" }, true);
 Assert(page.Nodes.Count == 1 && page.NextOffset == 1, "History must be bounded and continue at the next page.");
 Assert(page.Nodes[0].HiddenParentIds.SequenceEqual(["hidden"]), "Normal history must identify collapsed hidden ancestry.");
+Assert(page.HasHiddenHistory, "Normal image history must visibly indicate hidden relevant versions.");
 Assert(page.Nodes[0].Branches.SequenceEqual(["main"]) && page.Nodes[0].Tags.SequenceEqual(["favorite"]), "Branch and tag labels must match exact commit IDs.");
 Assert(page.Nodes[0].Commit.Parents.SequenceEqual(["hidden"]), "Projection must retain canonical parent IDs.");
 var revealed = LineageProjection.Build(asset, "main", "visible", true, 0, 1, [hidden], refs,
-    new Dictionary<string, List<string>> { ["visible"] = ["hidden"] });
+    new HashSet<string> { "hidden" }, false);
 Assert(revealed.Nodes[0].Commit.Hidden && revealed.Nodes[0].HiddenParentIds.Count == 0, "Show-hidden must reveal exact hidden identity without false collapsed markers.");
+Assert(!revealed.HasHiddenHistory, "Show-hidden must clear the collapsed-history indicator.");
 
 var edit = Guid.NewGuid();
 var root = new GraphCommit("root", [], "owner", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "root", [], false);

@@ -394,17 +394,21 @@ internal static class CommitChecks
         const int entriesPerCommit = 100;
         var assets = Enumerable.Range(0, entriesPerCommit).Select(index => Id(50_000 + index)).ToArray();
         var edits = Enumerable.Range(0, entriesPerCommit).Select(index => Id(60_000 + index)).ToArray();
+        var sparseAsset = Id(70_000);
+        var sparseEdit = Id(80_000);
         var commitIds = new List<string>(commitCount);
         await using var connection = await db.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await using (var writer = await connection.BeginBinaryImportAsync("COPY assets(id,owner_id,state,format) FROM STDIN (FORMAT BINARY)"))
         {
             foreach (var asset in assets) { await writer.StartRowAsync(); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync("active", NpgsqlDbType.Text); await writer.WriteAsync("dng", NpgsqlDbType.Text); }
+            await writer.StartRowAsync(); await writer.WriteAsync(sparseAsset, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync("active", NpgsqlDbType.Text); await writer.WriteAsync("dng", NpgsqlDbType.Text);
             await writer.CompleteAsync();
         }
         await using (var writer = await connection.BeginBinaryImportAsync("COPY edit_identities(id,asset_id,duplicate_ordinal,xmp_sha256,association_provenance) FROM STDIN (FORMAT BINARY)"))
         {
             for (var index = 0; index < entriesPerCommit; index++) { await writer.StartRowAsync(); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync("capacity", NpgsqlDbType.Text); }
+            await writer.StartRowAsync(); await writer.WriteAsync(sparseEdit, NpgsqlDbType.Uuid); await writer.WriteAsync(sparseAsset, NpgsqlDbType.Uuid); await writer.WriteAsync(0, NpgsqlDbType.Integer); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync("capacity", NpgsqlDbType.Text);
             await writer.CompleteAsync();
         }
         var batch = Id(290_000);
@@ -419,6 +423,11 @@ internal static class CommitChecks
                     await writer.StartRowAsync(); await writer.WriteAsync(Id(300_000 + index * 2 + (digest == Digest(301) ? 1 : 0)), NpgsqlDbType.Uuid); await writer.WriteAsync(batch, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync($"capacity/{assets[index]:N}/{digest}", NpgsqlDbType.Text); await writer.WriteAsync(digest, NpgsqlDbType.Char); await writer.WriteAsync(1L, NpgsqlDbType.Bigint); await writer.WriteAsync("completed", NpgsqlDbType.Text); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz); await writer.WriteAsync("xmp", NpgsqlDbType.Text); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz);
                 }
             }
+            foreach (var digest in new[] { Digest(300), Digest(301) })
+            {
+                var at = DateTimeOffset.UtcNow.AddYears(1);
+                await writer.StartRowAsync(); await writer.WriteAsync(Id(300_500 + (digest == Digest(301) ? 1 : 0)), NpgsqlDbType.Uuid); await writer.WriteAsync(batch, NpgsqlDbType.Uuid); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync($"capacity/{sparseAsset:N}/{digest}", NpgsqlDbType.Text); await writer.WriteAsync(digest, NpgsqlDbType.Char); await writer.WriteAsync(1L, NpgsqlDbType.Bigint); await writer.WriteAsync("completed", NpgsqlDbType.Text); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz); await writer.WriteAsync("xmp", NpgsqlDbType.Text); await writer.WriteAsync(sparseAsset, NpgsqlDbType.Uuid); await writer.WriteAsync(sparseEdit, NpgsqlDbType.Uuid); await writer.WriteAsync(at, NpgsqlDbType.TimestampTz);
+            }
             await writer.CompleteAsync();
         }
         string? parent = null;
@@ -428,7 +437,11 @@ internal static class CommitChecks
             {
                 var baseDigest = index == 0 ? null : Digest(300 + (index - 1) % 2);
                 var contentDigest = Digest(300 + index % 2);
-                var entries = Enumerable.Range(0, entriesPerCommit).Select(ordinal => new VersionControlEntry(assets[ordinal], edits[ordinal], index == 0 ? "added" : "modified", baseDigest, contentDigest)).ToArray();
+                var entries = Enumerable.Range(0, entriesPerCommit).Select(ordinal => new VersionControlEntry(assets[ordinal], edits[ordinal], index == 0 ? "added" : "modified", baseDigest, contentDigest)).ToList();
+                if (index is 0 or 5000 or commitCount - 1)
+                    entries.Add(new VersionControlEntry(sparseAsset, sparseEdit, index == 0 ? "added" : "modified",
+                        index == 0 ? null : index == 5000 ? Digest(300) : Digest(301),
+                        index == 0 ? Digest(300) : index == 5000 ? Digest(301) : Digest(300)));
                 var at = DateTimeOffset.UnixEpoch.AddSeconds(index);
                 var manifest = new VersionControlManifest(library, parent is null ? [] : [parent], owner, at, at, "Persisted capacity " + index, entries);
                 var bytes = VersionControlManifestCodec.Write(manifest);
@@ -459,11 +472,17 @@ internal static class CommitChecks
                     if (baseDigest is null) await writer.WriteNullAsync(); else await writer.WriteAsync(baseDigest, NpgsqlDbType.Char);
                     await writer.WriteAsync(contentDigest, NpgsqlDbType.Char);
                 }
+                if (commitIndex is 0 or 5000 or commitCount - 1)
+                {
+                    await writer.StartRowAsync(); await writer.WriteAsync(commitIds[commitIndex], NpgsqlDbType.Char); await writer.WriteAsync(entriesPerCommit, NpgsqlDbType.Integer); await writer.WriteAsync(sparseAsset, NpgsqlDbType.Uuid); await writer.WriteAsync(sparseEdit, NpgsqlDbType.Uuid); await writer.WriteAsync(commitIndex == 0 ? "added" : "modified", NpgsqlDbType.Text);
+                    if (commitIndex == 0) await writer.WriteNullAsync(); else await writer.WriteAsync(commitIndex == 5000 ? Digest(300) : Digest(301), NpgsqlDbType.Char);
+                    await writer.WriteAsync(commitIndex == 5000 ? Digest(301) : Digest(300), NpgsqlDbType.Char);
+                }
             }
             await writer.CompleteAsync();
         }
         await transaction.CommitAsync();
-        var additionalAssets = Enumerable.Range(0, 99_900).Select(index => Id(70_000 + index)).ToArray();
+        var additionalAssets = Enumerable.Range(1, 99_899).Select(index => Id(70_000 + index)).ToArray();
         await using (var scaleTransaction = await connection.BeginTransactionAsync())
         {
             await using (var writer = await connection.BeginBinaryImportAsync("COPY assets(id,owner_id,state,format) FROM STDIN (FORMAT BINARY)"))
@@ -481,6 +500,7 @@ internal static class CommitChecks
                 {
                     await writer.StartRowAsync(); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync("capacity", NpgsqlDbType.Text); await writer.WriteAsync(parent!, NpgsqlDbType.Char); await writer.WriteAsync(assets[index], NpgsqlDbType.Uuid); await writer.WriteAsync(edits[index], NpgsqlDbType.Uuid); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync(DateTimeOffset.UtcNow, NpgsqlDbType.TimestampTz);
                 }
+                await writer.StartRowAsync(); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync("capacity", NpgsqlDbType.Text); await writer.WriteAsync(parent!, NpgsqlDbType.Char); await writer.WriteAsync(sparseAsset, NpgsqlDbType.Uuid); await writer.WriteAsync(sparseEdit, NpgsqlDbType.Uuid); await writer.WriteAsync(Digest(300), NpgsqlDbType.Char); await writer.WriteAsync(DateTimeOffset.UtcNow, NpgsqlDbType.TimestampTz);
                 foreach (var asset in additionalAssets)
                 {
                     await writer.StartRowAsync(); await writer.WriteAsync(owner, NpgsqlDbType.Text); await writer.WriteAsync(library, NpgsqlDbType.Text); await writer.WriteAsync("capacity", NpgsqlDbType.Text); await writer.WriteAsync(parent!, NpgsqlDbType.Char); await writer.WriteAsync(asset, NpgsqlDbType.Uuid); await writer.WriteNullAsync(); await writer.WriteAsync(Digest(301), NpgsqlDbType.Char); await writer.WriteAsync(DateTimeOffset.UtcNow, NpgsqlDbType.TimestampTz);
@@ -490,7 +510,7 @@ internal static class CommitChecks
             await scaleTransaction.CommitAsync();
         }
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM assets WHERE owner_id=$1", default, owner), System.Globalization.CultureInfo.InvariantCulture) == 100_000, "Persisted capacity must contain 100,000 library assets.");
-        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id WHERE c.owner_id=$1 AND c.library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_000, "Persisted capacity must contain one million immutable commit entries.");
+        Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_commit_entries e JOIN vc_commits c ON c.id=e.commit_id WHERE c.owner_id=$1 AND c.library_id=$2", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == 1_000_003, "Persisted capacity must contain one million immutable commit entries plus a three-version sparse image.");
         Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM vc_lineage_reachable WHERE owner_id=$1 AND library_id=$2 AND normalized_ref='capacity'", default, owner, library), System.Globalization.CultureInfo.InvariantCulture) == commitCount,
             "The reference branch reachability index must cover every exact commit.");
         Check((await new IntegrityService(db).VerifyAsync(owner, library, default)).Healthy, "Persisted capacity history must pass production graph/content provenance verification.");
@@ -534,6 +554,10 @@ internal static class CommitChecks
             $"Persisted reference-scale p95 targets must hold: library lineage {lineageP95:F0} ms, image lineage {imageLineageP95:F0} ms, state {stateP95:F1} ms, entry index {entryLookupP95:F1} ms.");
         Check((await imageLineage.HistoryAsync(owner, library, additionalAssets[0], "capacity", false, 0, 100, default)).Nodes.Count == 0,
             "An asset without a reachable commit must not acquire unrelated branch history.");
+        var sparseBeforeHide = await imageLineage.HistoryAsync(owner, library, sparseAsset, "capacity", false, 0, 100, default);
+        Check(sparseBeforeHide.Nodes.Count == 3 && !sparseBeforeHide.HasHiddenHistory &&
+              sparseBeforeHide.Nodes[0].Commit.CommitId == commitIds[^1],
+            "A sparse image must return its exact three versions across long connector gaps.");
         await ExecuteAsync(connection,
             "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
             default, owner, library, commitIds[^2]);
@@ -543,15 +567,48 @@ internal static class CommitChecks
             var timer = Stopwatch.StartNew();
             var visiblePage = await imageLineage.HistoryAsync(owner, library, assets[0], "capacity", false, 0, 100, default);
             timer.Stop(); hiddenImageTimes.Add(timer.Elapsed.TotalMilliseconds);
-            Check(visiblePage.Nodes[0].HiddenParentIds.Contains(commitIds[^2]) &&
+            Check(visiblePage.HasHiddenHistory && visiblePage.Nodes[0].HiddenParentIds.Contains(commitIds[^2]) &&
                   visiblePage.Nodes.All(node => node.Commit.CommitId != commitIds[^2]),
                 "Reference-scale normal history must mark and omit a hidden image version.");
         }
         var hiddenImageP95 = hiddenImageTimes.Order().ElementAt(18);
         Check(hiddenImageP95 <= 2000,
             $"Persisted reference-scale history with hidden ancestry must remain usable: p95 {hiddenImageP95:F0} ms.");
+        var sparseUnrelatedTimes = new List<double>();
+        for (var sample = 0; sample < 20; sample++)
+        {
+            var timer = Stopwatch.StartNew();
+            var page = await imageLineage.HistoryAsync(owner, library, sparseAsset, "capacity", false, 0, 100, default);
+            timer.Stop(); sparseUnrelatedTimes.Add(timer.Elapsed.TotalMilliseconds);
+            Check(page.Nodes.Count == 3 && !page.HasHiddenHistory &&
+                  page.Nodes[0].HiddenParentIds.Contains(commitIds[^2]),
+                "An unrelated hidden connector must not be mistaken for a hidden image version.");
+        }
+        var sparseUnrelatedP95 = sparseUnrelatedTimes.Order().ElementAt(18);
+        await ExecuteAsync(connection,
+            "INSERT INTO vc_visibility(owner_id,library_id,commit_id,hidden,changed_at,changed_by) VALUES($1,$2,$3,true,now(),$1)",
+            default, owner, library, commitIds[5000]);
+        var sparseHiddenTimes = new List<double>();
+        for (var sample = 0; sample < 20; sample++)
+        {
+            var timer = Stopwatch.StartNew();
+            var page = await imageLineage.HistoryAsync(owner, library, sparseAsset, "capacity", false, 0, 100, default);
+            timer.Stop(); sparseHiddenTimes.Add(timer.Elapsed.TotalMilliseconds);
+            Check(page.Nodes.Count == 2 && page.HasHiddenHistory &&
+                  page.Nodes.All(node => node.Commit.CommitId != commitIds[5000]),
+                "A hidden sparse image version must remain indicated across thousands of connector commits.");
+        }
+        var sparseHiddenP95 = sparseHiddenTimes.Order().ElementAt(18);
+        var sparseRevealed = await imageLineage.HistoryAsync(owner, library, sparseAsset, "capacity", true, 0, 100, default);
+        Check(sparseRevealed.Nodes.Count == 3 && sparseRevealed.Nodes.Any(node =>
+                  node.Commit.CommitId == commitIds[5000] && node.Commit.Hidden &&
+                  node.Commit.Parents.SequenceEqual([commitIds[4999]])),
+            "Show-hidden must recover the exact sparse image version and its canonical connector parent.");
+        Check(sparseUnrelatedP95 <= 2000 && sparseHiddenP95 <= 2000,
+            $"Sparse reference-scale image history must remain usable: unrelated hidden p95 {sparseUnrelatedP95:F0} ms, hidden image p95 {sparseHiddenP95:F0} ms.");
         Console.WriteLine($"Persisted capacity checks passed at 1M commit entries/100k assets: 10k-node library lineage p95 {lineageP95:F0} ms; image lineage p95 {imageLineageP95:F0} ms; asset-state p95 {stateP95:F1} ms; entry-index p95 {entryLookupP95:F1} ms.");
         Console.WriteLine($"Reference-scale image history with hidden ancestry p95 {hiddenImageP95:F0} ms.");
+        Console.WriteLine($"Sparse image across 10k commits: unrelated hidden p95 {sparseUnrelatedP95:F0} ms; hidden image p95 {sparseHiddenP95:F0} ms.");
     }
 
     private static async Task NormalizedPageIndexConstraintsAsync(NpgsqlDataSource db, string root, string other)
