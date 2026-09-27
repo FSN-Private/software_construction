@@ -34,7 +34,7 @@ public sealed class CommitService
         this.checkpoint = checkpoint;
     }
 
-    public async Task<VersionControlResult> PublishAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence = null, IReadOnlyList<VersionControlEntry>? preparedEntries = null, object? fingerprintPayload = null)
+    public async Task<VersionControlResult> PublishAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence = null, IReadOnlyList<VersionControlEntry>? preparedEntries = null, object? fingerprintPayload = null, IReadOnlyList<GeneratedXmpContent>? generatedContent = null)
     {
         var requestFingerprint = Fingerprint(fingerprintPayload ?? request, null);
         var fingerprint = Fingerprint(fingerprintPayload ?? request, mergeEvidence);
@@ -50,7 +50,7 @@ public sealed class CommitService
             {
                 try
                 {
-                    return await PublishAttemptAsync(owner, library, client, request, idempotencyKey, operationId, cancellationToken, mergeEvidence, preparedEntries, fingerprintPayload);
+                    return await PublishAttemptAsync(owner, library, client, request, idempotencyKey, operationId, cancellationToken, mergeEvidence, preparedEntries, fingerprintPayload, generatedContent);
                 }
                 catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.SerializationFailure) { }
             }
@@ -70,7 +70,7 @@ public sealed class CommitService
         return await ReadReplayAsync(connection, owner, library, idempotencyKey, Fingerprint(request, null), operationId, true, cancellationToken);
     }
 
-    private async Task<VersionControlResult> PublishAttemptAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence, IReadOnlyList<VersionControlEntry>? preparedEntries, object? fingerprintPayload)
+    private async Task<VersionControlResult> PublishAttemptAsync(string owner, string library, string client, CommitRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken, MergeEvidence? mergeEvidence, IReadOnlyList<VersionControlEntry>? preparedEntries, object? fingerprintPayload, IReadOnlyList<GeneratedXmpContent>? generatedContent)
     {
         var branch = RefNames.Normalize(request.Branch);
         var requestFingerprint = Fingerprint(fingerprintPayload ?? request, null);
@@ -79,7 +79,23 @@ public sealed class CommitService
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         await WorkingService.LockClientAsync(connection, owner, library, client, cancellationToken);
         await ProjectionWriter.LockAsync(connection, owner, library, cancellationToken);
-        await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
+        var sourceBranch = mergeEvidence?.SourceBranch is { } source ? RefNames.Normalize(source) : null;
+        foreach (var lockedBranch in (sourceBranch is null ? new[] { branch } : new[] { branch, sourceBranch })
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            await RefNames.LockAsync(connection, owner, library, lockedBranch, cancellationToken);
+        if (mergeEvidence?.SourceBranch is { } sourceName)
+        {
+            var normalizedSource = RefNames.Normalize(sourceName);
+            if (normalizedSource == branch) throw new VersionControlProblem("invalid_request", 400);
+            var actualSource = await ScalarAsync(connection,
+                "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch' FOR UPDATE",
+                cancellationToken, owner, library, normalizedSource) as string;
+            if (actualSource?.Trim() != mergeEvidence.SourceCommitId) throw new VersionControlProblem("stale_head");
+            if (await ScalarAsync(connection,
+                "SELECT 1 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND branch_name IN ($3,$4) LIMIT 1",
+                cancellationToken, owner, library, branch, normalizedSource) is not null)
+                throw new VersionControlProblem("stale_working_state");
+        }
         var replay = await ReadReplayAsync(connection, owner, library, idempotencyKey, fingerprint, operationId, false, cancellationToken);
         if (replay is not null) return replay;
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_ref_quarantine WHERE owner_id=$1 AND library_id=$2 AND normalized_ref=$3", cancellationToken, owner, library, branch) is not null) throw new VersionControlProblem("graph_corrupt");
@@ -92,7 +108,9 @@ public sealed class CommitService
             refState = (null, 1L);
         }
         if (!string.Equals(refState.Value.Head, request.ExpectedHead, StringComparison.Ordinal))
-            throw await StaleAsync(connection, owner, library, client, branch, request, refState.Value.Head, cancellationToken);
+            throw preparedEntries is null
+                ? await StaleAsync(connection, owner, library, client, branch, request, refState.Value.Head, cancellationToken)
+                : new VersionControlProblem("stale_head");
         if (refState.Value.Head is not null) await ValidateHeadIntegrityAsync(connection, owner, library, refState.Value.Head, cancellationToken);
         checkpoint("ref-locked");
 
@@ -101,6 +119,32 @@ public sealed class CommitService
             : (Entries: preparedEntries.ToArray(), WorkingIds: Array.Empty<Guid>());
         if (staged.Entries.Any(entry => entry.Change == "conflicted")) throw new VersionControlProblem("unresolved_divergence");
         if (mergeEvidence is not null && !mergeEvidence.RequiredResolutionKeys.All(key => staged.Entries.Any(entry => GraphQueries.Key(new(entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256, entry.ContentSha256, entry.Path, entry.Lifecycle)) == key))) throw new VersionControlProblem("unresolved_divergence");
+        if (generatedContent is not null)
+        {
+            if (mergeEvidence?.SourceBranch is null || preparedEntries is null)
+                throw new VersionControlProblem("invalid_request", 400);
+            foreach (var content in generatedContent)
+            {
+                if (!staged.Entries.Any(entry => entry.AssetId == content.AssetId && entry.EditId == content.EditId && entry.ContentSha256 == content.Sha256))
+                    throw new VersionControlProblem("content_not_authoritative");
+                var address = new ContentAddress(content.Sha256, content.ByteLength);
+                await ExecuteAsync(connection, """
+                    INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
+                    VALUES($1,$2,'xmp',$3,$4,'authoritative') ON CONFLICT(sha256) DO NOTHING
+                    """, cancellationToken, content.Sha256, content.ByteLength, address.AuthoritativeKey, content.StorageVersion);
+                if (await ScalarAsync(connection,
+                    "SELECT 1 FROM content_objects WHERE sha256=$1 AND byte_length=$2 AND category='xmp' AND integrity_state='authoritative'",
+                    cancellationToken, content.Sha256, content.ByteLength) is null)
+                    throw new VersionControlProblem("content_not_authoritative");
+                await ExecuteAsync(connection, """
+                    INSERT INTO lineage_merge_content(owner_id,library_id,asset_id,edit_id,sha256,base_sha256,target_sha256,
+                        source_sha256,target_commit_id,source_commit_id,policy_version,operation_id)
+                    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING
+                    """, cancellationToken, owner, library, content.AssetId, content.EditId, content.Sha256,
+                    content.BaseSha256, content.TargetSha256, content.SourceSha256,
+                    mergeEvidence.TargetCommitId, mergeEvidence.SourceCommitId, content.PolicyVersion, operationId);
+            }
+        }
         await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, storage, cancellationToken);
         await ValidateBaseStateAsync(connection, owner, library, branch, refState.Value.Head, staged.Entries, cancellationToken);
         checkpoint("content-validated");

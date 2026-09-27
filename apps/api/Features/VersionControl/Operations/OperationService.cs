@@ -27,13 +27,48 @@ public sealed class OperationService
         this.checkpoint = checkpoint;
     }
 
+    public async Task<CheckoutStateView> CheckoutStateAsync(string owner, string library, string client, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        string? branch = null;
+        long version = 0;
+        await using (var command = Command(connection,
+            "SELECT normalized_ref,version FROM vc_checkouts WHERE owner_id=$1 AND library_id=$2 AND client_id=$3",
+            owner, library, client))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            if (await reader.ReadAsync(ct)) { branch = reader.GetString(0); version = reader.GetInt64(1); }
+        var browser = (long)(await ScalarAsync(connection,
+            "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3",
+            ct, owner, library, client) ?? 0L);
+        var gallery = client == "__lineage_web__" ? (long)(await ScalarAsync(connection,
+            "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id='__gallery_web__'",
+            ct, owner, library) ?? 0L) : 0L;
+        var conflicts = client == "__lineage_web__" ? await DeviceConflictsAsync(connection, owner, library, ct) : 0L;
+        return new(branch, version, browser, gallery, conflicts);
+    }
+
+    private static string[] CheckoutClients(string client) => client == "__lineage_web__"
+        ? ["__gallery_web__", "__lineage_web__"] : [client];
+
+    private static async Task<long> DeviceConflictsAsync(NpgsqlConnection connection, string owner, string library, CancellationToken ct) =>
+        (long)(await ScalarAsync(connection, """
+            SELECT count(*) FROM vc_working_changes d
+            WHERE d.owner_id=$1 AND d.library_id=$2 AND d.client_id NOT IN ('__gallery_web__','__lineage_web__')
+              AND (d.change_kind='conflicted' OR EXISTS(
+                SELECT 1 FROM vc_working_changes g WHERE g.owner_id=d.owner_id AND g.library_id=d.library_id
+                  AND g.branch_name=d.branch_name AND g.asset_id=d.asset_id AND g.edit_id IS NOT DISTINCT FROM d.edit_id
+                  AND g.client_id='__gallery_web__' AND g.current_content_sha256 IS DISTINCT FROM d.current_content_sha256))
+            """, ct, owner, library) ?? 0L);
+
     public async Task<VersionControlResult> CheckoutAsync(string owner, string library, string client, CheckoutRequest request, string idempotencyKey, string operationId, CancellationToken cancellationToken)
     {
         if (request.DirtyAction is not ("block" or "preserve" or "discard")) throw new VersionControlProblem("invalid_request", 400);
         var branch = RefNames.Normalize(request.Branch);
+        var clients = CheckoutClients(client);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await WorkingService.LockClientAsync(connection, owner, library, client, cancellationToken);
+        foreach (var guardedClient in clients.Order(StringComparer.Ordinal))
+            await WorkingService.LockClientAsync(connection, owner, library, guardedClient, cancellationToken);
         await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
         await checkpoint("target-ref-locked", cancellationToken);
         var fingerprint = VersionControlIdempotency.Fingerprint(new { operation = "checkout", request });
@@ -43,7 +78,9 @@ public sealed class OperationService
         var storedVersion = await ScalarAsync(connection, "SELECT version FROM vc_checkouts WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 FOR UPDATE", cancellationToken, owner, library, client);
         var currentVersion = storedVersion is long value ? value : 0;
         if (request.ExpectedVersion != currentVersion) throw new VersionControlProblem("checkout_conflict");
-        var dirty = (long)(await ScalarAsync(connection, "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3", cancellationToken, owner, library, client) ?? 0L);
+        if (client == "__lineage_web__" && await DeviceConflictsAsync(connection, owner, library, cancellationToken) > 0)
+            throw new VersionControlProblem("device_conflict");
+        var dirty = (long)(await ScalarAsync(connection, "SELECT count(*) FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=ANY($3)", cancellationToken, owner, library, clients) ?? 0L);
         Guid? stashId = null;
         if (dirty > 0)
         {
@@ -52,16 +89,16 @@ public sealed class OperationService
             {
                 var snapshot = await ScalarAsync(connection, """
                     SELECT jsonb_build_object(
-                      'working',COALESCE((SELECT jsonb_agg(to_jsonb(w) ORDER BY w.id) FROM vc_working_changes w WHERE owner_id=$1 AND library_id=$2 AND client_id=$3),'[]'::jsonb),
-                      'sets',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id) FROM vc_staging_sets s WHERE s.owner_id=$1 AND s.library_id=$2 AND s.client_id=$3 AND s.status='open'),'[]'::jsonb),
-                      'staged',COALESCE((SELECT jsonb_agg(jsonb_build_object('setId',s.id,'ordinal',e.ordinal,'workingId',e.working_change_id,'workingVersion',e.working_version) ORDER BY s.id,e.ordinal) FROM vc_staging_sets s JOIN vc_staged_entries e ON e.staging_set_id=s.id WHERE s.owner_id=$1 AND s.library_id=$2 AND s.client_id=$3 AND s.status='open'),'[]'::jsonb))::text
-                    """, cancellationToken, owner, library, client) as string ?? "{}";
+                      'working',COALESCE((SELECT jsonb_agg(to_jsonb(w) ORDER BY w.id) FROM vc_working_changes w WHERE owner_id=$1 AND library_id=$2 AND client_id=ANY($3)),'[]'::jsonb),
+                      'sets',COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id) FROM vc_staging_sets s WHERE s.owner_id=$1 AND s.library_id=$2 AND s.client_id=ANY($3) AND s.status='open'),'[]'::jsonb),
+                      'staged',COALESCE((SELECT jsonb_agg(jsonb_build_object('setId',s.id,'ordinal',e.ordinal,'workingId',e.working_change_id,'workingVersion',e.working_version) ORDER BY s.id,e.ordinal) FROM vc_staging_sets s JOIN vc_staged_entries e ON e.staging_set_id=s.id WHERE s.owner_id=$1 AND s.library_id=$2 AND s.client_id=ANY($3) AND s.status='open'),'[]'::jsonb))::text
+                    """, cancellationToken, owner, library, clients) as string ?? "{}";
                 stashId = Guid.NewGuid();
                 await ExecuteAsync(connection, "INSERT INTO vc_stashes(id,owner_id,library_id,client_id,source_ref,working_snapshot,created_at) VALUES($1,$2,$3,$4,COALESCE((SELECT normalized_ref FROM vc_checkouts WHERE owner_id=$2 AND library_id=$3 AND client_id=$4),'unassigned'),$5::jsonb,$6)", cancellationToken, stashId, owner, library, client, snapshot, DateTimeOffset.UtcNow);
             }
             else if (request.DirtyAction != "discard" || !request.ConfirmDiscard) throw new VersionControlProblem("confirmation_required");
-            await ExecuteAsync(connection, "DELETE FROM vc_staged_entries e USING vc_staging_sets s WHERE e.staging_set_id=s.id AND s.owner_id=$1 AND s.library_id=$2 AND s.client_id=$3 AND s.status='open'; UPDATE vc_staging_sets SET status='abandoned',version=version+1 WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND status='open'", cancellationToken, owner, library, client);
-            await ExecuteAsync(connection, "DELETE FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3", cancellationToken, owner, library, client);
+            await ExecuteAsync(connection, "DELETE FROM vc_staged_entries e USING vc_staging_sets s WHERE e.staging_set_id=s.id AND s.owner_id=$1 AND s.library_id=$2 AND s.client_id=ANY($3) AND s.status='open'; UPDATE vc_staging_sets SET status='abandoned',version=version+1 WHERE owner_id=$1 AND library_id=$2 AND client_id=ANY($3) AND status='open'", cancellationToken, owner, library, clients);
+            await ExecuteAsync(connection, "DELETE FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=ANY($3)", cancellationToken, owner, library, clients);
         }
         if (currentVersion == 0)
             await ExecuteAsync(connection, "INSERT INTO vc_checkouts(owner_id,library_id,client_id,normalized_ref) VALUES($1,$2,$3,$4)", cancellationToken, owner, library, client, branch);
@@ -88,11 +125,13 @@ public sealed class OperationService
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await WorkingService.LockClientAsync(connection, owner, library, client, cancellationToken);
+        var clients = CheckoutClients(client);
+        foreach (var guardedClient in clients.Order(StringComparer.Ordinal))
+            await WorkingService.LockClientAsync(connection, owner, library, guardedClient, cancellationToken);
         var fingerprint = VersionControlIdempotency.Fingerprint(new { operation = "stash.restore", stashId });
         var replay = await VersionControlIdempotency.ReadAsync<VersionControlResult>(connection, owner, library, idempotencyKey, fingerprint, cancellationToken);
         if (replay is not null) return replay with { OperationId = operationId };
-        if (await ScalarAsync(connection, "SELECT 1 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 LIMIT 1", cancellationToken, owner, library, client) is not null) throw new VersionControlProblem("working_state_conflict");
+        if (await ScalarAsync(connection, "SELECT 1 FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=ANY($3) LIMIT 1", cancellationToken, owner, library, clients) is not null) throw new VersionControlProblem("working_state_conflict");
         var snapshot = await ScalarAsync(connection, "SELECT working_snapshot::text FROM vc_stashes WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND client_id=$4 FOR UPDATE", cancellationToken, stashId, owner, library, client) as string ?? throw new VersionControlProblem("stash_not_found", 404);
         await ExecuteAsync(connection, """
             INSERT INTO vc_working_changes(id,owner_id,library_id,client_id,branch_name,asset_id,edit_id,base_commit_id,base_content_sha256,current_content_sha256,change_kind,display_path,lifecycle_state,version,created_at,updated_at)

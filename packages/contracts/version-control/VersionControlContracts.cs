@@ -16,6 +16,8 @@ public sealed record VersionControlResult(string OperationId, string? CommitId =
 public sealed record WorkingChangeView(Guid Id, Guid AssetId, Guid? EditId, string Branch, string Change, string? BaseContentSha256, string? ContentSha256, string? Path, string? Lifecycle, long Version, bool Staged);
 public sealed record RefView(string Name, string Kind, string CommitId, bool Protected, long Version);
 public sealed record StashView(Guid Id, string SourceRef, JsonElement Snapshot, DateTimeOffset CreatedAt);
+public sealed record CheckoutStateView(string? Branch, long Version, long BrowserWorkingCount,
+    long GalleryWorkingCount, long DeviceConflictCount);
 public sealed record ReflogView(Guid Id, string RefName, string? OldHead, string? NewHead, string Operation, string Reason, DateTimeOffset OccurredAt, DateTimeOffset? RecoveryExpiresAt);
 public sealed record ChangeView(Guid AssetId, Guid? EditId, string Change, string? BaseContentSha256, string? ContentSha256, string? Path, string? Lifecycle);
 public sealed record DivergenceChangeView(Guid AssetId, Guid? EditId, string? BaseContentSha256, string? OursContentSha256, string? TheirsContentSha256, string? BasePath, string? OursPath, string? TheirsPath, string? BaseLifecycle, string? OursLifecycle, string? TheirsLifecycle);
@@ -23,7 +25,10 @@ public sealed record CompareView(string? BaseCommitId, string OursCommitId, stri
 public sealed record CommitView(string CommitId, IReadOnlyList<string> Parents, string AuthorId, DateTimeOffset AuthoredAt, DateTimeOffset ReceivedAt, string Message, IReadOnlyList<ChangeView> Changes, bool Hidden);
 public sealed record IntegrityView(bool Healthy, IReadOnlyList<string> Codes, int CommitsChecked);
 public sealed record RewritePreview(string Branch, string? OldHead, string NewHead, IReadOnlyList<string> DisplacedCommitIds, string ConfirmationToken);
-public sealed record MergeEvidence(string BaseCommitId, string SourceCommitId, string TargetCommitId, IReadOnlyList<string> RequiredResolutionKeys);
+public sealed record MergeEvidence(string? BaseCommitId, string SourceCommitId, string TargetCommitId,
+    IReadOnlyList<string> RequiredResolutionKeys, string? SourceBranch = null);
+public sealed record GeneratedXmpContent(Guid AssetId, Guid EditId, string Sha256, long ByteLength,
+    string StorageVersion, string? BaseSha256, string? TargetSha256, string? SourceSha256, string PolicyVersion);
 
 public sealed class VersionControlProblem(string code, int status = 409, IReadOnlyDictionary<string, object?>? extensions = null) : Exception(code)
 {
