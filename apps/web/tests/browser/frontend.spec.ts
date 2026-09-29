@@ -118,6 +118,51 @@ test('scoped search, density and secondary import preserve applied gallery conte
   expect(new URL(page.url()).searchParams.get('title')).toBe('Alpine');
 });
 
+test('all sort and search modes use the existing browse query contract', async ({
+  page,
+}) => {
+  await fixture(page);
+  const queries: URLSearchParams[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/v1/libraries/main/gallery')
+      queries.push(new URL(request.url()).searchParams);
+  });
+  await page.goto('/#id_token=fixture-token');
+  for (const sort of [
+    'captureDate',
+    'importDate',
+    'filename',
+    'rating',
+    'dimensions',
+  ]) {
+    await page.getByLabel('Sort by').selectOption(sort);
+    await expect.poll(() => queries.at(-1)?.get('sort')).toBe(sort);
+  }
+  await page.getByLabel('Direction').selectOption('asc');
+  await expect.poll(() => queries.at(-1)?.get('direction')).toBe('asc');
+  for (const [scope, field] of [
+    ['path', 'path'],
+    ['title', 'title'],
+    ['description', 'description'],
+  ]) {
+    await page.getByLabel('Search in').selectOption(scope);
+    await page.getByLabel('Search photos').fill('known');
+    await page.getByLabel('Search photos').press('Enter');
+    await expect.poll(() => queries.at(-1)?.get(field)).toBe('known');
+  }
+  for (const criteria of [
+    '?rating=4&camera=Sony&tag=Landscape',
+    '?fileType=jpeg&lens=24-70&rejected=false',
+    '?captureFrom=2024-01-01T00%3A00%3A00Z&isoMin=100&widthMin=2000',
+  ]) {
+    await page.goto(`/${criteria}#id_token=fixture-token`);
+    const expected = new URLSearchParams(criteria);
+    await expect
+      .poll(() => queries.at(-1)?.toString())
+      .toContain(expected.toString());
+  }
+});
+
 test('historical selection clears current preview and truthfully identifies unavailable metadata', async ({
   page,
 }) => {
@@ -141,6 +186,107 @@ test('historical selection clears current preview and truthfully identifies unav
   expect(renders).toEqual([]);
   await page.getByRole('button', { name: /Current working view/ }).click();
   await expect(page.locator('.detail-preview > img')).toBeVisible();
+});
+
+test('portrait and panorama previews keep their intrinsic proportions', async ({
+  page,
+}) => {
+  await fixture(page);
+  for (const [width, height] of [
+    [400, 800],
+    [1200, 300],
+  ]) {
+    await page.goto('about:blank');
+    await page.route('**/renditions/**/derivative?**', (route) =>
+      route.fulfill({
+        json: {
+          locator: `data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"/%3E`,
+        },
+      }),
+    );
+    await page.goto(`/?asset=${assetOne}#id_token=fixture-token`);
+    const image = page.locator('.detail-preview img');
+    await expect(image).toBeVisible();
+    await expect
+      .poll(() =>
+        image.evaluate((element: HTMLImageElement) => ({
+          width: element.naturalWidth,
+          height: element.naturalHeight,
+          fit: getComputedStyle(element).objectFit,
+        })),
+      )
+      .toEqual({ width, height, fit: 'contain' });
+    await page.unroute('**/renditions/**/derivative?**');
+  }
+});
+
+test('merged, hidden and repeated image states disclose ancestry and exact identities', async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.route('**/lineage/images/**/history?**', (route) =>
+    route.fulfill({
+      json: {
+        headCommitId: '1'.repeat(64),
+        hasHiddenHistory: true,
+        nextOffset: 5,
+        nodes: [
+          {
+            commit: {
+              commitId: '1'.repeat(64),
+              parents: ['2'.repeat(64), '3'.repeat(64)],
+              message: 'Repeated edit',
+              authoredAt: '2026-09-01T12:00:00Z',
+              hidden: false,
+            },
+            branches: ['main'],
+            tags: [],
+            hiddenParentIds: ['3'.repeat(64)],
+          },
+          {
+            commit: {
+              commitId: '2'.repeat(64),
+              parents: [],
+              message: 'Repeated edit',
+              authoredAt: '2026-08-01T12:00:00Z',
+              hidden: false,
+            },
+            branches: [],
+            tags: ['saved'],
+            hiddenParentIds: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/?asset=${assetOne}#id_token=fixture-token`);
+  const history = page.locator('.image-history');
+  await expect(history.locator('.history-list li')).toHaveCount(2);
+  await expect(
+    history.getByText('Merged or collapsed ancestry; inspect full history.'),
+  ).toBeVisible();
+  await expect(
+    history.getByText(
+      'Additional or hidden ancestry is available in full history.',
+    ),
+  ).toBeVisible();
+  await history
+    .locator('.history-list li')
+    .first()
+    .getByText('Version identity')
+    .click();
+  await expect(
+    history.getByText('1'.repeat(64), { exact: true }),
+  ).toBeVisible();
+  await history
+    .locator('.history-list li')
+    .nth(1)
+    .getByText('Version identity')
+    .click();
+  await expect(
+    history.getByText('2'.repeat(64), { exact: true }),
+  ).toBeVisible();
+  await expect(history.getByText('saved')).toBeVisible();
 });
 
 test('obsolete gallery and detail reads never replace a newer selection', async ({
@@ -211,6 +357,9 @@ test('empty and failed states remain actionable; normal browsing does not reques
 test('desktop gallery/filter/detail geometry and responsive reflow match reference hierarchy', async ({
   page,
 }, testInfo) => {
+  console.log(
+    `${testInfo.project.name} browser ${page.context().browser()?.version()}`,
+  );
   await fixture(page, { performance: true });
   await page.route('**/lineage/images/**/history?**', (route) =>
     route.fulfill({
@@ -277,6 +426,19 @@ test('desktop gallery/filter/detail geometry and responsive reflow match referen
   expect(inspector.width / detailBox.width).toBeGreaterThanOrEqual(0.3);
   expect(inspector.width / detailBox.width).toBeLessThanOrEqual(0.4);
   await page.screenshot({ path: testInfo.outputPath('details.png') });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const secondAt1280 = (await page
+    .locator('.image-history .history-list li')
+    .nth(1)
+    .boundingBox())!;
+  expect(secondAt1280.y + secondAt1280.height).toBeLessThanOrEqual(800);
+  await page.screenshot({ path: testInfo.outputPath('details-1280.png') });
+  await page.getByRole('button', { name: /Back to results/ }).click();
+  await page.screenshot({ path: testInfo.outputPath('gallery-1280.png') });
+  await page.getByRole('button', { name: /Filters/ }).click();
+  await page.screenshot({ path: testInfo.outputPath('filters-1280.png') });
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /image-1.jpg/ }).click();
   for (const width of [1280, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     const sizes = await page.evaluate(() => [

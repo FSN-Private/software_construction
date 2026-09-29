@@ -8,7 +8,7 @@
 }
 .gallery h3 {
   font-size: 16px;
-  margin: 20px 0 10px;
+  margin: 12px 0 8px;
 }
 .gallery-topline {
   display: flex;
@@ -266,7 +266,7 @@
 }
 .image-rating {
   color: var(--olive);
-  margin: 10px 0;
+  margin: 6px 0;
 }
 .image-tags {
   display: flex;
@@ -293,7 +293,7 @@
   display: grid;
   grid-template-columns: minmax(85px, 0.7fr) minmax(0, 1.3fr);
   gap: 12px;
-  padding: 7px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--line);
   font-size: 14px;
 }
@@ -305,19 +305,20 @@
   overflow-wrap: anywhere;
 }
 .gallery-fields small {
-  display: block;
+  display: inline;
   font-size: 14px;
+  margin-left: 6px;
 }
 .more-metadata,
 .metadata-edit,
 .image-actions,
 .retained-location {
-  margin-top: 18px;
+  margin-top: 8px;
   font-size: 14px;
 }
 .image-history {
   border-top: 1px solid var(--line);
-  margin-top: 20px;
+  margin-top: 10px;
   padding-top: 4px;
 }
 .history-caption {
@@ -326,13 +327,13 @@
 }
 .history-list {
   list-style: none;
-  margin: 14px 0;
+  margin: 8px 0;
   padding: 0 0 0 16px;
   border-left: 1px solid var(--line);
 }
 .history-list li {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   min-width: 0;
 }
 .history-list li::before {
