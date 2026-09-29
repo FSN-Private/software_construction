@@ -28,7 +28,7 @@
 
 ## Phase 6: Cross-Cutting Quality and Convergence — M3
 
-- [ ] T008 Validate responsive/zoom/text expansion/focus/reduced motion/contrast, geometry screenshots, error/private-network limits and timing in apps/web/tests/browser/frontend.spec.ts and existing gallery.spec.ts; run web checks and relevant backend regressions. Record exact browser versions/results in docs/features/015-gallery-first-frontend/validation.md. FR-017–018; AC-002, AC-013–014; NFR-002–007, NFR-009–012, NFR-015; SC-001–006.
+- [x] T008 Validate responsive/zoom/text expansion/focus/reduced motion/contrast, geometry screenshots, error/private-network limits and timing in apps/web/tests/browser/frontend.spec.ts and existing gallery.spec.ts; run web checks and relevant backend regressions. Record exact browser versions/results in docs/features/015-gallery-first-frontend/validation.md. FR-017–018; AC-002, AC-013–014; NFR-002–007, NFR-009–012, NFR-015; SC-001–006. Local validation complete; T009/T011 hold external evidence for SC-001/002/005/006.
 - [ ] T009 Obtain real 100,000-asset capacity, 500-version service performance, supported screen-reader walkthrough, owner visual acceptance and pre-production rollout/rollback evidence in docs/features/015-gallery-first-frontend/validation.md. NFR-001–002, NFR-006, NFR-013–014; SC-001, SC-005–006. External access/participant required; fixture results are not a waiver.
 - [ ] T010 Update apps/web/README.md and docs/features/015-gallery-first-frontend/validation.md with usage/operations/rollback, run Spec Kit convergence, append/remediate remaining numbered work and commit milestones. NFR-011, NFR-013–016; all FR/AC/SC completion gate. No pre-push review/push unless later explicitly authorized.
 
@@ -41,3 +41,7 @@ T001 precedes T002–T007; T003 before T004–T006. T005/T006 integrate T007; T0
 FR/AC coverage is inline above; contiguous ID ranges include each ID. NFR-001→T009; NFR-002→T008/T009; NFR-003→T005/T008; NFR-004→T002/T007/T008; NFR-005→T004/T008; NFR-006→T004/T008/T009; NFR-007→T008; NFR-008→T005/T006; NFR-009→T002/T008; NFR-010→T003/T008; NFR-011→T008/T010; NFR-012→T003/T008; NFR-013→T009/T010; NFR-014→T002/T009/T010; NFR-015→T008/T010; NFR-016→T007/T010. SC-001→T003/T008/T009; SC-002→T004/T008; SC-003→T005/T006/T008; SC-004→T007/T008; SC-005→T008/T009; SC-006→T008/T009.
 
 M1 validation: TypeScript/source/rendered-accessibility checks passed; Chromium browser suite 22 passed, 1 live-reference skipped. Gallery/drawer desktop geometry and responsive fixture checks passed; historical integration is validated further in M2.
+
+## Phase 7: Convergence
+
+- [ ] T011 Time the owner's rating + camera/tag → image → capture metadata/history → gallery return journey without diagnostics, record the result against SC-002's two-minute target in docs/features/015-gallery-first-frontend/validation.md, and remediate any observed usability blocker (partial; SC-002). Requires owner participation; deterministic browser navigation checks do not substitute for the timed owner journey.
