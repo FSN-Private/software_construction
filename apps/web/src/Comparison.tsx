@@ -66,12 +66,14 @@ export function VersionPreview({
   library,
   version,
   label,
+  expectedSourceSha256,
 }: {
   baseUrl: string;
   token: string;
   library: string;
   version: ImageVersion;
   label: string;
+  expectedSourceSha256?: string;
 }) {
   const [status, setStatus] = useState<PreviewStatus>({
     requestId: version.previewRequestId ?? '',
@@ -85,7 +87,9 @@ export function VersionPreview({
 
   const exact =
     status.provenance?.selectedVersion === version.commitId &&
-    status.provenance.xmpSha256 === version.xmpSha256;
+    status.provenance.xmpSha256 === version.xmpSha256 &&
+    (!expectedSourceSha256 ||
+      status.provenance.sourceSha256 === expectedSourceSha256);
   useEffect(() => {
     if (status.state !== 'completed' || !exact || !status.requestId) return;
     const controller = new AbortController();

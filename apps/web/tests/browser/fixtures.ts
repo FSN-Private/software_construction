@@ -46,6 +46,47 @@ export function detail(assetId: string, webVersion: number) {
     parseErrorCode: null,
     fields: [
       {
+        name: 'tag',
+        text: 'Landscape',
+        number: null,
+        date: null,
+        boolean: null,
+        source: 'xmp',
+        state: 'present',
+        timestampBasis: null,
+      },
+      ...[
+        ['camera', 'Sony A7 IV'],
+        ['lens', '24-70 mm'],
+      ].map(([name, text]) => ({
+        name,
+        text,
+        number: null,
+        date: null,
+        boolean: null,
+        source: 'embedded',
+        state: 'present',
+        timestampBasis: null,
+      })),
+      ...[
+        ['shutter', 0.004],
+        ['aperture', 8],
+        ['iso', 100],
+        ['width', 6000],
+        ['height', 4000],
+        ['rating', 4],
+      ].map(([name, value]) => ({
+        name: String(name),
+        text: null,
+        number: Number(value),
+        date: null,
+        boolean: null,
+        source: 'embedded',
+        state: 'present',
+        timestampBasis: null,
+      })),
+
+      {
         name: 'title',
         text: 'Fixture title',
         number: null,

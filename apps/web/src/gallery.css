@@ -38,7 +38,7 @@
 .gallery-search select {
   border-left: 0;
   border-radius: 0 8px 8px 0;
-  max-width: 120px;
+  width: 160px;
 }
 .gallery-toolbar > select {
   max-width: 150px;
@@ -267,6 +267,18 @@
 .image-rating {
   color: var(--olive);
   margin: 10px 0;
+}
+.image-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.image-tags span {
+  background: #e0e3d6;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 .working-state,
 .version-disclosure {

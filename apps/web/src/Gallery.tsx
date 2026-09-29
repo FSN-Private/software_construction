@@ -145,6 +145,7 @@ function Thumbnail({
   card: Card;
 }) {
   const [url, setUrl] = useState<string>();
+  const [loadedRequest, setLoadedRequest] = useState<string>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     setUrl(undefined);
@@ -164,13 +165,15 @@ function Thumbnail({
       })
       .then((result) => {
         if (!controller.signal.aborted) setUrl(result.locator);
+        if (!controller.signal.aborted)
+          setLoadedRequest(card.previewRequestId!);
       })
       .catch(() => {
         if (!controller.signal.aborted) setFailed(true);
       });
     return () => controller.abort();
   }, [baseUrl, token, library, card.previewState, card.previewRequestId]);
-  return url && !failed ? (
+  return url && loadedRequest === card.previewRequestId && !failed ? (
     <img
       src={url}
       alt={`Thumbnail of ${card.filename}`}
@@ -282,6 +285,7 @@ export function Gallery({
     )
       return;
     setEditDirty(false);
+    dirty.current = false;
     sessionStorage.removeItem(draftKey);
     const search = next.toString();
     window.history.replaceState(
@@ -328,6 +332,8 @@ export function Gallery({
   }
 
   useEffect(() => {
+    const previousRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
     const onPop = () => {
       if (
         dirty.current &&
@@ -343,6 +349,11 @@ export function Gallery({
         return;
       }
       setEditDirty(false);
+      dirty.current = false;
+      const previous = new URLSearchParams(currentLocation.current);
+      sessionStorage.removeItem(
+        `gallery.draft.${library}.${previous.get('branch') ?? 'main'}.${previous.get('asset') ?? ''}`,
+      );
       setLocation(window.location.search);
     };
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -368,6 +379,7 @@ export function Gallery({
     window.addEventListener('gallery-guard', guard);
     window.addEventListener('gallery-sign-out', signOut);
     return () => {
+      window.history.scrollRestoration = previousRestoration;
       window.removeEventListener('popstate', onPop);
       window.removeEventListener('beforeunload', beforeUnload);
       window.removeEventListener('gallery-guard', guard);
@@ -415,6 +427,7 @@ export function Gallery({
       values.delete('asset');
       values.delete('history');
       values.delete('galleryStart');
+      values.delete('imageVersion');
       setPage(undefined);
       void api<Page>(
         `/libraries/${encodeURIComponent(library)}/gallery?${values}`,
@@ -425,14 +438,6 @@ export function Gallery({
         .then((value) => {
           if (!abort.signal.aborted) {
             setPage(value);
-            const scroll = window.history.state?.galleryScroll;
-            if (typeof scroll === 'number')
-              window.requestAnimationFrame(() => {
-                window.scrollTo(0, scroll);
-                const id = window.history.state?.galleryFocus;
-                if (id)
-                  document.getElementById(id)?.focus({ preventScroll: true });
-              });
           }
         })
         .catch((reason) => {
@@ -441,6 +446,17 @@ export function Gallery({
     }
     return () => abort.abort();
   }, [baseUrl, token, library, location, refresh]);
+  useEffect(() => {
+    if (!page || selected) return;
+    const scroll = window.history.state?.galleryScroll;
+    if (typeof scroll !== 'number') return;
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo(0, scroll);
+      const id = window.history.state?.galleryFocus;
+      if (id) document.getElementById(id)?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, selected]);
   useEffect(() => {
     void api<Preference>(
       `/libraries/${encodeURIComponent(library)}/gallery/preferences`,
@@ -593,6 +609,7 @@ export function Gallery({
   }
   async function saveMetadata() {
     if (!detail) return;
+    const savingLocation = currentLocation.current;
     let value: unknown = editValue;
     if (editField === 'rating' || editField === 'color')
       value = editValue === '' ? null : Number(editValue);
@@ -619,11 +636,13 @@ export function Gallery({
           changes: { [editField]: value },
         },
       );
+      if (savingLocation !== currentLocation.current) return;
       setEditDirty(false);
       sessionStorage.removeItem(draftKey);
       setEditStatus('Metadata saved as an uncommitted working change.');
       await refreshDetail();
     } catch (reason) {
+      if (savingLocation !== currentLocation.current) return;
       if (String(reason).includes('stale_working_state')) {
         setEditStatus(
           'The working state changed. Details refreshed; review and retry your edit.',
@@ -637,6 +656,7 @@ export function Gallery({
     const next = new URLSearchParams(location);
     next.delete('asset');
     next.delete('history');
+    next.delete('imageVersion');
     if (
       dirty.current &&
       !window.confirm(
@@ -645,11 +665,13 @@ export function Gallery({
     )
       return;
     setEditDirty(false);
+    dirty.current = false;
+    sessionStorage.removeItem(draftKey);
     if (window.history.state?.galleryDetail) window.history.back();
     else navigate(next);
   }
   function openHistory() {
-    const next = new URLSearchParams(location);
+    const next = new URLSearchParams(window.location.search);
     next.set('history', '1');
     navigate(next, { galleryHistory: true });
   }
@@ -756,6 +778,46 @@ export function Gallery({
   const rating = detail?.fields.find(
     (field) => field.name === 'rating',
   )?.number;
+  const visibleFields =
+    detail?.fields.filter(
+      (field) =>
+        !hidesLocation ||
+        !['latitude', 'longitude', 'location'].includes(field.name),
+    ) ?? [];
+  const summaryFields = visibleFields.filter((field) =>
+    ['camera', 'lens', 'capturedAt', 'captureDate'].includes(field.name),
+  );
+  for (const [name, keys] of [
+    ['Exposure', ['shutter', 'aperture', 'iso']],
+    ['Dimensions', ['width', 'height']],
+  ] as const) {
+    const fields = keys
+      .map((key) => visibleFields.find((field) => field.name === key))
+      .filter((field): field is Field => !!field);
+    if (fields.length)
+      summaryFields.push({
+        name,
+        text: fields
+          .map((field) => {
+            if (field.state !== 'present' || field.number === null)
+              return `${metadataLabel(field.name)} ${displayedField(field)}`;
+            if (field.name === 'shutter')
+              return `${field.number > 0 && field.number < 1 ? `1/${Math.round(1 / field.number)}` : displayedField(field)} s`;
+            if (field.name === 'aperture') return `f/${displayedField(field)}`;
+            if (field.name === 'iso') return `ISO ${displayedField(field)}`;
+            return `${metadataLabel(field.name)} ${displayedField(field)} px`;
+          })
+          .join(' \u00b7 '),
+        number: null,
+        date: null,
+        boolean: null,
+        state: 'present',
+        source: Array.from(new Set(fields.map((field) => field.source))).join(
+          ', ',
+        ),
+        timestampBasis: null,
+      });
+  }
   const renderFields = (fields: Field[]) => (
     <dl className="gallery-fields">
       {fields.map((field, index) => (
@@ -782,6 +844,7 @@ export function Gallery({
         library={library}
         asset={selected}
         branch={params.get('branch') ?? 'main'}
+        initialCommit={params.get('imageVersion') ?? undefined}
         onSwitchBranch={(nextBranch) => {
           const next = new URLSearchParams(location);
           next.set('branch', nextBranch);
@@ -838,6 +901,7 @@ export function Gallery({
                       library={library}
                       version={version}
                       label="Selected version"
+                      expectedSourceSha256={detail.originalSha256}
                     />
                   ) : (
                     <p role="status">
@@ -915,6 +979,16 @@ export function Gallery({
                     ? 'Unrated'
                     : '★'.repeat(rating) + '☆'.repeat(5 - rating)}
                 </p>
+                <div className="image-tags" aria-label="Image tags">
+                  {visibleFields
+                    .filter(
+                      (field) =>
+                        field.name === 'tag' && field.state === 'present',
+                    )
+                    .map((field, index) => (
+                      <span key={index}>{field.text}</span>
+                    ))}
+                </div>
                 <p className="working-state">
                   Branch: {detail.working.branch}.{' '}
                   {detail.working.webVersion
@@ -933,56 +1007,18 @@ export function Gallery({
                   </p>
                 )}
                 <h3>{historical ? 'Current working metadata' : 'Metadata'}</h3>
-                {renderFields(
-                  detail.fields
-                    .filter(
-                      (field) =>
-                        !['latitude', 'longitude', 'location'].includes(
-                          field.name,
-                        ) || !hidesLocation,
-                    )
-                    .filter((field) =>
-                      [
-                        'camera',
-                        'lens',
-                        'capturedAt',
-                        'captureDate',
-                        'focalLength',
-                        'aperture',
-                        'shutter',
-                        'iso',
-                        'width',
-                        'height',
-                        'rating',
-                        'tags',
-                        'title',
-                      ].includes(field.name),
-                    ),
-                )}
+                {renderFields(summaryFields)}
                 <details className="more-metadata">
                   <summary>More metadata</summary>
                   {renderFields(
-                    detail.fields.filter(
+                    visibleFields.filter(
                       (field) =>
                         ![
                           'camera',
                           'lens',
                           'capturedAt',
                           'captureDate',
-                          'focalLength',
-                          'aperture',
-                          'shutter',
-                          'iso',
-                          'width',
-                          'height',
-                          'rating',
-                          'tags',
-                          'title',
-                        ].includes(field.name) &&
-                        (!hidesLocation ||
-                          !['latitude', 'longitude', 'location'].includes(
-                            field.name,
-                          )),
+                        ].includes(field.name),
                     ),
                   )}
                 </details>
@@ -993,9 +1029,21 @@ export function Gallery({
                   library={library}
                   asset={detail.assetId}
                   branch={detail.working.branch}
+                  initialCommit={params.get('imageVersion') ?? undefined}
                   onSelection={(chosen, state) => {
                     setHistorical(chosen);
                     setVersion(state);
+                    if (state || !chosen) {
+                      const next = new URLSearchParams(window.location.search);
+                      if (state) next.set('imageVersion', state.commitId);
+                      else next.delete('imageVersion');
+                      window.history.replaceState(
+                        window.history.state,
+                        '',
+                        `${window.location.pathname}?${next}`,
+                      );
+                      currentLocation.current = window.location.search;
+                    }
                   }}
                   onFullHistory={openHistory}
                 />
@@ -1046,6 +1094,7 @@ export function Gallery({
                     <label>
                       Field{' '}
                       <select
+                        aria-label="Field"
                         value={editField}
                         onChange={(event) => {
                           setEditField(event.target.value);
@@ -1066,6 +1115,7 @@ export function Gallery({
                       {editField === 'location' ? 'Latitude' : 'Value'}{' '}
                       {editField === 'rejected' ? (
                         <select
+                          aria-label="Value"
                           value={editValue}
                           onChange={(event) => setEditValue(event.target.value)}
                           required
@@ -1076,6 +1126,10 @@ export function Gallery({
                         </select>
                       ) : (
                         <input
+                          aria-label={
+                            editField === 'location' ? 'Latitude' : 'Value'
+                          }
+                          maxLength={16384}
                           type={
                             ['rating', 'color', 'location'].includes(editField)
                               ? 'number'

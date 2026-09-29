@@ -8,6 +8,7 @@
   --olive: #596744;
   --muted: #64675e;
   --line: #deded7;
+  --control-line: #858a7d;
 }
 * {
   box-sizing: border-box;
@@ -29,7 +30,7 @@ button,
 select,
 input,
 textarea {
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-line);
   border-radius: 8px;
   background: #fafaf7;
   color: inherit;
@@ -80,6 +81,10 @@ input[type='radio'] {
   accent-color: var(--olive);
 }
 .workspace-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f7f6f2;
   height: 64px;
   display: flex;
   align-items: center;

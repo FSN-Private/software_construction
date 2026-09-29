@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { idToken, platformConfig } from './platform-config';
 import { Library } from './Library';
 import { Gallery } from './Gallery';
@@ -20,6 +20,14 @@ export function App() {
   const [token, setToken] = useState(idToken);
   const [expired, setExpired] = useState(false);
   const [view, setView] = useState('gallery');
+  const scrollPositions = useRef<Record<string, number>>({});
+  function openView(next: string) {
+    scrollPositions.current[view] = window.scrollY;
+    setView(next);
+  }
+  useLayoutEffect(() => {
+    window.scrollTo(0, scrollPositions.current[view] ?? 0);
+  }, [view]);
   const [libraryOpened, setLibraryOpened] = useState(false);
   const [branch, setBranch] = useState(
     () => new URLSearchParams(window.location.search).get('branch') ?? 'main',
@@ -198,14 +206,14 @@ export function App() {
               <button
                 className={view === 'gallery' ? 'active' : ''}
                 aria-current={view === 'gallery' ? 'page' : undefined}
-                onClick={() => setView('gallery')}
+                onClick={() => openView('gallery')}
               >
                 Gallery
               </button>
               <button
                 className={view === 'history' ? 'active' : ''}
                 aria-current={view === 'history' ? 'page' : undefined}
-                onClick={() => setView('history')}
+                onClick={() => openView('history')}
               >
                 History
               </button>
@@ -222,7 +230,7 @@ export function App() {
               <button
                 onClick={() => {
                   setLibraryOpened(true);
-                  setView('library');
+                  openView('library');
                 }}
               >
                 ↑ Import
@@ -230,7 +238,7 @@ export function App() {
               <details className="owner-menu">
                 <summary aria-label="Owner controls">Owner</summary>
                 <div>
-                  <button onClick={() => setView('diagnostics')}>
+                  <button onClick={() => openView('diagnostics')}>
                     Service details
                   </button>
                   <button onClick={signOut}>Sign out</button>
@@ -268,7 +276,7 @@ export function App() {
                 library={config.galleryLibraryId}
                 onLibrary={() => {
                   setLibraryOpened(true);
-                  setView('library');
+                  openView('library');
                 }}
               />
             </div>
@@ -291,13 +299,14 @@ export function App() {
                 next.set('history', '1');
                 window.history.pushState({}, '', `?${next}`);
                 window.dispatchEvent(new PopStateEvent('popstate'));
-                setView('gallery');
+                scrollPositions.current.gallery = 0;
+                openView('gallery');
               }}
             />
           )}
           {libraryOpened && (
             <section hidden={view !== 'library'} className="secondary-view">
-              <button onClick={() => setView('gallery')}>
+              <button onClick={() => openView('gallery')}>
                 ← Back to gallery
               </button>
               <Library baseUrl={config.apiBaseUrl} token={token} />
@@ -308,7 +317,7 @@ export function App() {
             className="secondary-view"
             aria-labelledby="service-status-heading"
           >
-            <button onClick={() => setView('gallery')}>
+            <button onClick={() => openView('gallery')}>
               ← Back to gallery
             </button>
             <h2 id="service-status-heading">Service and deployment status</h2>
