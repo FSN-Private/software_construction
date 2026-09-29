@@ -1010,12 +1010,18 @@ test('non-default rewrite previews displaced history and recovery names a branch
       request.url().endsWith('/version-control/rewrite') &&
       request.method() === 'POST',
   );
+  const refreshedHistory = page.waitForResponse(
+    (response) =>
+      response.url().includes('/lineage/images/') &&
+      new URL(response.url()).pathname.endsWith('/history'),
+  );
   await page.getByRole('button', { name: 'Confirm branch rewrite' }).click();
   expect((await rewrite).postDataJSON()).toMatchObject({
     branch: 'source',
     previewToken: 'fixture-preview',
     confirm: true,
   });
+  await refreshedHistory;
   await expect(page.getByLabel('Eligible reflog entry')).toBeVisible();
   await page
     .getByLabel('Eligible reflog entry')
