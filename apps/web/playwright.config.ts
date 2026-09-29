@@ -20,10 +20,12 @@ export default defineConfig({
     },
     { name: 'Firefox', use: { browserName: 'firefox' } },
   ],
-  webServer: {
-    command: `npx vite --host 127.0.0.1 --port ${browserTestPort} --strictPort`,
-    url: browserTestOrigin,
-    reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
-  },
+  webServer: process.env.BROWSER_TEST_EXTERNAL_SERVER
+    ? undefined
+    : {
+        command: `npx vite --host 127.0.0.1 --port ${browserTestPort} --strictPort`,
+        url: browserTestOrigin,
+        reuseExistingServer: !process.env.CI,
+        timeout: 30_000,
+      },
 });

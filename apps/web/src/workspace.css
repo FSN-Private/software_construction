@@ -1,0 +1,273 @@
+@import url('./gallery.css');
+
+:root {
+  font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+  color: #242621;
+  background: #f7f6f2;
+  font-synthesis: none;
+  --olive: #596744;
+  --muted: #64675e;
+  --line: #deded7;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+[hidden] {
+  display: none !important;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 14px;
+}
+button,
+select,
+input,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafaf7;
+  color: inherit;
+  padding: 9px 12px;
+  max-width: 100%;
+}
+button,
+summary {
+  cursor: pointer;
+}
+button:hover {
+  background: #eeeee6;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+button.primary {
+  color: #fff;
+  background: var(--olive);
+  border-color: var(--olive);
+}
+a {
+  color: #485936;
+}
+:focus-visible {
+  outline: 3px solid #596744;
+  outline-offset: 3px;
+}
+small,
+.muted {
+  color: var(--muted);
+}
+code {
+  overflow-wrap: anywhere;
+}
+input,
+select,
+textarea {
+  min-height: 40px;
+}
+label {
+  line-height: 1.5;
+}
+input[type='checkbox'],
+input[type='radio'] {
+  min-height: auto;
+  accent-color: var(--olive);
+}
+.workspace-header {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+}
+.workspace-header h1 > span:first-child {
+  font-size: 25px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.workspace-header nav {
+  display: flex;
+  align-self: stretch;
+  gap: 20px;
+}
+.workspace-header nav button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.workspace-header nav button.active {
+  color: var(--olive);
+  border-bottom-color: var(--olive);
+}
+.branch-control {
+  border: 0;
+  background: transparent;
+}
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.owner-menu {
+  position: relative;
+}
+.owner-menu > summary {
+  padding: 8px;
+  font-size: 14px;
+}
+.owner-menu > div {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  top: 36px;
+  width: 180px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.owner-menu button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+}
+.sign-in {
+  max-width: 560px;
+  padding: 96px 28px;
+  margin: auto;
+}
+.sign-in h2 {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 500;
+}
+.sign-in p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--olive);
+}
+.secondary-view {
+  padding: 28px 32px;
+}
+.secondary-view h2 {
+  font-size: 24px;
+}
+.secondary-view fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-block: 12px;
+  padding: 16px;
+}
+.secondary-view table,
+.lineage table {
+  width: 100%;
+  border-collapse: collapse;
+}
+td,
+th {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.workspace-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7f6f2;
+}
+.workspace-dialog::backdrop {
+  background: rgb(25 28 22 / 32%);
+}
+.dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.dialog-heading h2 {
+  font-size: 20px;
+  margin: 0;
+}
+.dialog-heading button {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  padding: 4px 12px;
+}
+.workspace-dialog fieldset {
+  border: 1px solid var(--line);
+  margin-block: 16px;
+  min-width: 0;
+}
+.workspace-dialog label {
+  display: block;
+  margin-block: 8px;
+}
+.workspace-dialog input,
+.workspace-dialog select {
+  max-width: 100%;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .workspace-header {
+    height: auto;
+    min-height: 64px;
+    padding: 12px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .workspace-header nav {
+    gap: 12px;
+  }
+  .header-actions {
+    gap: 8px;
+  }
+  .secondary-view {
+    padding: 20px 16px;
+  }
+  .sign-in {
+    padding-top: 48px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}

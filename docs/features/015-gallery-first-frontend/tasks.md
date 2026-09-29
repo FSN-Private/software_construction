@@ -10,12 +10,12 @@
 
 ## Phase 2: Foundation and US1 — M1
 
-- [ ] T002 [US1] Compose owner workspace/secondary lifecycle/diagnostics and safe sign-out in apps/web/src/App.tsx and workspace.css; update apps/web/README.md and source/accessibility checks. Validate session/privacy/navigation behavior. FR-001, FR-018; AC-001, AC-014; NFR-004, NFR-009, NFR-014.
-- [ ] T003 [US1] Implement contact-sheet design, toolbar/scoped search, real counts/ranges/paging and density in apps/web/src/Gallery.tsx and gallery.css; tests in apps/web/tests/browser/frontend.spec.ts. FR-002–004; AC-002–003; NFR-010, NFR-012; SC-001.
+- [ ] T002 [US1] ? IN PROGRESS Compose owner workspace/secondary lifecycle/diagnostics and safe sign-out in apps/web/src/App.tsx and workspace.css; update apps/web/README.md and source/accessibility checks. Validate session/privacy/navigation behavior. FR-001, FR-018; AC-001, AC-014; NFR-004, NFR-009, NFR-014.
+- [x] T003 [US1] Implement contact-sheet design, toolbar/scoped search, real counts/ranges/paging and density in apps/web/src/Gallery.tsx and gallery.css; tests in apps/web/tests/browser/frontend.spec.ts. FR-002–004; AC-002–003; NFR-010, NFR-012; SC-001.
 
 ## Phase 3: US2 — M1
 
-- [ ] T004 [US2] Implement native left filter drawer, complete common/advanced facets, draft/apply/cancel/reset, validation/chips/privacy and focus in apps/web/src/Gallery.tsx; update browser/accessibility tests and web guide. FR-005–007; AC-004–005; NFR-005–006; SC-002.
+- [x] T004 [US2] Implement native left filter drawer, complete common/advanced facets, draft/apply/cancel/reset, validation/chips/privacy and focus in apps/web/src/Gallery.tsx; update browser/accessibility tests and web guide. FR-005–007; AC-004–005; NFR-005–006; SC-002.
 
 ## Phase 4: US3 — M2
 
@@ -39,3 +39,5 @@ T001 precedes T002–T007; T003 before T004–T006. T005/T006 integrate T007; T0
 ## Requirement Traceability
 
 FR/AC coverage is inline above; contiguous ID ranges include each ID. NFR-001→T009; NFR-002→T008/T009; NFR-003→T005/T008; NFR-004→T002/T007/T008; NFR-005→T004/T008; NFR-006→T004/T008/T009; NFR-007→T008; NFR-008→T005/T006; NFR-009→T002/T008; NFR-010→T003/T008; NFR-011→T008/T010; NFR-012→T003/T008; NFR-013→T009/T010; NFR-014→T002/T009/T010; NFR-015→T008/T010; NFR-016→T007/T010. SC-001→T003/T008/T009; SC-002→T004/T008; SC-003→T005/T006/T008; SC-004→T007/T008; SC-005→T008/T009; SC-006→T008/T009.
+
+M1 validation: TypeScript/source/rendered-accessibility checks passed; Chromium browser suite 22 passed, 1 live-reference skipped. Gallery/drawer desktop geometry and responsive fixture checks passed; historical integration is validated further in M2.

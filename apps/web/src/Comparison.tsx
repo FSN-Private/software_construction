@@ -60,7 +60,7 @@ type PreviewStatus = {
   failureCode: string | null;
 };
 
-function VersionPreview({
+export function VersionPreview({
   baseUrl,
   token,
   library,
