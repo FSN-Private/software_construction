@@ -96,3 +96,19 @@ The reviewer explicitly found no blocking issue in owner authorization and recen
 The alternate reviewer inspected this pending record and the T020/validation updates. It found the Rounds 1–4 evidence and dispositions accurate, requested the wording correction above from “implementation commits” to “local feature commits” because the range includes an earlier review-record commit, and stated: **“no valid unresolved blocking finding remains and the final pre-push gate should be PASS.”** The correction and this agreement are included in the exact final record submitted for one last read-only reviewer inspection before commit.
 
 **Final pre-push gate: PASS.** No blocking finding remains unresolved. This gate does not authorize a push, merge, deployment, or other remote mutation. No push or merge has occurred.
+
+## Round 5: PR #29 formatting CI follow-up (2026-09-29)
+
+The user authorized push, PR creation, CI follow-up, and merge after passing checks. The initial reviewed head `855cedd` was pushed normally to `origin/feature/010-lineage-merge-interface-fresh`, and [PR #29](https://github.com/FSN-Private/software_construction/pull/29) was opened against `master`. The initial [CI run 36563967248](https://github.com/FSN-Private/software_construction/actions/runs/36563967248) rejected two whitespace errors in the XMP writer initializer; T023 and `22ff656` format its three properties onto separate lines, retaining identical values and behavior.
+
+- **Alternate reviewer:** `gpt-5.6-sol`, read-only.
+- **Base/full revised range:** `origin/master` at `520e255`, through `22ff656`.
+- **Remote/destination:** `origin`, `refs/heads/feature/010-lineage-merge-interface-fresh`, currently at `855cedd`.
+- **Pending push scope:** `855cedd..22ff656` plus this final review/validation record commit, by normal non-force update. The earlier eleven published commits remain included in PR #29.
+- **Validation:** `dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore` and `git diff --check` pass. No runtime change was made, so further behavioral tests were not necessary for this correction; remote CI will rerun before merge.
+
+The reviewer inspected the complete revised range and reported **PASS**: the formatting retains `Encoding`, `Indent`, and `CloseOutput` values without runtime, serialization, compatibility, security, or integrity change. Earlier B-001/B-002/B-003/N-001 dispositions remain valid and fixed. It found no new blocking correctness, concurrency, authorization, privacy, migration, performance, accessibility, test, dependency, or scope issue.
+
+**N-002 — nonblocking, low, documentation accuracy:** the validation record still said no push was requested after recording PR #29. The implementer independently confirmed the stale sentence and corrected it to record the authorized initial push/PR and the follow-up review requirement. This correction is part of the exact pending final record scope submitted for the reviewer's final inspection before commit.
+
+**Current final pre-push gate: PASS**, with no unresolved blocking finding. After inspecting this exact pending Round 5 record and the N-002 validation correction, the alternate reviewer explicitly agreed that no valid unresolved blocking finding remains, the final pre-push gate is PASS, and these files may be committed unchanged. This gate does not authorize deployment. The initial push and PR were performed under the user's separate authorization; merge remains conditional on passing remote CI.

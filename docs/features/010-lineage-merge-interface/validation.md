@@ -50,7 +50,7 @@ Delivery follow-up on 2026-09-29: [PR #29](https://github.com/FSN-Private/softwa
 
 - Manual keyboard and screen-reader exercise against the deployed UI, plus a formal WCAG 2.2 AA review, still require a human and assistive technology environment.
 - Pre-production rollout/rollback with the deployed Cognito hosted UI logout-to-login path, live alert delivery, and production-like 1-million-entry load require release authorization and environment access. The local persisted reference-scale fixture verifies the query and migration behavior, but does not claim that deployment exercise.
-- No push was requested. The alternate-model review outcome and each finding disposition are recorded in `reviews/pre-push-review.md`; its gate does not authorize a push.
+- The user authorized the initial push and PR on 2026-09-29, and PR #29 was opened. Follow-up commits require the recorded alternate-model review before their authorized push; that review does not itself grant push authority.
 
 ## Convergence
 
