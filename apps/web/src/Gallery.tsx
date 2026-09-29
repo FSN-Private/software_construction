@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Lineage } from './Lineage';
+import { Modal } from './Modal';
+import { ImageHistory } from './ImageHistory';
+import { VersionPreview, type ImageVersion } from './Comparison';
 import './gallery.css';
 
 type Card = {
@@ -142,7 +145,10 @@ function Thumbnail({
   card: Card;
 }) {
   const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    setUrl(undefined);
+    setFailed(false);
     if (card.previewState !== 'available' || !card.previewRequestId) return;
     const controller = new AbortController();
     fetch(
@@ -156,15 +162,24 @@ function Thumbnail({
         if (!response.ok) throw new Error('Preview unavailable');
         return (await response.json()) as { locator: string };
       })
-      .then((result) => setUrl(result.locator))
-      .catch(() => setUrl(undefined));
+      .then((result) => {
+        if (!controller.signal.aborted) setUrl(result.locator);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailed(true);
+      });
     return () => controller.abort();
   }, [baseUrl, token, library, card.previewState, card.previewRequestId]);
-  return url ? (
-    <img src={url} alt={`Thumbnail of ${card.filename}`} loading="lazy" />
+  return url && !failed ? (
+    <img
+      src={url}
+      alt={`Thumbnail of ${card.filename}`}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
   ) : (
     <span className="gallery-placeholder" role="status">
-      {card.previewState === 'failed'
+      {card.previewState === 'failed' || failed
         ? 'Thumbnail failed'
         : 'Thumbnail pending'}
     </span>
@@ -175,10 +190,12 @@ export function Gallery({
   baseUrl,
   token,
   library,
+  onLibrary,
 }: {
   baseUrl: string;
   token: string;
   library: string;
+  onLibrary?: () => void;
 }) {
   const [location, setLocation] = useState(() => window.location.search);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -195,23 +212,102 @@ export function Gallery({
   const [editValue, setEditValue] = useState('');
   const [editLongitude, setEditLongitude] = useState('');
   const [editStatus, setEditStatus] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filterError, setFilterError] = useState('');
+  const [density, setDensity] = useState('comfortable');
+  const [refresh, setRefresh] = useState(0);
+  const [version, setVersion] = useState<ImageVersion>();
+  const [historical, setHistorical] = useState(false);
+  const [editDirty, setEditDirty] = useState(false);
+  const dirty = useRef(false);
+  dirty.current = editDirty;
+  const currentLocation = useRef(location);
+  currentLocation.current = location;
   const params = new URLSearchParams(location);
   const selected = params.get('asset');
+  const draftKey = `gallery.draft.${library}.${params.get('branch') ?? 'main'}.${selected ?? ''}`;
+  useEffect(() => {
+    if (!selected) return;
+    const saved = sessionStorage.getItem(draftKey);
+    if (!saved) {
+      setEditValue('');
+      setEditLongitude('');
+      setEditDirty(false);
+      return;
+    }
+    try {
+      const draft = JSON.parse(saved) as {
+        field: string;
+        value: string;
+        longitude: string;
+      };
+      if (
+        ![
+          'rating',
+          'rejected',
+          'color',
+          'tags',
+          'title',
+          'description',
+          'location',
+        ].includes(draft.field)
+      )
+        return;
+      setEditField(draft.field);
+      setEditValue(draft.value);
+      setEditLongitude(draft.longitude);
+      setEditDirty(true);
+    } catch {
+      sessionStorage.removeItem(draftKey);
+    }
+  }, [draftKey, selected]);
+  useEffect(() => {
+    if (editDirty && selected)
+      sessionStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          field: editField,
+          value: editValue.slice(0, 16384),
+          longitude: editLongitude,
+        }),
+      );
+  }, [editDirty, editField, editValue, editLongitude, selected, draftKey]);
 
   function navigate(next: URLSearchParams, state: object = {}) {
+    if (
+      dirty.current &&
+      !window.confirm(
+        'Leave this image and discard the unsaved metadata draft?',
+      )
+    )
+      return;
+    setEditDirty(false);
+    sessionStorage.removeItem(draftKey);
     const search = next.toString();
+    window.history.replaceState(
+      {
+        ...window.history.state,
+        galleryScroll: window.scrollY,
+        gallerySearch: location,
+      },
+      '',
+      window.location.href,
+    );
     window.history.pushState(
       state,
       '',
       `${window.location.pathname}${search ? '?' + search : ''}`,
     );
     setLocation(window.location.search);
+    window.dispatchEvent(new Event('gallery-navigation'));
+    if (next.has('asset')) window.scrollTo(0, 0);
   }
 
   async function api<T>(
     path: string,
     method = 'GET',
     body?: object,
+    signal?: AbortSignal,
   ): Promise<T> {
     const response = await fetch(`${baseUrl}/v1${path}`, {
       method,
@@ -222,22 +318,72 @@ export function Gallery({
       },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
+      signal,
     });
     const result = (await response.json()) as T & { code?: string };
+    if (response.status === 401)
+      window.dispatchEvent(new Event('owner-session-expired'));
     if (!response.ok) throw new Error(result.code ?? 'Gallery request failed');
     return result;
   }
 
   useEffect(() => {
-    const onPop = () => setLocation(window.location.search);
+    const onPop = () => {
+      if (
+        dirty.current &&
+        !window.confirm(
+          'Leave this image and discard the unsaved metadata draft?',
+        )
+      ) {
+        window.history.pushState(
+          window.history.state,
+          '',
+          `${window.location.pathname}${currentLocation.current}`,
+        );
+        return;
+      }
+      setEditDirty(false);
+      setLocation(window.location.search);
+    };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirty.current) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    const guard = (event: Event) => {
+      if (dirty.current) {
+        event.preventDefault();
+        window.alert(
+          'Save or discard your unsaved metadata draft before switching branches.',
+        );
+      }
+    };
+    const signOut = () => {
+      dirty.current = false;
+      setEditDirty(false);
+    };
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    window.addEventListener('beforeunload', beforeUnload);
+    window.addEventListener('gallery-guard', guard);
+    window.addEventListener('gallery-sign-out', signOut);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener('beforeunload', beforeUnload);
+      window.removeEventListener('gallery-guard', guard);
+      window.removeEventListener('gallery-sign-out', signOut);
+    };
   }, []);
   useEffect(() => {
+    const abort = new AbortController();
     const values = new URLSearchParams(location);
     setDraft(
       Object.fromEntries(
-        filterFields.map((field) => [
+        [
+          ...filterFields,
+          { key: 'rejected', label: 'Rejected' },
+          { key: 'locationPresent', label: 'Location present' },
+        ].map((field) => [
           field.key,
           field.type === 'datetime-local'
             ? localDateInput(values.get(field.key) ?? '')
@@ -248,24 +394,53 @@ export function Gallery({
     setError('');
     setRevealed(undefined);
     setEditStatus('');
+    setHistorical(false);
+    setVersion(undefined);
     if (values.has('asset')) {
       const asset = values.get('asset');
       setDetail(undefined);
       void api<Detail>(
         `/libraries/${encodeURIComponent(library)}/gallery/${encodeURIComponent(asset ?? '')}?branch=${encodeURIComponent(values.get('branch') ?? 'main')}`,
+        'GET',
+        undefined,
+        abort.signal,
       )
-        .then(setDetail)
-        .catch((reason) => setError(String(reason)));
+        .then((value) => {
+          if (!abort.signal.aborted) setDetail(value);
+        })
+        .catch((reason) => {
+          if (!abort.signal.aborted) setError(String(reason));
+        });
     } else {
       values.delete('asset');
+      values.delete('history');
+      values.delete('galleryStart');
       setPage(undefined);
       void api<Page>(
         `/libraries/${encodeURIComponent(library)}/gallery?${values}`,
+        'GET',
+        undefined,
+        abort.signal,
       )
-        .then(setPage)
-        .catch((reason) => setError(String(reason)));
+        .then((value) => {
+          if (!abort.signal.aborted) {
+            setPage(value);
+            const scroll = window.history.state?.galleryScroll;
+            if (typeof scroll === 'number')
+              window.requestAnimationFrame(() => {
+                window.scrollTo(0, scroll);
+                const id = window.history.state?.galleryFocus;
+                if (id)
+                  document.getElementById(id)?.focus({ preventScroll: true });
+              });
+          }
+        })
+        .catch((reason) => {
+          if (!abort.signal.aborted) setError(String(reason));
+        });
     }
-  }, [baseUrl, token, library, location]);
+    return () => abort.abort();
+  }, [baseUrl, token, library, location, refresh]);
   useEffect(() => {
     void api<Preference>(
       `/libraries/${encodeURIComponent(library)}/gallery/preferences`,
@@ -275,6 +450,33 @@ export function Gallery({
   }, [baseUrl, token, library]);
 
   function applyFilters() {
+    for (const [from, to] of [
+      ['captureFrom', 'captureTo'],
+      ['importFrom', 'importTo'],
+      ...[
+        'focalLength',
+        'aperture',
+        'shutter',
+        'iso',
+        'width',
+        'height',
+        'latitude',
+        'longitude',
+      ].map((key) => [key + 'Min', key + 'Max']),
+    ]) {
+      if (
+        draft[from] &&
+        draft[to] &&
+        (from.endsWith('From')
+          ? new Date(draft[from]).getTime() > new Date(draft[to]).getTime()
+          : Number(draft[from]) > Number(draft[to]))
+      ) {
+        setFilterError(
+          `${filterFields.find((field) => field.key === from)?.label}: minimum must not exceed maximum.`,
+        );
+        return;
+      }
+    }
     const next = new URLSearchParams(location);
     for (const field of filterFields) {
       next.delete(field.key);
@@ -291,16 +493,19 @@ export function Gallery({
       if (draft[key]) next.set(key, draft[key]);
     }
     next.delete('cursor');
+    next.delete('galleryStart');
     next.delete('asset');
     navigate(next);
+    setFiltersOpen(false);
   }
   async function run(action: () => Promise<void>) {
+    const startedAt = currentLocation.current;
     setBusy(true);
     setError('');
     try {
       await action();
     } catch (reason) {
-      setError(String(reason));
+      if (startedAt === currentLocation.current) setError(String(reason));
     } finally {
       setBusy(false);
     }
@@ -380,11 +585,11 @@ export function Gallery({
 
   async function refreshDetail() {
     if (!selected) return;
-    setDetail(
-      await api<Detail>(
-        `/libraries/${encodeURIComponent(library)}/gallery/${encodeURIComponent(selected)}?branch=${encodeURIComponent(params.get('branch') ?? 'main')}`,
-      ),
+    const startedAt = currentLocation.current;
+    const updated = await api<Detail>(
+      `/libraries/${encodeURIComponent(library)}/gallery/${encodeURIComponent(selected)}?branch=${encodeURIComponent(params.get('branch') ?? 'main')}`,
     );
+    if (startedAt === currentLocation.current) setDetail(updated);
   }
   async function saveMetadata() {
     if (!detail) return;
@@ -414,6 +619,8 @@ export function Gallery({
           changes: { [editField]: value },
         },
       );
+      setEditDirty(false);
+      sessionStorage.removeItem(draftKey);
       setEditStatus('Metadata saved as an uncommitted working change.');
       await refreshDetail();
     } catch (reason) {
@@ -425,6 +632,146 @@ export function Gallery({
       } else throw reason;
     }
   }
+
+  function backToGallery() {
+    const next = new URLSearchParams(location);
+    next.delete('asset');
+    next.delete('history');
+    if (
+      dirty.current &&
+      !window.confirm(
+        'Leave this image and discard the unsaved metadata draft?',
+      )
+    )
+      return;
+    setEditDirty(false);
+    if (window.history.state?.galleryDetail) window.history.back();
+    else navigate(next);
+  }
+  function openHistory() {
+    const next = new URLSearchParams(location);
+    next.set('history', '1');
+    navigate(next, { galleryHistory: true });
+  }
+  function openFilters() {
+    const values = new URLSearchParams(location);
+    setDraft(
+      Object.fromEntries(
+        [...filterFields, { key: 'rejected' }, { key: 'locationPresent' }].map(
+          (field) => {
+            const definition = filterFields.find(
+              (item) => item.key === field.key,
+            );
+            return [
+              field.key,
+              definition?.type === 'datetime-local'
+                ? localDateInput(values.get(field.key) ?? '')
+                : (values.get(field.key) ?? ''),
+            ];
+          },
+        ),
+      ),
+    );
+    setFilterError('');
+    setFiltersOpen(true);
+  }
+  const hidesLocation = preference?.hideGeolocation !== false;
+  const common = [
+    'captureFrom',
+    'captureTo',
+    'rating',
+    'camera',
+    'fileType',
+    'tag',
+    'color',
+  ];
+  const activeKeys = [
+    ...filterFields.map((field) => field.key),
+    'rejected',
+    'locationPresent',
+  ].filter(
+    (key) =>
+      params.has(key) &&
+      (!hidesLocation ||
+        (!key.startsWith('latitude') &&
+          !key.startsWith('longitude') &&
+          key !== 'locationPresent')),
+  );
+  const renderFilter = (field: {
+    key: string;
+    label: string;
+    type?: string;
+  }) => (
+    <label key={field.key}>
+      {field.label}
+      {field.key === 'rating' ? (
+        <select
+          aria-label="Rating"
+          value={draft.rating ?? ''}
+          onChange={(event) =>
+            setDraft({ ...draft, rating: event.target.value })
+          }
+        >
+          <option value="">Any rating</option>
+          {[0, 1, 2, 3, 4, 5].map((rating) => (
+            <option key={rating} value={rating}>
+              {rating} stars (exact)
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type={field.type ?? 'text'}
+          step={field.type === 'number' ? 'any' : undefined}
+          value={draft[field.key] ?? ''}
+          onChange={(event) => {
+            setFilterError('');
+            setDraft({ ...draft, [field.key]: event.target.value });
+          }}
+        />
+      )}
+    </label>
+  );
+  const searchScope = params.has('title')
+    ? 'title'
+    : params.has('description')
+      ? 'description'
+      : 'path';
+  const metadataLabel = (name: string) =>
+    ({
+      capturedAt: 'Capture date',
+      focalLength: 'Focal length',
+      shutter: 'Exposure (seconds)',
+      iso: 'ISO',
+      fileType: 'File type',
+    })[name] ??
+    name
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, (letter) => letter.toUpperCase());
+  const filename = detail?.path.split('/').at(-1) ?? '';
+  const title =
+    detail?.fields.find(
+      (field) => field.name === 'title' && field.state === 'present',
+    )?.text ?? filename;
+  const rating = detail?.fields.find(
+    (field) => field.name === 'rating',
+  )?.number;
+  const renderFields = (fields: Field[]) => (
+    <dl className="gallery-fields">
+      {fields.map((field, index) => (
+        <div key={`${field.name}-${index}`}>
+          <dt>{metadataLabel(field.name)}</dt>
+          <dd>
+            {displayedField(field)}{' '}
+            <small>
+              {field.source}
+              {field.timestampBasis ? `; ${field.timestampBasis}` : ''}
+            </small>
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 
   if (selected && params.get('history') === '1')
     return (
@@ -439,6 +786,7 @@ export function Gallery({
           const next = new URLSearchParams(location);
           next.set('branch', nextBranch);
           next.delete('cursor');
+          next.delete('galleryStart');
           navigate(next);
         }}
         onBack={() => {
@@ -453,406 +801,537 @@ export function Gallery({
     );
 
   return (
-    <section aria-labelledby="gallery-heading" className="gallery">
-      <h2 id="gallery-heading">Gallery</h2>
-      {error && <p role="alert">{error}</p>}
-      <p role="status" aria-live="polite">
-        {busy
-          ? 'Working…'
-          : selected
-            ? detail
-              ? `Details for ${detail.path}`
-              : 'Loading details…'
-            : page
-              ? `${new Intl.NumberFormat().format(page.count)} matching images`
-              : 'Loading gallery…'}
-      </p>
-      {selected && detail ? (
-        <article>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.history.state?.galleryDetail) window.history.back();
-              else {
-                const next = new URLSearchParams(location);
-                next.delete('asset');
-                navigate(next);
-              }
-            }}
-          >
-            Back to results
-          </button>
-          <h3>{detail.path}</h3>
-          <p>
-            Original SHA-256: <code>{detail.originalSha256}</code>
-          </p>
-          <p>
-            Metadata projection: {detail.projectionState}
-            {detail.parseErrorCode ? ` (${detail.parseErrorCode})` : ''}.
-          </p>
-          <p>
-            Branch: {detail.working.branch}.{' '}
-            {detail.working.webVersion
-              ? `Web metadata change ${detail.working.webVersion} is uncommitted.`
-              : 'No web working change.'}{' '}
-            {detail.working.deviceConflictCount > 0
-              ? `${detail.working.deviceConflictCount} device conflicts require resolution.`
-              : ''}
-          </p>
-          <p>
-            Thumbnail: {detail.thumbnail.state}
-            {detail.thumbnail.failureCode
-              ? ` (${detail.thumbnail.failureCode})`
-              : ''}
-            .
-          </p>
-          {detail.thumbnail.state === 'available' &&
-            detail.thumbnail.requestId && (
-              <Thumbnail
-                baseUrl={baseUrl}
-                token={token}
-                library={library}
-                card={{
-                  assetId: detail.assetId,
-                  path: detail.path,
-                  filename: detail.path.split('/').at(-1) ?? detail.path,
-                  fileType: detail.fileType,
-                  capturedAt: null,
-                  camera: null,
-                  lens: null,
-                  rating: null,
-                  rejected: null,
-                  width: null,
-                  height: null,
-                  projectionState: detail.projectionState,
-                  previewState: detail.thumbnail.state,
-                  previewRequestId: detail.thumbnail.requestId,
-                }}
-              />
-            )}
-          {detail.thumbnail.state === 'available' && (
-            <p>
-              Preview source: {detail.thumbnail.sourceSha256}; XMP:{' '}
-              {detail.thumbnail.xmpSha256}; version:{' '}
-              {detail.thumbnail.selectedVersion}; renderer:{' '}
-              {detail.thumbnail.rendererRelease}; artifact:{' '}
-              {detail.thumbnail.rendererArtifactDigest}; profile:{' '}
-              {detail.thumbnail.profile}; matrix:{' '}
-              {detail.thumbnail.matrixVersion}; completed:{' '}
-              {displayedDate(detail.thumbnail.completedAt)}.
-            </p>
-          )}
-          <div className="gallery-actions">
+    <section
+      aria-labelledby="gallery-heading"
+      className={`gallery density-${density}`}
+    >
+      {error && (
+        <p role="alert">
+          {error}{' '}
+          <button onClick={() => setRefresh(refresh + 1)}>Retry gallery</button>
+          {selected && <button onClick={backToGallery}>Back to results</button>}
+        </p>
+      )}
+      {selected ? (
+        <>
+          <div className="detail-toolbar">
+            <button onClick={backToGallery}>← Back to results</button>
+            <span className="muted">{filename}</span>
             <button
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(location);
-                next.set('history', '1');
-                navigate(next, { galleryHistory: true });
-              }}
+              className="close-detail"
+              aria-label="Close image details"
+              onClick={backToGallery}
             >
-              View image history
+              ×
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(() => downloadOriginal(detail))}
-            >
-              Download original
-            </button>
-            <button
-              type="button"
-              disabled={busy || !detail.thumbnail.selectedVersion}
-              onClick={() => void run(() => fullPreview(detail))}
-            >
-              Open full preview
-            </button>
-            <a href="#library-heading">
-              Import, delete, or restore in Library controls
-            </a>
           </div>
-          <h4>Metadata</h4>
-          <dl className="gallery-fields">
-            {detail.fields.map((field, index) => (
-              <div key={`${field.name}-${index}`}>
-                <dt>{field.name}</dt>
-                <dd>
-                  {displayedField(field)}{' '}
-                  <small>
-                    ({field.source}
-                    {field.timestampBasis ? `; ${field.timestampBasis}` : ''})
-                  </small>
-                </dd>
+          {!detail && !error && <p role="status">Loading details…</p>}
+          {detail && (
+            <article className="image-detail">
+              <div className="detail-preview">
+                {historical ? (
+                  version ? (
+                    <VersionPreview
+                      key={version.commitId}
+                      baseUrl={baseUrl}
+                      token={token}
+                      library={library}
+                      version={version}
+                      label="Selected version"
+                    />
+                  ) : (
+                    <p role="status">
+                      Selected historical preview is loading or unavailable.
+                      Current image is not substituted.
+                    </p>
+                  )
+                ) : (
+                  <>
+                    <Thumbnail
+                      key={`${detail.assetId}/${detail.thumbnail.requestId}`}
+                      baseUrl={baseUrl}
+                      token={token}
+                      library={library}
+                      card={{
+                        assetId: detail.assetId,
+                        path: detail.path,
+                        filename,
+                        fileType: detail.fileType,
+                        capturedAt: null,
+                        camera: null,
+                        lens: null,
+                        rating: null,
+                        rejected: null,
+                        width: null,
+                        height: null,
+                        projectionState: detail.projectionState,
+                        previewState: detail.thumbnail.state,
+                        previewRequestId: detail.thumbnail.requestId,
+                      }}
+                    />
+                    <p className="muted preview-caption">
+                      Current thumbnail · {detail.working.branch}
+                      {detail.thumbnail.selectedVersion
+                        ? ` · version ${detail.thumbnail.selectedVersion.slice(0, 12)}`
+                        : ''}
+                    </p>
+                  </>
+                )}
+                <details className="preview-provenance">
+                  <summary>Preview provenance and source identity</summary>
+                  <p>
+                    Original SHA-256: <code>{detail.originalSha256}</code>
+                  </p>
+                  <p>
+                    Current thumbnail: {detail.thumbnail.state}. Source:{' '}
+                    <code>{detail.thumbnail.sourceSha256}</code>; XMP:{' '}
+                    <code>{detail.thumbnail.xmpSha256}</code>; version:{' '}
+                    <code>{detail.thumbnail.selectedVersion}</code>; renderer:{' '}
+                    {detail.thumbnail.rendererRelease}; artifact:{' '}
+                    <code>{detail.thumbnail.rendererArtifactDigest}</code>;
+                    profile: {detail.thumbnail.profile}; matrix:{' '}
+                    {detail.thumbnail.matrixVersion}; completed:{' '}
+                    {displayedDate(detail.thumbnail.completedAt)}.
+                  </p>
+                  <p>
+                    Metadata projection: {detail.projectionState}
+                    {detail.parseErrorCode ? ` (${detail.parseErrorCode})` : ''}
+                    .
+                  </p>
+                </details>
               </div>
-            ))}
-          </dl>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(saveMetadata);
-            }}
-          >
-            <h4>Edit XMP metadata</h4>
-            <p>Changes remain uncommitted on branch {detail.working.branch}.</p>
-            <label>
-              Field{' '}
-              <select
-                value={editField}
-                onChange={(event) => {
-                  setEditField(event.target.value);
-                  setEditValue('');
-                  setEditLongitude('');
-                }}
+              <aside
+                className="image-inspector"
+                aria-label="Image metadata and history"
               >
-                <option value="rating">Rating</option>
-                <option value="rejected">Rejected</option>
-                <option value="color">Color label</option>
-                <option value="tags">Tags</option>
-                <option value="title">Title</option>
-                <option value="description">Description</option>
-                <option value="location">Location</option>
-              </select>
-            </label>{' '}
-            <label>
-              {editField === 'location' ? 'Latitude' : 'Value'}{' '}
-              {editField === 'rejected' ? (
-                <select
-                  value={editValue}
-                  onChange={(event) => setEditValue(event.target.value)}
-                  required
+                <h2 id="gallery-heading">{title}</h2>
+                <p
+                  className="image-rating"
+                  aria-label={
+                    rating == null ? 'Rating unknown' : `Rating ${rating} of 5`
+                  }
                 >
-                  <option value="">Select</option>
-                  <option value="true">Rejected</option>
-                  <option value="false">Not rejected</option>
-                </select>
-              ) : (
-                <input
-                  type={
-                    ['rating', 'color', 'location'].includes(editField)
-                      ? 'number'
-                      : 'text'
-                  }
-                  min={
-                    editField === 'rating'
-                      ? 0
-                      : editField === 'color'
-                        ? 0
-                        : editField === 'location'
-                          ? -90
-                          : undefined
-                  }
-                  max={
-                    editField === 'rating'
-                      ? 5
-                      : editField === 'color'
-                        ? 4
-                        : editField === 'location'
-                          ? 90
-                          : undefined
-                  }
-                  step={editField === 'location' ? 'any' : undefined}
-                  value={editValue}
-                  onChange={(event) => setEditValue(event.target.value)}
-                  aria-describedby="gallery-edit-help"
+                  {rating == null
+                    ? 'Unrated'
+                    : '★'.repeat(rating) + '☆'.repeat(5 - rating)}
+                </p>
+                <p className="working-state">
+                  Branch: {detail.working.branch}.{' '}
+                  {detail.working.webVersion
+                    ? `Web metadata change ${detail.working.webVersion} is uncommitted.`
+                    : 'No web working change.'}{' '}
+                  {detail.working.deviceConflictCount > 0
+                    ? `${detail.working.deviceConflictCount} device conflicts require resolution.`
+                    : ''}
+                </p>
+                {historical && (
+                  <p role="status" className="version-disclosure">
+                    Selected-version field metadata is unavailable from the
+                    current service. Exact commit/XMP identity and preview
+                    provenance appear beside the image; the following metadata
+                    belongs to the current working state.
+                  </p>
+                )}
+                <h3>{historical ? 'Current working metadata' : 'Metadata'}</h3>
+                {renderFields(
+                  detail.fields
+                    .filter(
+                      (field) =>
+                        !['latitude', 'longitude', 'location'].includes(
+                          field.name,
+                        ) || !hidesLocation,
+                    )
+                    .filter((field) =>
+                      [
+                        'camera',
+                        'lens',
+                        'capturedAt',
+                        'captureDate',
+                        'focalLength',
+                        'aperture',
+                        'shutter',
+                        'iso',
+                        'width',
+                        'height',
+                        'rating',
+                        'tags',
+                        'title',
+                      ].includes(field.name),
+                    ),
+                )}
+                <details className="more-metadata">
+                  <summary>More metadata</summary>
+                  {renderFields(
+                    detail.fields.filter(
+                      (field) =>
+                        ![
+                          'camera',
+                          'lens',
+                          'capturedAt',
+                          'captureDate',
+                          'focalLength',
+                          'aperture',
+                          'shutter',
+                          'iso',
+                          'width',
+                          'height',
+                          'rating',
+                          'tags',
+                          'title',
+                        ].includes(field.name) &&
+                        (!hidesLocation ||
+                          !['latitude', 'longitude', 'location'].includes(
+                            field.name,
+                          )),
+                    ),
+                  )}
+                </details>
+                <ImageHistory
+                  key={`${detail.assetId}/${detail.working.branch}`}
+                  baseUrl={baseUrl}
+                  token={token}
+                  library={library}
+                  asset={detail.assetId}
+                  branch={detail.working.branch}
+                  onSelection={(chosen, state) => {
+                    setHistorical(chosen);
+                    setVersion(state);
+                  }}
+                  onFullHistory={openHistory}
                 />
-              )}
-            </label>{' '}
-            {editField === 'location' && (
-              <label>
-                Longitude{' '}
-                <input
-                  type="number"
-                  min={-180}
-                  max={180}
-                  step="any"
-                  value={editLongitude}
-                  onChange={(event) => setEditLongitude(event.target.value)}
-                />
-              </label>
-            )}
-            <p id="gallery-edit-help">
-              Blank rating, color, title, description, or location clears that
-              value. Separate tags with commas.
-            </p>
-            <button type="submit" disabled={busy}>
-              Save working change
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(refreshDetail)}
-            >
-              Refresh details
-            </button>
-            {editStatus && <p role="status">{editStatus}</p>}
-          </form>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void run(async () =>
-                setRevealed(
-                  await api(
-                    `/libraries/${encodeURIComponent(library)}/gallery/${detail.assetId}/location?branch=${encodeURIComponent(detail.working.branch)}`,
-                  ),
-                ),
-              )
-            }
-          >
-            Reveal retained location
-          </button>
-          {revealed && (
-            <p role="status">
-              Coordinates: {revealed.latitude}, {revealed.longitude}
-            </p>
+                <details className="image-actions">
+                  <summary>Image actions</summary>
+                  <div className="gallery-actions">
+                    <button
+                      disabled={busy}
+                      onClick={() => void run(() => downloadOriginal(detail))}
+                    >
+                      Download original
+                    </button>
+                    <button
+                      disabled={busy || !detail.thumbnail.selectedVersion}
+                      onClick={() => void run(() => fullPreview(detail))}
+                    >
+                      Open full preview
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (
+                          !dirty.current ||
+                          window.confirm(
+                            'Keep your unsaved edit and open Library controls?',
+                          )
+                        )
+                          onLibrary?.();
+                      }}
+                    >
+                      Import, delete, or restore in Library controls
+                    </button>
+                  </div>
+                </details>
+                <details className="metadata-edit">
+                  <summary>Edit XMP metadata</summary>{' '}
+                  <form
+                    onChange={() => setEditDirty(true)}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void run(saveMetadata);
+                    }}
+                  >
+                    <h4>Edit XMP metadata</h4>
+                    <p>
+                      Changes remain uncommitted on branch{' '}
+                      {detail.working.branch}.
+                    </p>
+                    <label>
+                      Field{' '}
+                      <select
+                        value={editField}
+                        onChange={(event) => {
+                          setEditField(event.target.value);
+                          setEditValue('');
+                          setEditLongitude('');
+                        }}
+                      >
+                        <option value="rating">Rating</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="color">Color label</option>
+                        <option value="tags">Tags</option>
+                        <option value="title">Title</option>
+                        <option value="description">Description</option>
+                        <option value="location">Location</option>
+                      </select>
+                    </label>{' '}
+                    <label>
+                      {editField === 'location' ? 'Latitude' : 'Value'}{' '}
+                      {editField === 'rejected' ? (
+                        <select
+                          value={editValue}
+                          onChange={(event) => setEditValue(event.target.value)}
+                          required
+                        >
+                          <option value="">Select</option>
+                          <option value="true">Rejected</option>
+                          <option value="false">Not rejected</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={
+                            ['rating', 'color', 'location'].includes(editField)
+                              ? 'number'
+                              : 'text'
+                          }
+                          min={
+                            editField === 'rating'
+                              ? 0
+                              : editField === 'color'
+                                ? 0
+                                : editField === 'location'
+                                  ? -90
+                                  : undefined
+                          }
+                          max={
+                            editField === 'rating'
+                              ? 5
+                              : editField === 'color'
+                                ? 4
+                                : editField === 'location'
+                                  ? 90
+                                  : undefined
+                          }
+                          step={editField === 'location' ? 'any' : undefined}
+                          value={editValue}
+                          onChange={(event) => setEditValue(event.target.value)}
+                          aria-describedby="gallery-edit-help"
+                        />
+                      )}
+                    </label>{' '}
+                    {editField === 'location' && (
+                      <label>
+                        Longitude{' '}
+                        <input
+                          type="number"
+                          min={-180}
+                          max={180}
+                          step="any"
+                          value={editLongitude}
+                          onChange={(event) =>
+                            setEditLongitude(event.target.value)
+                          }
+                        />
+                      </label>
+                    )}
+                    <p id="gallery-edit-help">
+                      Blank rating, color, title, description, or location
+                      clears that value. Separate tags with commas.
+                    </p>
+                    <button type="submit" disabled={busy}>
+                      Save working change
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void run(refreshDetail)}
+                    >
+                      Refresh details
+                    </button>
+                  </form>
+                </details>
+                <details className="retained-location">
+                  <summary>Retained location</summary>
+                  <p className="muted">
+                    Reveal private coordinates only on explicit request.
+                  </p>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () =>
+                        setRevealed(
+                          await api(
+                            `/libraries/${encodeURIComponent(library)}/gallery/${detail.assetId}/location?branch=${encodeURIComponent(detail.working.branch)}`,
+                          ),
+                        ),
+                      )
+                    }
+                  >
+                    Reveal retained location
+                  </button>
+                  {revealed && (
+                    <p role="status">
+                      Coordinates: {revealed.latitude}, {revealed.longitude}
+                    </p>
+                  )}
+                </details>
+                {editStatus && <p role="status">{editStatus}</p>}
+              </aside>
+            </article>
           )}
-        </article>
+        </>
       ) : (
         <>
-          <div className="gallery-actions">
-            <label>
-              Sort by{' '}
+          <div className="gallery-topline">
+            <h2 id="gallery-heading">All photos</h2>
+            <p className="gallery-count" role="status" aria-live="polite">
+              {busy
+                ? 'Working…'
+                : page
+                  ? `${new Intl.NumberFormat().format(page.count)} matching images`
+                  : 'Loading gallery…'}
+            </p>
+            <div className="gallery-toolbar">
+              <form
+                key={location}
+                className="gallery-search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const data = new FormData(event.currentTarget);
+                  const scope = String(data.get('scope'));
+                  const next = new URLSearchParams(location);
+                  next.delete(scope);
+                  if (String(data.get('term')).trim())
+                    next.set(scope, String(data.get('term')).trim());
+                  next.delete('cursor');
+                  next.delete('galleryStart');
+                  navigate(next);
+                }}
+              >
+                <label className="sr-only" htmlFor="photo-search">
+                  Search photos
+                </label>
+                <input
+                  id="photo-search"
+                  name="term"
+                  type="search"
+                  placeholder="Search photos…"
+                  defaultValue={params.get(searchScope) ?? ''}
+                />
+                <label className="sr-only" htmlFor="search-scope">
+                  Search in
+                </label>
+                <select
+                  id="search-scope"
+                  name="scope"
+                  defaultValue={searchScope}
+                >
+                  <option value="path">Filename / path</option>
+                  <option value="title">Title</option>
+                  <option value="description">Description</option>
+                </select>
+                <button type="submit" className="sr-only">
+                  Search
+                </button>
+              </form>
+              <button onClick={openFilters} aria-haspopup="dialog">
+                ☷ Filters{activeKeys.length ? ` (${activeKeys.length})` : ''}
+              </button>
+              <label className="sr-only" htmlFor="gallery-sort">
+                Sort by
+              </label>
               <select
+                id="gallery-sort"
                 value={params.get('sort') ?? 'captureDate'}
                 onChange={(event) => {
                   const next = new URLSearchParams(location);
                   next.set('sort', event.target.value);
                   next.delete('cursor');
+                  next.delete('galleryStart');
                   navigate(next);
                 }}
               >
-                <option value="captureDate">Capture date</option>
-                <option value="importDate">Import date</option>
-                <option value="filename">Filename</option>
-                <option value="rating">Rating</option>
-                <option value="dimensions">Dimensions</option>
+                {[
+                  ['captureDate', 'Capture date'],
+                  ['importDate', 'Import date'],
+                  ['filename', 'Filename'],
+                  ['rating', 'Rating'],
+                  ['dimensions', 'Dimensions'],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
-            </label>
-            <label>
-              Direction{' '}
+              <label className="sr-only" htmlFor="gallery-direction">
+                Direction
+              </label>
               <select
+                id="gallery-direction"
                 value={params.get('direction') ?? 'desc'}
                 onChange={(event) => {
                   const next = new URLSearchParams(location);
                   next.set('direction', event.target.value);
                   next.delete('cursor');
+                  next.delete('galleryStart');
                   navigate(next);
                 }}
               >
-                <option value="asc">Ascending</option>
-                <option value="desc">Descending</option>
+                <option value="desc">Descending ↓</option>
+                <option value="asc">Ascending ↑</option>
               </select>
-            </label>
-            {preference && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void run(updatePreference)}
+              <label className="sr-only" htmlFor="grid-density">
+                Grid density
+              </label>
+              <select
+                id="grid-density"
+                value={density}
+                onChange={(event) => setDensity(event.target.value)}
               >
-                {preference.hideGeolocation
-                  ? 'Show location in gallery'
-                  : 'Hide location in gallery'}
-              </button>
-            )}
+                <option value="comfortable">▦ Comfortable</option>
+                <option value="compact">▦ Compact</option>
+              </select>
+            </div>
           </div>
-          <details>
-            <summary>Filter images</summary>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                applyFilters();
-              }}
-            >
-              <div className="gallery-filters">
-                {filterFields
-                  .filter(
-                    (field) =>
-                      !preference?.hideGeolocation ||
-                      (!field.key.startsWith('latitude') &&
-                        !field.key.startsWith('longitude')),
-                  )
-                  .map((field) => (
-                    <label key={field.key}>
-                      {field.label}
-                      <input
-                        type={field.type ?? 'text'}
-                        step={field.type === 'number' ? 'any' : undefined}
-                        value={draft[field.key] ?? ''}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            [field.key]: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                  ))}
-                <label>
-                  Rejected{' '}
-                  <select
-                    value={draft.rejected ?? ''}
-                    onChange={(event) =>
-                      setDraft({ ...draft, rejected: event.target.value })
-                    }
-                  >
-                    <option value="">Any</option>
-                    <option value="true">Rejected</option>
-                    <option value="false">Not rejected</option>
-                  </select>
-                </label>
-                {!preference?.hideGeolocation && (
-                  <label>
-                    Location present{' '}
-                    <select
-                      value={draft.locationPresent ?? ''}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          locationPresent: event.target.value,
-                        })
-                      }
-                    >
-                      <option value="">Any</option>
-                      <option value="true">Present</option>
-                      <option value="false">Missing</option>
-                    </select>
-                  </label>
-                )}
-              </div>
-              <button type="submit">Apply filters</button>{' '}
+          <div className="filter-chips" aria-label="Active filters">
+            {activeKeys.map((key) => (
               <button
-                type="button"
+                key={key}
+                aria-label={`Remove ${filterFields.find((field) => field.key === key)?.label ?? key} filter`}
                 onClick={() => {
-                  setDraft({});
                   const next = new URLSearchParams(location);
-                  for (const field of filterFields) next.delete(field.key);
-                  next.delete('rejected');
-                  next.delete('locationPresent');
+                  next.delete(key);
                   next.delete('cursor');
+                  next.delete('galleryStart');
                   navigate(next);
                 }}
               >
-                Clear filters
+                {filterFields.find((field) => field.key === key)?.label ?? key}:{' '}
+                {params.get(key)} <span aria-hidden="true">×</span>
               </button>
-            </form>
-          </details>
+            ))}
+          </div>
+          {page?.count === 0 && (
+            <div className="gallery-empty">
+              <h3>
+                {activeKeys.length
+                  ? 'No photos match these filters'
+                  : 'Your library is ready for its first photos'}
+              </h3>
+              <p className="muted">
+                {activeKeys.length
+                  ? 'Try adjusting or resetting your filters.'
+                  : 'Import photographs and their darktable sidecars to begin.'}
+              </p>
+              <button onClick={activeKeys.length ? openFilters : onLibrary}>
+                {activeKeys.length ? 'Adjust filters' : 'Import photos'}
+              </button>
+            </div>
+          )}
           {page && (
             <>
-              <p>
-                Active filters:{' '}
-                {Object.entries(page.filters).length === 0
-                  ? 'None'
-                  : Object.entries(page.filters)
-                      .map(([key, values]) => `${key}: ${values.join(', ')}`)
-                      .join('; ')}
-              </p>
               <ul className="gallery-grid">
                 {page.cards.map((card) => (
                   <li key={card.assetId}>
                     <button
-                      type="button"
+                      id={`photo-${card.assetId}`}
                       className="gallery-card"
                       onClick={() => {
+                        window.history.replaceState(
+                          {
+                            ...window.history.state,
+                            galleryFocus: `photo-${card.assetId}`,
+                          },
+                          '',
+                          window.location.href,
+                        );
                         const next = new URLSearchParams(location);
                         next.set('asset', card.assetId);
                         navigate(next, { galleryDetail: true });
@@ -864,50 +1343,169 @@ export function Gallery({
                         library={library}
                         card={card}
                       />
-                      <strong>{card.filename}</strong>
-                      <span>
-                        {card.fileType.toUpperCase()} · {card.width ?? '?'} ×{' '}
-                        {card.height ?? '?'}
+                      <span className="card-caption">
+                        <span className="card-filename" title={card.filename}>
+                          {card.filename}
+                        </span>
+                        <span
+                          className="card-rating"
+                          aria-label={`Rating ${card.rating ?? 'unknown'}`}
+                        >
+                          {card.rating == null
+                            ? 'Unrated'
+                            : '★'.repeat(card.rating) +
+                              '☆'.repeat(5 - card.rating)}
+                          {card.rejected ? ' · Rejected' : ''}
+                        </span>
                       </span>
-                      <span>Captured {displayedDate(card.capturedAt)}</span>
-                      <span>
-                        Rating {card.rating ?? 'unknown'}
-                        {card.rejected ? ' · rejected' : ''}
-                      </span>
-                      <span>
-                        {card.projectionState === 'stale'
-                          ? 'Metadata refresh pending'
-                          : card.previewState === 'failed'
-                            ? 'Preview failed'
-                            : card.previewState === 'pending'
-                              ? 'Preview pending'
-                              : ''}
-                      </span>
+                      {card.projectionState === 'stale' && (
+                        <small>Metadata refresh pending</small>
+                      )}
                     </button>
                   </li>
                 ))}
               </ul>
-              <nav aria-label="Gallery pages">
+              <nav className="gallery-pagination" aria-label="Gallery pages">
+                <span>
+                  {params.has('cursor') && !params.has('galleryStart')
+                    ? `This page: ${page.cards.length} of ${page.count}`
+                    : `${page.cards.length ? Number(params.get('galleryStart') ?? 0) + 1 : 0}–${Number(params.get('galleryStart') ?? 0) + page.cards.length} of ${new Intl.NumberFormat().format(page.count)}`}
+                </span>
                 <button
-                  type="button"
                   disabled={!params.has('cursor')}
-                  onClick={() => window.history.back()}
+                  onClick={() => {
+                    const previous = window.history.state?.previousSearch;
+                    if (typeof previous === 'string')
+                      navigate(new URLSearchParams(previous));
+                    else {
+                      const next = new URLSearchParams(location);
+                      next.delete('cursor');
+                      next.delete('galleryStart');
+                      navigate(next);
+                    }
+                  }}
                 >
                   Previous page
-                </button>{' '}
+                </button>
                 <button
-                  type="button"
                   disabled={!page.nextCursor}
                   onClick={() => {
                     const next = new URLSearchParams(location);
                     next.set('cursor', page.nextCursor!);
-                    navigate(next);
+                    if (!params.has('cursor') || params.has('galleryStart'))
+                      next.set(
+                        'galleryStart',
+                        String(
+                          Number(params.get('galleryStart') ?? 0) +
+                            page.cards.length,
+                        ),
+                      );
+                    navigate(next, { previousSearch: location });
                   }}
                 >
                   Next page
                 </button>
               </nav>
             </>
+          )}
+          {preference && (
+            <details className="gallery-preferences">
+              <summary>Gallery privacy</summary>
+              <button
+                disabled={busy}
+                onClick={() => void run(updatePreference)}
+              >
+                {preference.hideGeolocation
+                  ? 'Show location in gallery'
+                  : 'Hide location in gallery'}
+              </button>
+            </details>
+          )}
+          {filtersOpen && (
+            <Modal
+              title="Filters"
+              className="filter-drawer"
+              onClose={() => setFiltersOpen(false)}
+            >
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  applyFilters();
+                }}
+              >
+                <div className="filter-common">
+                  {filterFields
+                    .filter((field) => common.includes(field.key))
+                    .map(renderFilter)}
+                </div>
+                <p className="muted filter-help">
+                  Criteria combine with AND. Tags are comma-separated; rating is
+                  an exact value.
+                </p>
+                <details className="filter-advanced">
+                  <summary>More filters</summary>
+                  <div className="gallery-filters">
+                    {filterFields
+                      .filter(
+                        (field) =>
+                          !common.includes(field.key) &&
+                          (!hidesLocation ||
+                            (!field.key.startsWith('latitude') &&
+                              !field.key.startsWith('longitude'))),
+                      )
+                      .map(renderFilter)}
+                    <label>
+                      Rejected
+                      <select
+                        aria-label="Rejected"
+                        value={draft.rejected ?? ''}
+                        onChange={(event) =>
+                          setDraft({ ...draft, rejected: event.target.value })
+                        }
+                      >
+                        <option value="">Any</option>
+                        <option value="true">Rejected</option>
+                        <option value="false">Not rejected</option>
+                      </select>
+                    </label>
+                    {!hidesLocation && (
+                      <label>
+                        Location present
+                        <select
+                          aria-label="Location present"
+                          value={draft.locationPresent ?? ''}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              locationPresent: event.target.value,
+                            })
+                          }
+                        >
+                          <option value="">Any</option>
+                          <option value="true">Present</option>
+                          <option value="false">Missing</option>
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                </details>
+                {filterError && <p role="alert">{filterError}</p>}
+                <div className="filter-footer">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft({});
+                      setFilterError('');
+                    }}
+                  >
+                    Reset
+                  </button>
+                  <button className="primary" type="submit">
+                    Show photos
+                  </button>
+                </div>
+              </form>
+            </Modal>
           )}
         </>
       )}

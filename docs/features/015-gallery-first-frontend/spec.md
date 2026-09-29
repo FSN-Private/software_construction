@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-29
 
-**Status**: Draft — visual direction approved; requirements awaiting project-owner approval
+**Status**: Approved by project owner on 2026-09-29
 
 **Owner**: Project owner
 

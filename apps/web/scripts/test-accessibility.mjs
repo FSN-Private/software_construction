@@ -66,12 +66,12 @@ try {
     }),
   );
   for (const label of [
-    'Gallery',
-    'Filter images',
+    'All photos',
+    'Filters',
     'Sort by',
     'Direction',
-    'Apply filters',
-    'Clear filters',
+    'Search photos',
+    'Grid density',
   ])
     if (!gallery.includes(label))
       throw new Error(`Missing labelled gallery control: ${label}`);
