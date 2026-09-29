@@ -202,7 +202,7 @@ As the owner, I can still import, download, organize metadata, and open full his
 
 ## Assumptions
 
-- Mockup approval applies to visual direction. This new requirements spec is a draft, not retroactively approved implementation authority.
+- The project owner approved this specification and requested implementation on 2026-09-29; routine design choices remain bounded by these requirements.
 - Redesign integrates the existing frontend/services; existing approved contracts take precedence over illustrative omissions.
 - Light appearance and desktop-first composition are approved direction; responsive reflow is required, native mobile apps/second theme excluded.
 - Draft-and-apply filters, capture-date-descending default, and progressive disclosure are reasonable defaults for behavior absent from the raster reference.
@@ -220,4 +220,4 @@ As the owner, I can still import, download, organize metadata, and open full his
 
 ## Approval and Delivery Boundary
 
-This request completes specification only: `spec.md`, requirements-quality checklist, and durable visual reference. No implementation, infrastructure change, deployment, or push is part of this phase. Ready for clarification if assumptions change, otherwise technical planning. `plan.md`, the sole numbered execution source `tasks.md`, and requirement-to-task/test traceability must be generated and approved before implementation under the repository constitution.
+The project owner approved this specification and authorized implementation on 2026-09-29. The derived plan/tasks record routine choices within approved scope. Material product/contract changes still require approval. Implementation includes validation, documentation, milestone commits and convergence; deployment, push and merge are not authorized.
