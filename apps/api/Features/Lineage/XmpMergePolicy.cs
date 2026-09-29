@@ -101,7 +101,9 @@ public static class XmpMergePolicy
         using var output = new MemoryStream();
         using (var writer = XmlWriter.Create(output, new XmlWriterSettings
         {
-            Encoding = new UTF8Encoding(false), Indent = false, CloseOutput = false
+            Encoding = new UTF8Encoding(false),
+            Indent = false,
+            CloseOutput = false
         })) selected.Document.Save(writer);
         if (output.Length > GalleryMetadataReader.MaximumXmpBytes)
             throw new InvalidDataException("xmp_too_large");
