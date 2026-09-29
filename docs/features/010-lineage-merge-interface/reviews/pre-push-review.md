@@ -112,3 +112,16 @@ The reviewer inspected the complete revised range and reported **PASS**: the for
 **N-002 — nonblocking, low, documentation accuracy:** the validation record still said no push was requested after recording PR #29. The implementer independently confirmed the stale sentence and corrected it to record the authorized initial push/PR and the follow-up review requirement. This correction is part of the exact pending final record scope submitted for the reviewer's final inspection before commit.
 
 **Current final pre-push gate: PASS**, with no unresolved blocking finding. After inspecting this exact pending Round 5 record and the N-002 validation correction, the alternate reviewer explicitly agreed that no valid unresolved blocking finding remains, the final pre-push gate is PASS, and these files may be committed unchanged. This gate does not authorize deployment. The initial push and PR were performed under the user's separate authorization; merge remains conditional on passing remote CI.
+
+## Round 6: rewrite/recovery browser CI follow-up (2026-09-29)
+
+- **Alternate reviewer:** `gpt-5.6-sol`, independent read-only review.
+- **Base/full revised range:** `origin/master` at `520e255`, through `745cf15`.
+- **Remote/destination:** `origin`, `refs/heads/feature/010-lineage-merge-interface-fresh`, still at `855cedd`.
+- **Exact pending push scope:** formatter commit `22ff656`, approved Round 5 record `87a77e6`, test synchronization/task/validation commit `745cf15`, plus this final Round 6 review-record commit. Push normally without force.
+
+The initial PR CI web job passed 41 cases but timed out in Chrome's rewrite/recovery journey when recovery controls were detached and disabled after the test entered fields. The test observed the rewrite request before the successful action completed its history refresh/remount. T024 registers an endpoint-scoped history response wait before confirming rewrite and awaits that response before entering recovery details. Product code and the existing rewrite/recovery request assertions are unchanged. The exact journey passed **15/15** across Chrome/Edge/Firefox, five repetitions each; changed-file Prettier and `git diff --check` passed.
+
+The reviewer inspected the complete revised range and explicitly reported **PASS** with no valid unresolved blocking finding. It agreed that the response wait matches the successful action's refresh sequence, preserves assertions, avoids arbitrary delays, and changes no product behavior. It accepted the repeated browser evidence as proportionate. B-001/B-002/B-003/N-001/N-002 remain fixed and unaffected. It found no new blocking or material nonblocking correctness, test validity, authorization, privacy, integrity, concurrency, migration, performance, accessibility, dependency, documentation, or scope issue.
+
+**Round 6 final gate: PASS.** After inspecting this exact pending Round 6 record, the alternate reviewer explicitly agreed that no valid unresolved blocking finding remains and the Round 6 pre-push gate is PASS. It confirmed the four-commit pending scope, evidence, unchanged assertions, and conditional merge accurately, with no correction needed. This final text is submitted for its last inspection before unchanged commit. The user has authorized the follow-up push; merge is authorized only after all remote CI passes. No deployment is authorized.
