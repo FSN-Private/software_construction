@@ -28,6 +28,7 @@ export function ImageHistory({
   branch,
   onSelection,
   onFullHistory,
+  initialCommit,
 }: {
   baseUrl: string;
   token: string;
@@ -36,6 +37,7 @@ export function ImageHistory({
   branch: string;
   onSelection: (historical: boolean, version?: ImageVersion) => void;
   onFullHistory: () => void;
+  initialCommit?: string;
 }) {
   const [history, setHistory] = useState<History>();
   const [selected, setSelected] = useState('');
@@ -107,6 +109,9 @@ export function ImageHistory({
       if (!abort.signal.aborted) setError(String(reason));
     }
   }
+  useEffect(() => {
+    if (history && initialCommit) void select(initialCommit);
+  }, [history, initialCommit]);
   return (
     <section className="image-history" aria-labelledby="image-history-heading">
       <h3 id="image-history-heading">Version history</h3>

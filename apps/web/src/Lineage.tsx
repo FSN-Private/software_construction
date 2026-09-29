@@ -37,6 +37,7 @@ export function Lineage({
   branch,
   onBack,
   onSwitchBranch,
+  initialCommit,
 }: {
   baseUrl: string;
   token: string;
@@ -45,14 +46,15 @@ export function Lineage({
   branch: string;
   onBack: () => void;
   onSwitchBranch: (branch: string) => void;
+  initialCommit?: string;
 }) {
   const [offset, setOffset] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState<HistoryPage>();
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(initialCommit ?? '');
   const [error, setError] = useState('');
-  const [target, setTarget] = useState('');
+  const [target, setTarget] = useState(initialCommit ?? '');
   const [source, setSource] = useState('');
   const [comparison, setComparison] = useState<ComparisonResult>();
   const [compareError, setCompareError] = useState('');

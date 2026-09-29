@@ -10,7 +10,7 @@
 
 ## Phase 2: Foundation and US1 — M1
 
-- [ ] T002 [US1] ? IN PROGRESS Compose owner workspace/secondary lifecycle/diagnostics and safe sign-out in apps/web/src/App.tsx and workspace.css; update apps/web/README.md and source/accessibility checks. Validate session/privacy/navigation behavior. FR-001, FR-018; AC-001, AC-014; NFR-004, NFR-009, NFR-014.
+- [x] T002 [US1] Compose owner workspace/secondary lifecycle/diagnostics and safe sign-out in apps/web/src/App.tsx and workspace.css; update apps/web/README.md and source/accessibility checks. Validate session/privacy/navigation behavior. FR-001, FR-018; AC-001, AC-014; NFR-004, NFR-009, NFR-014.
 - [x] T003 [US1] Implement contact-sheet design, toolbar/scoped search, real counts/ranges/paging and density in apps/web/src/Gallery.tsx and gallery.css; tests in apps/web/tests/browser/frontend.spec.ts. FR-002–004; AC-002–003; NFR-010, NFR-012; SC-001.
 
 ## Phase 3: US2 — M1
@@ -19,12 +19,12 @@
 
 ## Phase 4: US3 — M2
 
-- [ ] T005 [US3] Implement contained detail/semantic inspector and exact image-history selection in apps/web/src/Gallery.tsx, ImageHistory.tsx and Comparison.tsx, preserve full lineage and disclose unavailable historical metadata. Extend browser fixtures. FR-009–013; AC-007–009; NFR-003, NFR-008; SC-003.
-- [ ] T006 [US3] Preserve browse/reload/back/scroll, cancel obsolete reads, protect unsaved edits/session drafts and show truthful retry states in apps/web/src/Gallery.tsx/App.tsx; extend tests. FR-008, FR-016; AC-006, AC-012; NFR-008.
+- [x] T005 [US3] Implement contained detail/semantic inspector and exact image-history selection in apps/web/src/Gallery.tsx, ImageHistory.tsx and Comparison.tsx, preserve full lineage and disclose unavailable historical metadata. Extend browser fixtures. FR-009–013; AC-007–009; NFR-003, NFR-008; SC-003.
+- [x] T006 [US3] Preserve browse/reload/back/scroll, cancel obsolete reads, protect unsaved edits/session drafts and show truthful retry states in apps/web/src/Gallery.tsx/App.tsx; extend tests. FR-008, FR-016; AC-006, AC-012; NFR-008.
 
 ## Phase 5: US4 — M2
 
-- [ ] T007 [US4] Preserve lifecycle/edit/history safeguards, add library-wide history and guarded header branch entry in apps/web/src/LibraryHistory.tsx/App.tsx, reuse existing components. Update browser regression expectations and web guide. FR-014–015; AC-010–011; NFR-004, NFR-016; SC-004.
+- [x] T007 [US4] Preserve lifecycle/edit/history safeguards, add library-wide history and guarded header branch entry in apps/web/src/LibraryHistory.tsx/App.tsx, reuse existing components. Update browser regression expectations and web guide. FR-014–015; AC-010–011; NFR-004, NFR-016; SC-004.
 
 ## Phase 6: Cross-Cutting Quality and Convergence — M3
 
