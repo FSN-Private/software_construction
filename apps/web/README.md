@@ -35,6 +35,7 @@ To inspect the gallery locally without a configured owner backend, keep your Vit
 ```powershell
 $env:GALLERY_PREVIEW='1'
 $env:BROWSER_TEST_EXTERNAL_SERVER='1'
+$env:BROWSER_TEST_PORT='4173'
 npm --prefix apps/web run test:browser -- preview.spec.ts --project='Chrome for Testing' --headed
 ```
 
