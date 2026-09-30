@@ -317,7 +317,6 @@ export function Gallery({
     );
     setLocation(window.location.search);
     window.dispatchEvent(new Event('gallery-navigation'));
-    if (next.has('asset')) window.scrollTo(0, 0);
   }
 
   async function api<T>(

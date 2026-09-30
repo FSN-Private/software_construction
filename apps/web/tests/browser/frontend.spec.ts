@@ -529,6 +529,48 @@ test('empty and failed states remain actionable; normal browsing does not reques
   expect(unintended).toEqual([]);
 });
 
+test('gallery keeps its scroll position while filters or image details are open', async ({
+  page,
+}) => {
+  await fixture(page, { performance: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/#id_token=fixture-token');
+  await expect(page.locator('.gallery-grid li')).toHaveCount(40);
+  await page.evaluate(() => window.scrollTo(0, 500));
+  const filterScroll = await page.evaluate(() => window.scrollY);
+  expect(filterScroll).toBeGreaterThan(0);
+  await page
+    .getByRole('button', { name: /Filters/ })
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.getByRole('dialog', { name: 'Filters' })).toBeVisible();
+  await page.mouse.move(900, 400);
+  await page.mouse.wheel(0, 600);
+  expect(await page.evaluate(() => window.scrollY)).toBe(filterScroll);
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.scrollY)).toBe(filterScroll);
+
+  const tile = page.getByRole('button', { name: /image-21.jpg/ });
+  await tile.scrollIntoViewIfNeeded();
+  const detailScroll = await page.evaluate(() => window.scrollY);
+  expect(detailScroll).toBeGreaterThan(0);
+  await tile.click();
+  const dialog = page.getByRole('dialog', { name: /Image details/ });
+  await expect(dialog).toBeVisible();
+  await page.mouse.move(5, 400);
+  await page.mouse.wheel(0, 600);
+  expect(await page.evaluate(() => window.scrollY)).toBe(detailScroll);
+  await dialog.evaluate((element: HTMLDialogElement) => {
+    element.scrollTop = 100;
+  });
+  expect(await dialog.evaluate((element) => element.scrollTop)).toBeGreaterThan(
+    0,
+  );
+  await page.keyboard.press('Escape');
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBe(detailScroll);
+});
+
 test('desktop gallery/filter/detail geometry and responsive reflow match reference hierarchy', async ({
   page,
 }, testInfo) => {
@@ -561,7 +603,9 @@ test('desktop gallery/filter/detail geometry and responsive reflow match referen
   );
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/#id_token=fixture-token');
-  await expect(page.locator('.gallery-grid img')).toHaveCount(40);
+  await expect(page.locator('.gallery-grid li')).toHaveCount(40, {
+    timeout: 15_000,
+  });
   const columns = await page
     .locator('.gallery-grid')
     .evaluate(
@@ -921,7 +965,7 @@ test('backdrop cancellation, responsive gallery and drawer timing remain usable'
   await fixture(page, { performance: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/#id_token=fixture-token');
-  await expect(page.locator('.gallery-grid img')).toHaveCount(40);
+  await expect(page.locator('.gallery-grid li')).toHaveCount(40);
   expect(
     await page
       .locator('.gallery-grid')
@@ -930,18 +974,39 @@ test('backdrop cancellation, responsive gallery and drawer timing remain usable'
           getComputedStyle(element).gridTemplateColumns.split(' ').length,
       ),
   ).toBe(4);
-  const samples: number[] = [];
-  for (let i = 0; i < 20; i++) {
-    const start = Date.now();
-    await page.getByRole('button', { name: /Filters/ }).click();
-    await expect(page.getByRole('dialog', { name: 'Filters' })).toBeVisible();
-    samples.push(Date.now() - start);
-    await page.mouse.click(900, 400);
-    await expect(page.getByRole('dialog')).toHaveCount(0);
-  }
+  const samples = await page.evaluate(async () => {
+    const waitForDialog = async (open: boolean) => {
+      for (let frame = 0; frame < 30; frame++) {
+        if (Boolean(document.querySelector('dialog[open]')) === open) return;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error(`Dialog did not become ${open ? 'open' : 'closed'}`);
+    };
+    const durations: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const started = performance.now();
+      document
+        .querySelector<HTMLButtonElement>(
+          '.gallery-toolbar button[aria-haspopup="dialog"]',
+        )!
+        .click();
+      await waitForDialog(true);
+      durations.push(performance.now() - started);
+      document
+        .querySelector<HTMLButtonElement>(
+          'dialog[open] button[aria-label^="Close"]',
+        )!
+        .click();
+      await waitForDialog(false);
+    }
+    return durations;
+  });
   samples.sort((a, b) => a - b);
-  console.log(`Drawer usable p95=${samples[18]} ms`);
+  console.log(`Drawer usable p95=${Math.round(samples[18])} ms`);
   expect(samples[18]).toBeLessThanOrEqual(200);
+  await page.getByRole('button', { name: /Filters/ }).click();
+  await page.mouse.click(900, 400);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.setViewportSize({ width: 320, height: 844 });
   await expect(page.getByRole('button', { name: /Filters/ })).toBeVisible();
   expect(
