@@ -14,6 +14,10 @@ public static class GalleryEndpoints
         var group = app.MapGroup("/v1/libraries/{library}/gallery").RequireAuthorization().AddEndpointFilter<GalleryGuard>();
         group.MapGet("", async (string library, HttpContext context, [FromServices] GalleryBrowseService browse, CancellationToken ct) =>
             Results.Ok(await browse.BrowseAsync(Owner(context), library, context.Request.Query, ct)));
+        group.MapGet("/filter-values", async (string library, HttpContext context, [FromServices] GalleryBrowseService browse, CancellationToken ct) =>
+            Results.Ok(await browse.FilterValuesAsync(Owner(context), library,
+                context.Request.Query["branch"].ToString() is { Length: > 0 } branch ? branch : "main",
+                context.Request.Query["facet"].ToString(), context.Request.Query["q"].ToString(), ct)));
         group.MapGet("/{assetId:guid}", async (string library, Guid assetId, HttpContext context, [FromServices] GalleryDetailService details, CancellationToken ct) =>
             Results.Ok(await details.GetAsync(Owner(context), library, context.Request.Query["branch"].ToString() is { Length: > 0 } branch ? branch : "main", assetId, ct)));
         group.MapGet("/{assetId:guid}/location", async (string library, Guid assetId, HttpContext context, [FromServices] GalleryPreferenceService preferences, CancellationToken ct) =>
