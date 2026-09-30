@@ -29,3 +29,16 @@ Image actions and Edit XMP metadata progressively disclose download/full-preview
 No data migration is required. Release/rollback uses the existing immutable web artifact process; rolling back presentation does not change image/XMP/history storage. Keep existing platform-config and API contracts. Preview/session failures have explicit statuses and retry/sign-in paths. View Service details from Owner controls for correlated diagnostics. Deployment requires separate authorization.
 
 For a separately running local Vite server on Windows, set `BROWSER_TEST_EXTERNAL_SERVER=1` before the browser command to avoid managing that server as a Playwright child. Fixture screenshots and measurements appear under ignored test-results; live capacity, supported screen-reader, rollout/rollback and owner visual acceptance remain separate evidence requirements.
+
+To inspect the gallery locally without a configured owner backend, keep your Vite server running, then run from the repository root in a second PowerShell terminal (change the port if your server uses another one):
+
+```powershell
+$env:GALLERY_PREVIEW='1'
+$env:BROWSER_TEST_EXTERNAL_SERVER='1'
+$env:BROWSER_TEST_PORT='5173'
+npm --prefix apps/web run test:browser -- preview.spec.ts --project='Chrome for Testing' --headed
+```
+
+Playwright starts the web client, supplies non-private fixture gallery responses, and pauses with an interactive browser. The fixture thumbnails are gray placeholders; use the implementation screenshots in `docs/features/015-gallery-first-frontend/reviews/implementation/` for the layout reference. Close the browser or stop the command to finish. This preview does not authenticate against Cognito or display private library photos. For real data, the deployed `/platform-config.js` must name the Cognito hosted UI, API, exact registered callback origin, and canonical `galleryLibraryId`; a standalone Vite server has none of these by default.
+
+If **Sign in as owner** returns to the same page, check the post-click path. `/oauth2/authorize` on the Vite origin means the configured hosted-UI URL points back at the frontend, so Vite serves the app again instead of Cognito. If the browser returns to `/` without an ID token, check the Cognito callback registration. If it returns with a token but shows a session error, check `/v1/session` authorization and API CORS for the exact web origin. Never use the browser-test fixture configuration as a real Cognito configuration, and do not paste an ID token into an issue or chat.
