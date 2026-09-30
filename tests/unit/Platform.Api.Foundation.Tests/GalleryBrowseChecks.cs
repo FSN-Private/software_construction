@@ -98,8 +98,10 @@ internal static class GalleryBrowseChecks
                     DO UPDATE SET value_state='present',text_value=excluded.text_value,display_text=excluded.display_text
                     """, default, first.Cards[0].AssetId, facet, value);
         }
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, "UPDATE gallery_projection SET camera='Off-page Camera' WHERE owner_id='test-owner' AND asset_id=$1", default, second.Cards[1].AssetId);
         var cameraChoices = await browse.FilterValuesAsync("test-owner", "main", "main", "camera", null, default);
-        Check(cameraChoices.Values.Any(value => value.Value == "Unique Camera"), "Filter choices include values outside the first gallery page");
+        Check(cameraChoices.Values.Any(value => value.Value == "Off-page Camera"), "Filter choices include values outside the first gallery page");
         Check((await browse.FilterValuesAsync("test-owner", "main", "main", "camera", "unique", default)).Values.Count == 1,
             "Filter choices support bounded search");
         Check((await browse.FilterValuesAsync("another-owner", "main", "main", "camera", null, default)).Values.Count == 0,

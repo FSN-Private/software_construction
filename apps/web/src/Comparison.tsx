@@ -199,11 +199,13 @@ export function Comparison({
   baseUrl,
   token,
   library,
+  showPreviews = true,
 }: {
   value: ComparisonResult;
   baseUrl: string;
   token: string;
   library: string;
+  showPreviews?: boolean;
 }) {
   return (
     <section aria-labelledby="comparison-heading">
@@ -213,32 +215,34 @@ export function Comparison({
         <code>{value.sourceCommitId}</code>; common ancestor{' '}
         <code>{value.baseCommitId ?? 'none'}</code>.
       </p>
-      <div className="lineage-comparison">
-        {(
-          [
-            ['Target', value.targetStates],
-            ['Source', value.sourceStates],
-          ] as const
-        ).map(([label, states]) => (
-          <div key={label}>
-            <h5>{label} image state</h5>
-            {states.length === 0 ? (
-              <p>Image state absent at this commit.</p>
-            ) : (
-              states.map((state) => (
-                <VersionPreview
-                  key={`${state.commitId}/${state.editId ?? 'source'}`}
-                  baseUrl={baseUrl}
-                  token={token}
-                  library={library}
-                  version={state}
-                  label={label}
-                />
-              ))
-            )}
-          </div>
-        ))}
-      </div>
+      {showPreviews && (
+        <div className="lineage-comparison">
+          {(
+            [
+              ['Target', value.targetStates],
+              ['Source', value.sourceStates],
+            ] as const
+          ).map(([label, states]) => (
+            <div key={label}>
+              <h5>{label} image state</h5>
+              {states.length === 0 ? (
+                <p>Image state absent at this commit.</p>
+              ) : (
+                states.map((state) => (
+                  <VersionPreview
+                    key={`${state.commitId}/${state.editId ?? 'source'}`}
+                    baseUrl={baseUrl}
+                    token={token}
+                    library={library}
+                    version={state}
+                    label={label}
+                  />
+                ))
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <h5>Committed differences</h5>
       {value.metadataDifferences?.map((item) => (
         <section

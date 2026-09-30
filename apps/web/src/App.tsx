@@ -278,6 +278,7 @@ export function App() {
                   setLibraryOpened(true);
                   openView('library');
                 }}
+                onBranch={() => void openBranches()}
               />
             </div>
           )}
@@ -309,7 +310,11 @@ export function App() {
               <button onClick={() => openView('gallery')}>
                 ← Back to gallery
               </button>
-              <Library baseUrl={config.apiBaseUrl} token={token} />
+              <Library
+                baseUrl={config.apiBaseUrl}
+                token={token}
+                previewMode={config.previewMode}
+              />
             </section>
           )}
           <section

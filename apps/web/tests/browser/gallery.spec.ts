@@ -11,9 +11,12 @@ test('owner browse, paging context, privacy, details, and edit conflict', async 
   await page.getByText('Gallery privacy', { exact: true }).click();
   await page.getByRole('button', { name: 'Show location in gallery' }).click();
   await page.getByRole('button', { name: /Filters/ }).click();
-  await page.getByText('More filters', { exact: true }).click();
+  await page.getByText('Location', { exact: true }).click();
   await expect(page.getByLabel('Latitude minimum')).toBeVisible();
-  await page.getByLabel('Camera', { exact: true }).fill('Fixture camera');
+  await page.getByText('Camera and file', { exact: true }).click();
+  await page
+    .getByLabel('Camera', { exact: true })
+    .selectOption('Fixture camera');
   await page.getByRole('button', { name: 'Show photos' }).click();
   await expect(page).toHaveURL(/camera=Fixture\+camera/);
   await page.getByRole('button', { name: 'Next page' }).click();
@@ -558,28 +561,66 @@ test('reference page and cached thumbnails meet browser-side timing', async ({
 }) => {
   test.setTimeout(120_000);
   await fixture(page, { performance: true });
+  await page.addInitScript(() => {
+    const timing: { usable?: number; thumbnail?: number } = {};
+    (
+      window as typeof window & { galleryTiming?: typeof timing }
+    ).galleryTiming = timing;
+    const timer = setInterval(() => {
+      if (
+        timing.usable === undefined &&
+        /100[\s,]000 matching images/.test(
+          document.querySelector('.gallery-count')?.textContent ?? '',
+        )
+      )
+        timing.usable = performance.now();
+      const image = document.querySelector<HTMLImageElement>(
+        '.gallery-grid li:first-child img',
+      );
+      if (
+        timing.thumbnail === undefined &&
+        image?.complete &&
+        image.naturalWidth > 0
+      )
+        timing.thumbnail = performance.now();
+      if (timing.usable !== undefined && timing.thumbnail !== undefined)
+        clearInterval(timer);
+    }, 10);
+  });
   const samples: number[] = [];
   const thumbnailSamples: number[] = [];
   for (let run = 0; run < 20; run++) {
-    const started = Date.now();
     await page.goto(
       `/?sort=captureDate&direction=${run % 2 ? 'asc' : 'desc'}#id_token=fixture-token`,
     );
     await expect(page.getByText(/100[\s,]000 matching images/)).toBeVisible();
-    const usable = Date.now();
+    await page.locator('.gallery-grid li:first-child').scrollIntoViewIfNeeded();
     await expect(page.locator('.gallery-grid img')).toHaveCount(40);
-    const firstThumbnail = page.locator('.gallery-grid img').first();
-    await firstThumbnail.scrollIntoViewIfNeeded();
     await expect
       .poll(() =>
-        firstThumbnail.evaluate(
-          (img: HTMLImageElement) => img.complete && img.naturalWidth > 0,
-        ),
+        page.evaluate(() => {
+          const timing = (
+            window as typeof window & {
+              galleryTiming?: { usable?: number; thumbnail?: number };
+            }
+          ).galleryTiming;
+          return timing?.usable !== undefined && timing.thumbnail !== undefined;
+        }),
       )
       .toBe(true);
+    const timing = await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            galleryTiming?: { usable?: number; thumbnail?: number };
+          }
+        ).galleryTiming,
+    );
+    expect(timing?.usable).toBeDefined();
+    expect(timing?.thumbnail).toBeDefined();
     if (run >= 5) {
-      samples.push(usable - started);
-      thumbnailSamples.push(Date.now() - usable);
+      samples.push(timing!.usable!);
+      thumbnailSamples.push(Math.max(0, timing!.thumbnail! - timing!.usable!));
     }
   }
   samples.sort((a, b) => a - b);
