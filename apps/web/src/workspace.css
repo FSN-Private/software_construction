@@ -16,6 +16,13 @@
 body {
   margin: 0;
 }
+html,
+body,
+#root,
+main {
+  width: 100%;
+  min-width: 0;
+}
 [hidden] {
   display: none !important;
 }

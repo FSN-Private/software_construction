@@ -4,6 +4,7 @@ export interface PlatformConfig {
   readonly cognitoClientId: string;
   readonly redirectUri: string;
   readonly galleryLibraryId?: string;
+  readonly previewMode?: boolean;
 }
 
 declare global {

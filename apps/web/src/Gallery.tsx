@@ -72,6 +72,12 @@ type Detail = {
   };
 };
 type Preference = { hideGeolocation: boolean; version: number };
+type FilterOptions = {
+  values: { value: string; label: string }[];
+  hasMore: boolean;
+  error?: string;
+  query?: string;
+};
 
 const filterFields: { key: string; label: string; type?: string }[] = [
   { key: 'captureFrom', label: 'Captured from', type: 'datetime-local' },
@@ -194,11 +200,13 @@ export function Gallery({
   token,
   library,
   onLibrary,
+  onBranch,
 }: {
   baseUrl: string;
   token: string;
   library: string;
   onLibrary?: () => void;
+  onBranch?: () => void;
 }) {
   const [location, setLocation] = useState(() => window.location.search);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -216,7 +224,12 @@ export function Gallery({
   const [editLongitude, setEditLongitude] = useState('');
   const [editStatus, setEditStatus] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [filterError, setFilterError] = useState('');
+  const [filterOptions, setFilterOptions] = useState<
+    Record<string, FilterOptions>
+  >({});
+  const optionRequests = useRef<Record<string, AbortController>>({});
   const [density, setDensity] = useState('comfortable');
   const [refresh, setRefresh] = useState(0);
   const [version, setVersion] = useState<ImageVersion>();
@@ -423,27 +436,24 @@ export function Gallery({
         .catch((reason) => {
           if (!abort.signal.aborted) setError(String(reason));
         });
-    } else {
-      values.delete('asset');
-      values.delete('history');
-      values.delete('galleryStart');
-      values.delete('imageVersion');
-      setPage(undefined);
-      void api<Page>(
-        `/libraries/${encodeURIComponent(library)}/gallery?${values}`,
-        'GET',
-        undefined,
-        abort.signal,
-      )
-        .then((value) => {
-          if (!abort.signal.aborted) {
-            setPage(value);
-          }
-        })
-        .catch((reason) => {
-          if (!abort.signal.aborted) setError(String(reason));
-        });
     }
+    values.delete('asset');
+    values.delete('history');
+    values.delete('galleryStart');
+    values.delete('imageVersion');
+    if (!params.has('asset')) setPage(undefined);
+    void api<Page>(
+      `/libraries/${encodeURIComponent(library)}/gallery?${values}`,
+      'GET',
+      undefined,
+      abort.signal,
+    )
+      .then((value) => {
+        if (!abort.signal.aborted) setPage(value);
+      })
+      .catch((reason) => {
+        if (!abort.signal.aborted) setError(String(reason));
+      });
     return () => abort.abort();
   }, [baseUrl, token, library, location, refresh]);
   useEffect(() => {
@@ -695,18 +705,64 @@ export function Gallery({
       ),
     );
     setFilterError('');
+    setFilterOptions({});
+    setExpandedGroups([]);
     setFiltersOpen(true);
   }
+  function toggleGroup(name: string, open: boolean, facets: string[] = []) {
+    setExpandedGroups((old) =>
+      open
+        ? old.includes(name)
+          ? old
+          : [...old, name]
+        : old.filter((item) => item !== name),
+    );
+    if (open)
+      for (const facet of facets)
+        if (!filterOptions[facet]) void loadOptions(facet);
+  }
+  async function loadOptions(facet: string, query = '') {
+    optionRequests.current[facet]?.abort();
+    const request = new AbortController();
+    optionRequests.current[facet] = request;
+    setFilterOptions((old) => ({
+      ...old,
+      [facet]: { values: [], hasMore: false, query },
+    }));
+    try {
+      const response = await api<FilterOptions>(
+        `/libraries/${encodeURIComponent(library)}/gallery/filter-values?branch=${encodeURIComponent(params.get('branch') ?? 'main')}&facet=${encodeURIComponent(facet)}&q=${encodeURIComponent(query.slice(0, 100))}`,
+        'GET',
+        undefined,
+        request.signal,
+      );
+      if (!request.signal.aborted)
+        setFilterOptions((old) => ({
+          ...old,
+          [facet]: { ...response, query },
+        }));
+    } catch {
+      if (!request.signal.aborted)
+        setFilterOptions((old) => ({
+          ...old,
+          [facet]: {
+            values: [],
+            hasMore: false,
+            error: 'Choices unavailable. Retry.',
+            query,
+          },
+        }));
+    }
+  }
+  useEffect(() => {
+    if (!filtersOpen) return;
+    return () => {
+      for (const request of Object.values(optionRequests.current))
+        request.abort();
+      optionRequests.current = {};
+    };
+  }, [filtersOpen, library, token]);
   const hidesLocation = preference?.hideGeolocation !== false;
-  const common = [
-    'captureFrom',
-    'captureTo',
-    'rating',
-    'camera',
-    'fileType',
-    'tag',
-    'color',
-  ];
   const activeKeys = [
     ...filterFields.map((field) => field.key),
     'rejected',
@@ -719,40 +775,174 @@ export function Gallery({
           !key.startsWith('longitude') &&
           key !== 'locationPresent')),
   );
+  const choiceFacets = [
+    'camera',
+    'lens',
+    'fileType',
+    'rating',
+    'orientation',
+    'tag',
+    'color',
+  ];
   const renderFilter = (field: {
     key: string;
     label: string;
     type?: string;
   }) => (
-    <label key={field.key}>
-      {field.label}
-      {field.key === 'rating' ? (
-        <select
-          aria-label="Rating"
-          value={draft.rating ?? ''}
+    <div className="filter-field" key={field.key}>
+      <label>
+        {field.label}
+        {choiceFacets.includes(field.key) ? (
+          <select
+            aria-label={field.label}
+            value={
+              field.key === 'tag' || field.key === 'color'
+                ? ''
+                : (draft[field.key] ?? '')
+            }
+            onChange={(event) => {
+              const value = event.target.value;
+              if (field.key === 'tag' || field.key === 'color') {
+                const existing = (draft[field.key] ?? '')
+                  .split(',')
+                  .map((item) => item.trim())
+                  .filter(Boolean);
+                if (value && !existing.includes(value)) existing.push(value);
+                setDraft({ ...draft, [field.key]: existing.join(', ') });
+              } else setDraft({ ...draft, [field.key]: value });
+            }}
+          >
+            <option value="">
+              {field.key === 'tag' || field.key === 'color'
+                ? 'Add an existing value'
+                : 'Any'}
+            </option>
+            {draft[field.key] &&
+              !filterOptions[field.key]?.values.some(
+                (option) => option.value === draft[field.key],
+              ) &&
+              field.key !== 'tag' &&
+              field.key !== 'color' && (
+                <option value={draft[field.key]}>{draft[field.key]}</option>
+              )}
+            {filterOptions[field.key]?.values.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type={field.type ?? 'text'}
+            step={field.type === 'number' ? 'any' : undefined}
+            value={draft[field.key] ?? ''}
+            onChange={(event) => {
+              setFilterError('');
+              setDraft({ ...draft, [field.key]: event.target.value });
+            }}
+          />
+        )}
+      </label>
+      {(field.key === 'tag' || field.key === 'color') && (
+        <input
+          aria-label={`Selected ${field.label}`}
+          value={draft[field.key] ?? ''}
           onChange={(event) =>
-            setDraft({ ...draft, rating: event.target.value })
+            setDraft({ ...draft, [field.key]: event.target.value })
           }
+        />
+      )}
+      {(filterOptions[field.key]?.hasMore ||
+        filterOptions[field.key]?.query) && (
+        <span className="filter-option-search">
+          <input
+            aria-label={`Search ${field.label} choices`}
+            placeholder="Search values"
+            maxLength={100}
+            defaultValue={filterOptions[field.key]?.query ?? ''}
+          />
+          <button
+            type="button"
+            onClick={(event) =>
+              void loadOptions(
+                field.key,
+                (event.currentTarget.previousElementSibling as HTMLInputElement)
+                  .value,
+              )
+            }
+          >
+            Find
+          </button>
+        </span>
+      )}
+      {filterOptions[field.key]?.hasMore && (
+        <small>Showing the first 100 values. Search for more.</small>
+      )}
+      {filterOptions[field.key]?.error && (
+        <button type="button" onClick={() => void loadOptions(field.key)}>
+          {filterOptions[field.key]?.error}
+        </button>
+      )}
+    </div>
+  );
+  const renderRange = (name: string, label: string) => (
+    <div className="filter-range" key={name}>
+      <label>
+        {label}
+        <select
+          aria-label={`Existing ${label}`}
+          value=""
+          onChange={(event) => {
+            setDraft({
+              ...draft,
+              [`${name}Min`]: event.target.value,
+              [`${name}Max`]: event.target.value,
+            });
+          }}
         >
-          <option value="">Any rating</option>
-          {[0, 1, 2, 3, 4, 5].map((rating) => (
-            <option key={rating} value={rating}>
-              {rating} stars (exact)
+          <option value="">Choose an existing value</option>
+          {filterOptions[name]?.values.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
-      ) : (
-        <input
-          type={field.type ?? 'text'}
-          step={field.type === 'number' ? 'any' : undefined}
-          value={draft[field.key] ?? ''}
-          onChange={(event) => {
-            setFilterError('');
-            setDraft({ ...draft, [field.key]: event.target.value });
-          }}
-        />
+      </label>
+      {(filterOptions[name]?.hasMore || filterOptions[name]?.query) && (
+        <span className="filter-option-search">
+          <input
+            aria-label={`Search ${label} choices`}
+            placeholder="Search values"
+            maxLength={100}
+          />
+          <button
+            type="button"
+            onClick={(event) =>
+              void loadOptions(
+                name,
+                (event.currentTarget.previousElementSibling as HTMLInputElement)
+                  .value,
+              )
+            }
+          >
+            Find
+          </button>
+        </span>
       )}
-    </label>
+      {filterOptions[name]?.hasMore && (
+        <small>Showing the first 100 values. Search for more.</small>
+      )}
+      {filterOptions[name]?.error && (
+        <button type="button" onClick={() => void loadOptions(name)}>
+          {filterOptions[name]?.error}
+        </button>
+      )}
+      <div className="filter-pair">
+        {[`${name}Min`, `${name}Max`].map((key) =>
+          renderFilter(filterFields.find((field) => field.key === key)!),
+        )}
+      </div>
+    </div>
   );
   const searchScope = params.has('title')
     ? 'title'
@@ -875,353 +1065,369 @@ export function Gallery({
           {selected && <button onClick={backToGallery}>Back to results</button>}
         </p>
       )}
-      {selected ? (
-        <>
-          <div className="detail-toolbar">
-            <button onClick={backToGallery}>← Back to results</button>
-            <span className="muted">{filename}</span>
-            <button
-              className="close-detail"
-              aria-label="Close image details"
-              onClick={backToGallery}
-            >
-              ×
-            </button>
-          </div>
-          {!detail && !error && <p role="status">Loading details…</p>}
-          {detail && (
-            <article className="image-detail">
-              <div className="detail-preview">
-                {historical ? (
-                  version ? (
-                    <VersionPreview
-                      key={version.commitId}
-                      baseUrl={baseUrl}
-                      token={token}
-                      library={library}
-                      version={version}
-                      label="Selected version"
-                      expectedSourceSha256={detail.originalSha256}
-                    />
-                  ) : (
-                    <p role="status">
-                      Selected historical preview is loading or unavailable.
-                      Current image is not substituted.
-                    </p>
-                  )
-                ) : (
-                  <>
-                    <Thumbnail
-                      key={`${detail.assetId}/${detail.thumbnail.requestId}`}
-                      baseUrl={baseUrl}
-                      token={token}
-                      library={library}
-                      card={{
-                        assetId: detail.assetId,
-                        path: detail.path,
-                        filename,
-                        fileType: detail.fileType,
-                        capturedAt: null,
-                        camera: null,
-                        lens: null,
-                        rating: null,
-                        rejected: null,
-                        width: null,
-                        height: null,
-                        projectionState: detail.projectionState,
-                        previewState: detail.thumbnail.state,
-                        previewRequestId: detail.thumbnail.requestId,
-                      }}
-                    />
-                    <p className="muted preview-caption">
-                      Current thumbnail · {detail.working.branch}
-                      {detail.thumbnail.selectedVersion
-                        ? ` · version ${detail.thumbnail.selectedVersion.slice(0, 12)}`
-                        : ''}
-                    </p>
-                  </>
-                )}
-                <details className="preview-provenance">
-                  <summary>Preview provenance and source identity</summary>
-                  <p>
-                    Original SHA-256: <code>{detail.originalSha256}</code>
-                  </p>
-                  <p>
-                    Current thumbnail: {detail.thumbnail.state}. Source:{' '}
-                    <code>{detail.thumbnail.sourceSha256}</code>; XMP:{' '}
-                    <code>{detail.thumbnail.xmpSha256}</code>; version:{' '}
-                    <code>{detail.thumbnail.selectedVersion}</code>; renderer:{' '}
-                    {detail.thumbnail.rendererRelease}; artifact:{' '}
-                    <code>{detail.thumbnail.rendererArtifactDigest}</code>;
-                    profile: {detail.thumbnail.profile}; matrix:{' '}
-                    {detail.thumbnail.matrixVersion}; completed:{' '}
-                    {displayedDate(detail.thumbnail.completedAt)}.
-                  </p>
-                  <p>
-                    Metadata projection: {detail.projectionState}
-                    {detail.parseErrorCode ? ` (${detail.parseErrorCode})` : ''}
-                    .
-                  </p>
-                </details>
-              </div>
-              <aside
-                className="image-inspector"
-                aria-label="Image metadata and history"
-              >
-                <h2 id="gallery-heading">{title}</h2>
-                <p
-                  className="image-rating"
-                  aria-label={
-                    rating == null ? 'Rating unknown' : `Rating ${rating} of 5`
-                  }
-                >
-                  {rating == null
-                    ? 'Unrated'
-                    : '★'.repeat(rating) + '☆'.repeat(5 - rating)}
-                </p>
-                <div className="image-tags" aria-label="Image tags">
-                  {visibleFields
-                    .filter(
-                      (field) =>
-                        field.name === 'tag' && field.state === 'present',
+      {selected && (
+        <Modal
+          title={`Image details: ${filename || 'Loading'}`}
+          className="image-detail-dialog"
+          onClose={backToGallery}
+        >
+          <>
+            <div className="detail-toolbar">
+              <button onClick={backToGallery}>← Back to results</button>
+              {onBranch && (
+                <button onClick={onBranch}>Switch web branch</button>
+              )}
+            </div>
+            {!detail && !error && <p role="status">Loading details…</p>}
+            {detail && (
+              <article className="image-detail">
+                <div className="detail-preview">
+                  {historical ? (
+                    version ? (
+                      <VersionPreview
+                        key={version.commitId}
+                        baseUrl={baseUrl}
+                        token={token}
+                        library={library}
+                        version={version}
+                        label="Selected version"
+                        expectedSourceSha256={detail.originalSha256}
+                      />
+                    ) : (
+                      <p role="status">
+                        Selected historical preview is loading or unavailable.
+                        Current image is not substituted.
+                      </p>
                     )
-                    .map((field, index) => (
-                      <span key={index}>{field.text}</span>
-                    ))}
-                </div>
-                <p className="working-state">
-                  Branch: {detail.working.branch}.{' '}
-                  {detail.working.webVersion
-                    ? `Web metadata change ${detail.working.webVersion} is uncommitted.`
-                    : 'No web working change.'}{' '}
-                  {detail.working.deviceConflictCount > 0
-                    ? `${detail.working.deviceConflictCount} device conflicts require resolution.`
-                    : ''}
-                </p>
-                {historical && (
-                  <p role="status" className="version-disclosure">
-                    Selected-version field metadata is unavailable from the
-                    current service. Exact commit/XMP identity and preview
-                    provenance appear beside the image; the following metadata
-                    belongs to the current working state.
-                  </p>
-                )}
-                <h3>{historical ? 'Current working metadata' : 'Metadata'}</h3>
-                {renderFields(summaryFields)}
-                <details className="more-metadata">
-                  <summary>More metadata</summary>
-                  {renderFields(
-                    visibleFields.filter(
-                      (field) =>
-                        ![
-                          'camera',
-                          'lens',
-                          'capturedAt',
-                          'captureDate',
-                        ].includes(field.name),
-                    ),
+                  ) : (
+                    <>
+                      <Thumbnail
+                        key={`${detail.assetId}/${detail.thumbnail.requestId}`}
+                        baseUrl={baseUrl}
+                        token={token}
+                        library={library}
+                        card={{
+                          assetId: detail.assetId,
+                          path: detail.path,
+                          filename,
+                          fileType: detail.fileType,
+                          capturedAt: null,
+                          camera: null,
+                          lens: null,
+                          rating: null,
+                          rejected: null,
+                          width: null,
+                          height: null,
+                          projectionState: detail.projectionState,
+                          previewState: detail.thumbnail.state,
+                          previewRequestId: detail.thumbnail.requestId,
+                        }}
+                      />
+                      <p className="muted preview-caption">
+                        Current thumbnail · {detail.working.branch}
+                        {detail.thumbnail.selectedVersion
+                          ? ` · version ${detail.thumbnail.selectedVersion.slice(0, 12)}`
+                          : ''}
+                      </p>
+                    </>
                   )}
-                </details>
-                <ImageHistory
-                  key={`${detail.assetId}/${detail.working.branch}`}
-                  baseUrl={baseUrl}
-                  token={token}
-                  library={library}
-                  asset={detail.assetId}
-                  branch={detail.working.branch}
-                  initialCommit={params.get('imageVersion') ?? undefined}
-                  onSelection={(chosen, state) => {
-                    setHistorical(chosen);
-                    setVersion(state);
-                    if (state || !chosen) {
-                      const next = new URLSearchParams(window.location.search);
-                      if (state) next.set('imageVersion', state.commitId);
-                      else next.delete('imageVersion');
-                      window.history.replaceState(
-                        window.history.state,
-                        '',
-                        `${window.location.pathname}?${next}`,
-                      );
-                      currentLocation.current = window.location.search;
-                    }
-                  }}
-                  onFullHistory={openHistory}
-                />
-                <details className="image-actions">
-                  <summary>Image actions</summary>
-                  <div className="gallery-actions">
-                    <button
-                      disabled={busy}
-                      onClick={() => void run(() => downloadOriginal(detail))}
-                    >
-                      Download original
-                    </button>
-                    <button
-                      disabled={busy || !detail.thumbnail.selectedVersion}
-                      onClick={() => void run(() => fullPreview(detail))}
-                    >
-                      Open full preview
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (
-                          !dirty.current ||
-                          window.confirm(
-                            'Keep your unsaved edit and open Library controls?',
-                          )
-                        )
-                          onLibrary?.();
-                      }}
-                    >
-                      Import, delete, or restore in Library controls
-                    </button>
-                  </div>
-                </details>
-                <details className="metadata-edit">
-                  <summary>Edit XMP metadata</summary>{' '}
-                  <form
-                    onChange={() => setEditDirty(true)}
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void run(saveMetadata);
-                    }}
-                  >
-                    <h4>Edit XMP metadata</h4>
+                  <details className="preview-provenance">
+                    <summary>Preview provenance and source identity</summary>
                     <p>
-                      Changes remain uncommitted on branch{' '}
-                      {detail.working.branch}.
+                      Original SHA-256: <code>{detail.originalSha256}</code>
                     </p>
-                    <label>
-                      Field{' '}
-                      <select
-                        aria-label="Field"
-                        value={editField}
-                        onChange={(event) => {
-                          setEditField(event.target.value);
-                          setEditValue('');
-                          setEditLongitude('');
+                    <p>
+                      Current thumbnail: {detail.thumbnail.state}. Source:{' '}
+                      <code>{detail.thumbnail.sourceSha256}</code>; XMP:{' '}
+                      <code>{detail.thumbnail.xmpSha256}</code>; version:{' '}
+                      <code>{detail.thumbnail.selectedVersion}</code>; renderer:{' '}
+                      {detail.thumbnail.rendererRelease}; artifact:{' '}
+                      <code>{detail.thumbnail.rendererArtifactDigest}</code>;
+                      profile: {detail.thumbnail.profile}; matrix:{' '}
+                      {detail.thumbnail.matrixVersion}; completed:{' '}
+                      {displayedDate(detail.thumbnail.completedAt)}.
+                    </p>
+                    <p>
+                      Metadata projection: {detail.projectionState}
+                      {detail.parseErrorCode
+                        ? ` (${detail.parseErrorCode})`
+                        : ''}
+                      .
+                    </p>
+                  </details>
+                </div>
+                <aside
+                  className="image-inspector"
+                  aria-label="Image metadata and history"
+                >
+                  <h2 id="gallery-heading">{title}</h2>
+                  <p
+                    className="image-rating"
+                    aria-label={
+                      rating == null
+                        ? 'Rating unknown'
+                        : `Rating ${rating} of 5`
+                    }
+                  >
+                    {rating == null
+                      ? 'Unrated'
+                      : '★'.repeat(rating) + '☆'.repeat(5 - rating)}
+                  </p>
+                  <div className="image-tags" aria-label="Image tags">
+                    {visibleFields
+                      .filter(
+                        (field) =>
+                          field.name === 'tag' && field.state === 'present',
+                      )
+                      .map((field, index) => (
+                        <span key={index}>{field.text}</span>
+                      ))}
+                  </div>
+                  <p className="working-state">
+                    Branch: {detail.working.branch}.{' '}
+                    {detail.working.webVersion
+                      ? `Web metadata change ${detail.working.webVersion} is uncommitted.`
+                      : 'No web working change.'}{' '}
+                    {detail.working.deviceConflictCount > 0
+                      ? `${detail.working.deviceConflictCount} device conflicts require resolution.`
+                      : ''}
+                  </p>
+                  {historical && (
+                    <p role="status" className="version-disclosure">
+                      Selected-version field metadata is unavailable from the
+                      current service. Exact commit/XMP identity and preview
+                      provenance appear beside the image; the following metadata
+                      belongs to the current working state.
+                    </p>
+                  )}
+                  <h3>
+                    {historical ? 'Current working metadata' : 'Metadata'}
+                  </h3>
+                  {renderFields(summaryFields)}
+                  <details className="more-metadata">
+                    <summary>More metadata</summary>
+                    {renderFields(
+                      visibleFields.filter(
+                        (field) =>
+                          ![
+                            'camera',
+                            'lens',
+                            'capturedAt',
+                            'captureDate',
+                          ].includes(field.name),
+                      ),
+                    )}
+                  </details>
+                  <ImageHistory
+                    key={`${detail.assetId}/${detail.working.branch}`}
+                    baseUrl={baseUrl}
+                    token={token}
+                    library={library}
+                    asset={detail.assetId}
+                    branch={detail.working.branch}
+                    initialCommit={params.get('imageVersion') ?? undefined}
+                    onSelection={(chosen, state) => {
+                      setHistorical(chosen);
+                      setVersion(state);
+                      if (state || !chosen) {
+                        const next = new URLSearchParams(
+                          window.location.search,
+                        );
+                        if (state) next.set('imageVersion', state.commitId);
+                        else next.delete('imageVersion');
+                        window.history.replaceState(
+                          window.history.state,
+                          '',
+                          `${window.location.pathname}?${next}`,
+                        );
+                        currentLocation.current = window.location.search;
+                      }
+                    }}
+                    onFullHistory={openHistory}
+                  />
+                  <details className="image-actions">
+                    <summary>Image actions</summary>
+                    <div className="gallery-actions">
+                      <button
+                        disabled={busy}
+                        onClick={() => void run(() => downloadOriginal(detail))}
+                      >
+                        Download original
+                      </button>
+                      <button
+                        disabled={busy || !detail.thumbnail.selectedVersion}
+                        onClick={() => void run(() => fullPreview(detail))}
+                      >
+                        Open full preview
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (
+                            !dirty.current ||
+                            window.confirm(
+                              'Keep your unsaved edit and open Library controls?',
+                            )
+                          )
+                            onLibrary?.();
                         }}
                       >
-                        <option value="rating">Rating</option>
-                        <option value="rejected">Rejected</option>
-                        <option value="color">Color label</option>
-                        <option value="tags">Tags</option>
-                        <option value="title">Title</option>
-                        <option value="description">Description</option>
-                        <option value="location">Location</option>
-                      </select>
-                    </label>{' '}
-                    <label>
-                      {editField === 'location' ? 'Latitude' : 'Value'}{' '}
-                      {editField === 'rejected' ? (
-                        <select
-                          aria-label="Value"
-                          value={editValue}
-                          onChange={(event) => setEditValue(event.target.value)}
-                          required
-                        >
-                          <option value="">Select</option>
-                          <option value="true">Rejected</option>
-                          <option value="false">Not rejected</option>
-                        </select>
-                      ) : (
-                        <input
-                          aria-label={
-                            editField === 'location' ? 'Latitude' : 'Value'
-                          }
-                          maxLength={16384}
-                          type={
-                            ['rating', 'color', 'location'].includes(editField)
-                              ? 'number'
-                              : 'text'
-                          }
-                          min={
-                            editField === 'rating'
-                              ? 0
-                              : editField === 'color'
-                                ? 0
-                                : editField === 'location'
-                                  ? -90
-                                  : undefined
-                          }
-                          max={
-                            editField === 'rating'
-                              ? 5
-                              : editField === 'color'
-                                ? 4
-                                : editField === 'location'
-                                  ? 90
-                                  : undefined
-                          }
-                          step={editField === 'location' ? 'any' : undefined}
-                          value={editValue}
-                          onChange={(event) => setEditValue(event.target.value)}
-                          aria-describedby="gallery-edit-help"
-                        />
-                      )}
-                    </label>{' '}
-                    {editField === 'location' && (
-                      <label>
-                        Longitude{' '}
-                        <input
-                          type="number"
-                          min={-180}
-                          max={180}
-                          step="any"
-                          value={editLongitude}
-                          onChange={(event) =>
-                            setEditLongitude(event.target.value)
-                          }
-                        />
-                      </label>
-                    )}
-                    <p id="gallery-edit-help">
-                      Blank rating, color, title, description, or location
-                      clears that value. Separate tags with commas.
-                    </p>
-                    <button type="submit" disabled={busy}>
-                      Save working change
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void run(refreshDetail)}
+                        Import, delete, or restore in Library controls
+                      </button>
+                    </div>
+                  </details>
+                  <details className="metadata-edit">
+                    <summary>Edit XMP metadata</summary>{' '}
+                    <form
+                      onChange={() => setEditDirty(true)}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void run(saveMetadata);
+                      }}
                     >
-                      Refresh details
-                    </button>
-                  </form>
-                </details>
-                <details className="retained-location">
-                  <summary>Retained location</summary>
-                  <p className="muted">
-                    Reveal private coordinates only on explicit request.
-                  </p>
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () =>
-                        setRevealed(
-                          await api(
-                            `/libraries/${encodeURIComponent(library)}/gallery/${detail.assetId}/location?branch=${encodeURIComponent(detail.working.branch)}`,
-                          ),
-                        ),
-                      )
-                    }
-                  >
-                    Reveal retained location
-                  </button>
-                  {revealed && (
-                    <p role="status">
-                      Coordinates: {revealed.latitude}, {revealed.longitude}
+                      <h4>Edit XMP metadata</h4>
+                      <p>
+                        Changes remain uncommitted on branch{' '}
+                        {detail.working.branch}.
+                      </p>
+                      <label>
+                        Field{' '}
+                        <select
+                          aria-label="Field"
+                          value={editField}
+                          onChange={(event) => {
+                            setEditField(event.target.value);
+                            setEditValue('');
+                            setEditLongitude('');
+                          }}
+                        >
+                          <option value="rating">Rating</option>
+                          <option value="rejected">Rejected</option>
+                          <option value="color">Color label</option>
+                          <option value="tags">Tags</option>
+                          <option value="title">Title</option>
+                          <option value="description">Description</option>
+                          <option value="location">Location</option>
+                        </select>
+                      </label>{' '}
+                      <label>
+                        {editField === 'location' ? 'Latitude' : 'Value'}{' '}
+                        {editField === 'rejected' ? (
+                          <select
+                            aria-label="Value"
+                            value={editValue}
+                            onChange={(event) =>
+                              setEditValue(event.target.value)
+                            }
+                            required
+                          >
+                            <option value="">Select</option>
+                            <option value="true">Rejected</option>
+                            <option value="false">Not rejected</option>
+                          </select>
+                        ) : (
+                          <input
+                            aria-label={
+                              editField === 'location' ? 'Latitude' : 'Value'
+                            }
+                            maxLength={16384}
+                            type={
+                              ['rating', 'color', 'location'].includes(
+                                editField,
+                              )
+                                ? 'number'
+                                : 'text'
+                            }
+                            min={
+                              editField === 'rating'
+                                ? 0
+                                : editField === 'color'
+                                  ? 0
+                                  : editField === 'location'
+                                    ? -90
+                                    : undefined
+                            }
+                            max={
+                              editField === 'rating'
+                                ? 5
+                                : editField === 'color'
+                                  ? 4
+                                  : editField === 'location'
+                                    ? 90
+                                    : undefined
+                            }
+                            step={editField === 'location' ? 'any' : undefined}
+                            value={editValue}
+                            onChange={(event) =>
+                              setEditValue(event.target.value)
+                            }
+                            aria-describedby="gallery-edit-help"
+                          />
+                        )}
+                      </label>{' '}
+                      {editField === 'location' && (
+                        <label>
+                          Longitude{' '}
+                          <input
+                            type="number"
+                            min={-180}
+                            max={180}
+                            step="any"
+                            value={editLongitude}
+                            onChange={(event) =>
+                              setEditLongitude(event.target.value)
+                            }
+                          />
+                        </label>
+                      )}
+                      <p id="gallery-edit-help">
+                        Blank rating, color, title, description, or location
+                        clears that value. Separate tags with commas.
+                      </p>
+                      <button type="submit" disabled={busy}>
+                        Save working change
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void run(refreshDetail)}
+                      >
+                        Refresh details
+                      </button>
+                    </form>
+                  </details>
+                  <details className="retained-location">
+                    <summary>Retained location</summary>
+                    <p className="muted">
+                      Reveal private coordinates only on explicit request.
                     </p>
-                  )}
-                </details>
-                {editStatus && <p role="status">{editStatus}</p>}
-              </aside>
-            </article>
-          )}
-        </>
-      ) : (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () =>
+                          setRevealed(
+                            await api(
+                              `/libraries/${encodeURIComponent(library)}/gallery/${detail.assetId}/location?branch=${encodeURIComponent(detail.working.branch)}`,
+                            ),
+                          ),
+                        )
+                      }
+                    >
+                      Reveal retained location
+                    </button>
+                    {revealed && (
+                      <p role="status">
+                        Coordinates: {revealed.latitude}, {revealed.longitude}
+                      </p>
+                    )}
+                  </details>
+                  {editStatus && <p role="status">{editStatus}</p>}
+                </aside>
+              </article>
+            )}
+          </>
+        </Modal>
+      )}
+      {
         <>
           <div className="gallery-topline">
             <h2 id="gallery-heading">All photos</h2>
@@ -1487,62 +1693,180 @@ export function Gallery({
                   applyFilters();
                 }}
               >
-                <div className="filter-common">
-                  {filterFields
-                    .filter((field) => common.includes(field.key))
-                    .map(renderFilter)}
-                </div>
-                <p className="muted filter-help">
-                  Criteria combine with AND. Tags are comma-separated; rating is
-                  an exact value.
-                </p>
-                <details className="filter-advanced">
-                  <summary>More filters</summary>
-                  <div className="gallery-filters">
-                    {filterFields
-                      .filter(
-                        (field) =>
-                          !common.includes(field.key) &&
-                          (!hidesLocation ||
-                            (!field.key.startsWith('latitude') &&
-                              !field.key.startsWith('longitude'))),
-                      )
-                      .map(renderFilter)}
-                    <label>
-                      Rejected
-                      <select
-                        aria-label="Rejected"
-                        value={draft.rejected ?? ''}
-                        onChange={(event) =>
-                          setDraft({ ...draft, rejected: event.target.value })
-                        }
-                      >
-                        <option value="">Any</option>
-                        <option value="true">Rejected</option>
-                        <option value="false">Not rejected</option>
-                      </select>
-                    </label>
-                    {!hidesLocation && (
+                <details
+                  className="filter-group"
+                  onToggle={(event) =>
+                    toggleGroup('Dates', event.currentTarget.open)
+                  }
+                >
+                  <summary>Dates</summary>
+                  {expandedGroups.includes('Dates') && (
+                    <div className="gallery-filters">
+                      <p className="filter-group-label">Captured</p>
+                      <div className="filter-pair">
+                        {['captureFrom', 'captureTo'].map((key) =>
+                          renderFilter(
+                            filterFields.find((field) => field.key === key)!,
+                          ),
+                        )}
+                      </div>
+                      <p className="filter-group-label">Imported</p>
+                      <div className="filter-pair">
+                        {['importFrom', 'importTo'].map((key) =>
+                          renderFilter(
+                            filterFields.find((field) => field.key === key)!,
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </details>
+                <details
+                  className="filter-group"
+                  onToggle={(event) =>
+                    toggleGroup('Camera and file', event.currentTarget.open, [
+                      'camera',
+                      'lens',
+                      'fileType',
+                      'orientation',
+                    ])
+                  }
+                >
+                  <summary>Camera and file</summary>
+                  {expandedGroups.includes('Camera and file') && (
+                    <div className="gallery-filters">
+                      {[
+                        'camera',
+                        'lens',
+                        'fileType',
+                        'orientation',
+                        'path',
+                      ].map((key) =>
+                        renderFilter(
+                          filterFields.find((field) => field.key === key)!,
+                        ),
+                      )}
+                    </div>
+                  )}
+                </details>
+                <details
+                  className="filter-group"
+                  onToggle={(event) =>
+                    toggleGroup('Exposure and size', event.currentTarget.open, [
+                      'focalLength',
+                      'aperture',
+                      'shutter',
+                      'iso',
+                      'width',
+                      'height',
+                    ])
+                  }
+                >
+                  <summary>Exposure and size</summary>
+                  {expandedGroups.includes('Exposure and size') && (
+                    <div className="gallery-filters">
+                      {[
+                        ['focalLength', 'Focal length'],
+                        ['aperture', 'Aperture'],
+                        ['shutter', 'Exposure seconds'],
+                        ['iso', 'ISO'],
+                        ['width', 'Width'],
+                        ['height', 'Height'],
+                      ].map(([key, label]) => renderRange(key, label))}
+                    </div>
+                  )}
+                </details>
+                <details
+                  className="filter-group"
+                  onToggle={(event) =>
+                    toggleGroup('Organization', event.currentTarget.open, [
+                      'rating',
+                      'tag',
+                      'color',
+                    ])
+                  }
+                >
+                  <summary>Organization</summary>
+                  {expandedGroups.includes('Organization') && (
+                    <div className="gallery-filters">
+                      {[
+                        'rating',
+                        'tag',
+                        'color',
+                        'title',
+                        'description',
+                        'creator',
+                      ].map((key) =>
+                        renderFilter(
+                          filterFields.find((field) => field.key === key)!,
+                        ),
+                      )}
                       <label>
-                        Location present
+                        Rejected
                         <select
-                          aria-label="Location present"
-                          value={draft.locationPresent ?? ''}
+                          aria-label="Rejected"
+                          value={draft.rejected ?? ''}
                           onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              locationPresent: event.target.value,
-                            })
+                            setDraft({ ...draft, rejected: event.target.value })
                           }
                         >
                           <option value="">Any</option>
-                          <option value="true">Present</option>
-                          <option value="false">Missing</option>
+                          <option value="true">Rejected</option>
+                          <option value="false">Not rejected</option>
                         </select>
                       </label>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </details>
+                {!hidesLocation && (
+                  <details
+                    className="filter-group"
+                    onToggle={(event) =>
+                      toggleGroup('Location', event.currentTarget.open)
+                    }
+                  >
+                    <summary>Location</summary>
+                    {expandedGroups.includes('Location') && (
+                      <div className="gallery-filters">
+                        <div className="filter-pair">
+                          {['latitudeMin', 'latitudeMax'].map((key) =>
+                            renderFilter(
+                              filterFields.find((field) => field.key === key)!,
+                            ),
+                          )}
+                        </div>
+                        <div className="filter-pair">
+                          {['longitudeMin', 'longitudeMax'].map((key) =>
+                            renderFilter(
+                              filterFields.find((field) => field.key === key)!,
+                            ),
+                          )}
+                        </div>
+                        <label>
+                          Location present
+                          <select
+                            aria-label="Location present"
+                            value={draft.locationPresent ?? ''}
+                            onChange={(event) =>
+                              setDraft({
+                                ...draft,
+                                locationPresent: event.target.value,
+                              })
+                            }
+                          >
+                            <option value="">Any</option>
+                            <option value="true">Present</option>
+                            <option value="false">Missing</option>
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                  </details>
+                )}
+                <p className="muted filter-help">
+                  Criteria combine with AND. Tags and colors may contain
+                  comma-separated values; rating is exact.
+                </p>
                 {filterError && <p role="alert">{filterError}</p>}
                 <div className="filter-footer">
                   <button
@@ -1562,7 +1886,7 @@ export function Gallery({
             </Modal>
           )}
         </>
-      )}
+      }
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type Item = {
   id: string;
@@ -28,11 +28,14 @@ type Edit = {
 export function Library({
   baseUrl,
   token,
+  previewMode = false,
 }: {
   baseUrl: string;
   token: string;
+  previewMode?: boolean;
 }) {
   const [files, setFiles] = useState<File[]>([]);
+  const directoryInput = useRef<HTMLInputElement>(null);
   const [atomic, setAtomic] = useState(false);
   const [batch, setBatch] = useState<Batch>();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -48,6 +51,11 @@ export function Library({
     () => sessionStorage.getItem('ingest-batch') ?? '',
   );
   const [current, setCurrent] = useState(0);
+  useEffect(
+    () => directoryInput.current?.setAttribute('webkitdirectory', ''),
+    [],
+  );
+  const importPath = (file: File) => file.webkitRelativePath || file.name;
 
   async function request<T>(
     path: string,
@@ -109,8 +117,9 @@ export function Library({
     }
   }
   useEffect(() => {
+    if (previewMode) return;
     void run(() => refresh());
-  }, [deleted]);
+  }, [deleted, previewMode]);
   useEffect(() => {
     if (!batch || !['created', 'processing'].includes(batch.state)) return;
     const timer = window.setInterval(() => {
@@ -127,6 +136,16 @@ export function Library({
 
   async function upload(resume: boolean) {
     if (files.length === 0) throw new Error('Choose the original files first.');
+    const seen = new Set<string>();
+    for (const file of files) {
+      const path = importPath(file);
+      const key = path.replaceAll('\\', '/').normalize('NFC').toUpperCase();
+      if (seen.has(key))
+        throw new Error(
+          `Duplicate destination path: ${path}. Choose a different folder or remove one file.`,
+        );
+      seen.add(key);
+    }
     let selected: Batch;
     if (resume) selected = await request<Batch>(`/import-batches/${resumeId}`);
     else {
@@ -136,7 +155,7 @@ export function Library({
       const items = [];
       for (const file of files)
         items.push({
-          path: file.webkitRelativePath || file.name,
+          path: importPath(file),
           length: file.size,
           sha256: await hash(await file.arrayBuffer()),
         });
@@ -153,9 +172,7 @@ export function Library({
     for (const item of selected.items) {
       if (item.state !== 'uploading') continue;
       const file = files.find(
-        (f) =>
-          (f.webkitRelativePath || f.name) === item.path &&
-          f.size === item.length,
+        (f) => importPath(f) === item.path && f.size === item.length,
       );
       if (!file)
         throw new Error(`Reselect the original file for ${item.path}.`);
@@ -247,6 +264,18 @@ export function Library({
     setMessage('Downloaded bytes verified.');
   }
 
+  if (previewMode)
+    return (
+      <section aria-labelledby="library-heading">
+        <h2 id="library-heading">Import and organize photographs</h2>
+        <p role="status">
+          This is a sample gallery preview. Files cannot be imported or saved
+          here. Connect the owner backend to import real photographs and
+          folders.
+        </p>
+      </section>
+    );
+
   return (
     <section aria-labelledby="library-heading">
       <h2 id="library-heading">Import and organize photographs</h2>
@@ -255,9 +284,25 @@ export function Library({
         id="import-files"
         type="file"
         multiple
-        disabled={busy}
+        disabled={busy || previewMode}
         onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
       />
+      <label htmlFor="import-folder">
+        Or select a folder (including subfolders)
+      </label>{' '}
+      <input
+        id="import-folder"
+        ref={directoryInput}
+        type="file"
+        multiple
+        disabled={busy || previewMode}
+        onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+      />
+      {files.length > 0 && (
+        <p role="status">
+          {files.length} files selected. Relative folder paths are preserved.
+        </p>
+      )}
       <p>
         <label>
           <input
@@ -270,7 +315,7 @@ export function Library({
         </label>
       </p>
       <button
-        disabled={busy || files.length === 0}
+        disabled={busy || previewMode || files.length === 0}
         onClick={() => void run(() => upload(false))}
       >
         Import selected files
@@ -283,7 +328,7 @@ export function Library({
         onChange={(e) => setResumeId(e.target.value)}
       />{' '}
       <button
-        disabled={busy || !resumeId || files.length === 0}
+        disabled={busy || previewMode || !resumeId || files.length === 0}
         onClick={() => void run(() => upload(true))}
       >
         Resume with selected files

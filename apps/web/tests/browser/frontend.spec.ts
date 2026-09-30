@@ -8,14 +8,17 @@ test('drawer cancels drafts, contains focus, validates ranges, applies and remov
   await page.goto('/?camera=Original#id_token=fixture-token');
   const opener = page.getByRole('button', { name: /Filters/ });
   await opener.click();
-  await page.getByLabel('Camera', { exact: true }).fill('Draft');
+  await page.getByText('Camera and file', { exact: true }).click();
+  await page.getByLabel('Camera', { exact: true }).selectOption('Sony');
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/camera=Original/);
   await expect(opener).toBeFocused();
   await opener.click();
+  await page.getByText('Camera and file', { exact: true }).click();
   await expect(page.getByLabel('Camera', { exact: true })).toHaveValue(
     'Original',
   );
+  await page.getByText('Dates', { exact: true }).click();
   await page.getByLabel('Captured from').fill('2026-10-01T10:00');
   await page.getByLabel('Captured to').fill('2026-09-01T10:00');
   await page.getByRole('button', { name: 'Show photos' }).click();
@@ -23,7 +26,8 @@ test('drawer cancels drafts, contains focus, validates ranges, applies and remov
     'minimum must not exceed',
   );
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
-  await page.getByLabel('Camera', { exact: true }).fill('Sony');
+  await page.getByLabel('Camera', { exact: true }).selectOption('Sony');
+  await page.getByText('Organization', { exact: true }).click();
   await page.getByLabel('Rating', { exact: true }).selectOption('4');
   for (let i = 0; i < 18; i++) {
     await page.keyboard.press('Tab');
@@ -39,13 +43,81 @@ test('drawer cancels drafts, contains focus, validates ranges, applies and remov
   expect(new URL(page.url()).searchParams.get('rating')).toBe('4');
 });
 
+test('compact groups use branch values and keep date and numeric ranges usable', async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#id_token=fixture-token');
+  const width = await page
+    .locator('.gallery')
+    .evaluate((element) => element.getBoundingClientRect().width);
+  expect(width).toBeGreaterThanOrEqual(1439);
+  await page.getByRole('button', { name: /Filters/ }).click();
+  await expect(page.getByLabel('Camera', { exact: true })).toHaveCount(0);
+  await page.getByText('Dates', { exact: true }).click();
+  const from = (await page.getByLabel('Captured from').boundingBox())!;
+  const to = (await page.getByLabel('Captured to').boundingBox())!;
+  expect(Math.abs(from.y - to.y)).toBeLessThan(4);
+  await page.getByText('Camera and file', { exact: true }).click();
+  await page.getByLabel('Camera', { exact: true }).selectOption('Sony');
+  await page.getByText('Exposure and size', { exact: true }).click();
+  await page.getByLabel('Existing ISO').selectOption('400');
+  await expect(page.getByLabel('ISO minimum')).toHaveValue('400');
+  await page.getByLabel('ISO maximum').fill('800');
+  await page.getByRole('button', { name: 'Show photos' }).click();
+  await expect(page).toHaveURL(/camera=Sony/);
+  await expect(page).toHaveURL(/isoMin=400/);
+  await expect(page).toHaveURL(/isoMax=800/);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test('long filter choice lists stay searchable', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/gallery/filter-values?**', (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('facet') !== 'camera') return route.fallback();
+    const searched = !!url.searchParams.get('q');
+    return route.fulfill({
+      json: {
+        values: searched
+          ? [{ value: 'Rare camera', label: 'Rare camera' }]
+          : Array.from({ length: 100 }, (_, index) => ({
+              value: `Camera ${index}`,
+              label: `Camera ${index}`,
+            })),
+        hasMore: !searched,
+      },
+    });
+  });
+  await page.goto('/#id_token=fixture-token');
+  await page.getByRole('button', { name: /Filters/ }).click();
+  await page.getByText('Camera and file', { exact: true }).click();
+  await expect(page.getByText(/Showing the first 100 values/)).toBeVisible();
+  await page.getByLabel('Search Camera choices').fill('Rare');
+  await page.getByRole('button', { name: 'Find' }).click();
+  await page.getByLabel('Camera', { exact: true }).selectOption('Rare camera');
+  await page.getByRole('button', { name: 'Show photos' }).click();
+  await expect(page).toHaveURL(/camera=Rare\+camera/);
+});
+
 test('every existing facet stays discoverable; privacy hides location until explicitly enabled', async ({
   page,
 }) => {
   await fixture(page);
   await page.goto('/#id_token=fixture-token');
   await page.getByRole('button', { name: /Filters/ }).click();
-  await page.getByText('More filters', { exact: true }).click();
+  for (const group of [
+    'Dates',
+    'Camera and file',
+    'Exposure and size',
+    'Organization',
+  ])
+    await page.getByText(group, { exact: true }).click();
   for (const label of [
     'Imported from',
     'Imported to',
@@ -80,7 +152,7 @@ test('every existing facet stays discoverable; privacy hides location until expl
   await page.getByText('Gallery privacy', { exact: true }).click();
   await page.getByRole('button', { name: 'Show location in gallery' }).click();
   await page.getByRole('button', { name: /Filters/ }).click();
-  await page.getByText('More filters', { exact: true }).click();
+  await page.getByText('Location', { exact: true }).click();
   for (const label of [
     'Latitude minimum',
     'Latitude maximum',
@@ -116,6 +188,66 @@ test('scoped search, density and secondary import preserve applied gallery conte
   await expect(page.locator('.gallery-grid')).toBeVisible();
   expect(new URL(page.url()).searchParams.get('rating')).toBe('4');
   expect(new URL(page.url()).searchParams.get('title')).toBe('Alpine');
+});
+
+test('folder import keeps nested paths and blocks destination collisions before posting', async ({
+  page,
+}) => {
+  await fixture(page);
+  const manifests: { items: { path: string }[] }[] = [];
+  await page.route('**/v1/import-batches', (route) => {
+    manifests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 400,
+      json: { code: 'test_stopped_after_manifest' },
+    });
+  });
+  await page.goto('/#id_token=fixture-token');
+  await page.getByRole('button', { name: /Import$/ }).click();
+  await expect(page.locator('#import-folder')).toHaveAttribute(
+    'webkitdirectory',
+    '',
+  );
+  async function select(paths: string[]) {
+    await page.evaluate((names) => {
+      const transfer = new DataTransfer();
+      for (const path of names) {
+        const file = new File(['photo'], path.split('/').at(-1)!, {
+          type: 'image/jpeg',
+        });
+        Object.defineProperty(file, 'webkitRelativePath', { value: path });
+        transfer.items.add(file);
+      }
+      const input = document.querySelector<HTMLInputElement>('#import-folder')!;
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, paths);
+  }
+  await select(['set/a/photo.jpg', 'set/b/photo.jpg']);
+  await page.getByRole('button', { name: 'Import selected files' }).click();
+  await expect.poll(() => manifests.length).toBe(1);
+  expect(manifests[0].items.map((item) => item.path)).toEqual([
+    'set/a/photo.jpg',
+    'set/b/photo.jpg',
+  ]);
+  await select(['set/a/photo.jpg', 'set/A/photo.jpg']);
+  await page.getByRole('button', { name: 'Import selected files' }).click();
+  await expect(page.getByText(/Duplicate destination path/)).toBeVisible();
+  expect(manifests).toHaveLength(1);
+});
+
+test('local preview explains that imports cannot be saved', async ({
+  page,
+}) => {
+  await fixture(page, { preview: true });
+  await page.goto('/#id_token=fixture-token');
+  await page.getByRole('button', { name: /Import$/ }).click();
+  await expect(
+    page.getByText(/sample gallery preview.*cannot be imported/i),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Import selected files' }),
+  ).toHaveCount(0);
 });
 
 test('all sort and search modes use the existing browse query contract', async ({
@@ -186,6 +318,42 @@ test('historical selection clears current preview and truthfully identifies unav
   expect(renders).toEqual([]);
   await page.getByRole('button', { name: /Current working view/ }).click();
   await expect(page.locator('.detail-preview > img')).toBeVisible();
+});
+
+test('image overlay retains gallery and compares selected lineage without navigation', async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto('/?rating=4#id_token=fixture-token');
+  const tile = page.getByRole('button', { name: /image-1.jpg/ });
+  await tile.click();
+  await expect(
+    page.getByRole('dialog', { name: /Image details/ }),
+  ).toBeVisible();
+  await expect(page.locator('.gallery-grid')).toBeVisible();
+  await page
+    .locator('.image-history')
+    .getByRole('button', { name: /Color edit/ })
+    .click();
+  await expect(page.locator('.detail-preview')).toContainText('not_requested');
+  await page.locator('.inline-comparison summary').click();
+  await expect(
+    page.getByRole('heading', { name: 'Version comparison' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Committed differences' }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: /Image details/ })).toHaveCount(
+    0,
+  );
+  await expect(tile).toBeFocused();
+  expect(new URL(page.url()).searchParams.get('rating')).toBe('4');
+  await tile.click();
+  await page.goBack();
+  await expect(page.getByRole('dialog', { name: /Image details/ })).toHaveCount(
+    0,
+  );
 });
 
 test('portrait and panorama previews keep their intrinsic proportions', async ({
@@ -313,7 +481,8 @@ test('obsolete gallery and detail reads never replace a newer selection', async 
   });
   await page.goto('/?camera=Slow#id_token=fixture-token');
   await page.getByRole('button', { name: /Filters/ }).click();
-  await page.getByLabel('Camera', { exact: true }).fill('Fast');
+  await page.getByText('Camera and file', { exact: true }).click();
+  await page.getByLabel('Camera', { exact: true }).selectOption('Fast');
   await page.getByRole('button', { name: 'Show photos' }).click();
   await expect(page.getByRole('button', { name: /image-2.jpg/ })).toBeVisible();
   await page.waitForTimeout(350);
@@ -407,8 +576,10 @@ test('desktop gallery/filter/detail geometry and responsive reflow match referen
     .boundingBox())!;
   expect(drawer.x).toBe(0);
   expect(drawer.width).toBeGreaterThanOrEqual(280);
-  expect(drawer.width).toBeLessThanOrEqual(360);
+  expect(drawer.width).toBeLessThanOrEqual(460);
   await page.screenshot({ path: testInfo.outputPath('filters.png') });
+  await page.getByText('Dates', { exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath('filters-dates.png') });
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: /image-1.jpg/ }).click();
   await expect(page.locator('.image-inspector')).toBeVisible();
@@ -490,8 +661,10 @@ test('unsaved drafts block branch changes, survive reauthentication and are clea
   await page.getByLabel('Field', { exact: true }).selectOption('title');
   await page.getByLabel('Value', { exact: true }).fill('Retained draft');
   page.once('dialog', (dialog) => dialog.dismiss());
-  await page.getByRole('button', { name: 'Web branch main' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Switch web branch' }).click();
+  await expect(
+    page.getByRole('dialog', { name: /Switch web branch/ }),
+  ).toHaveCount(0);
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: /Back to results/ }).click();
   await expect(page.getByLabel('Value', { exact: true })).toHaveValue(
@@ -506,6 +679,8 @@ test('unsaved drafts block branch changes, survive reauthentication and are clea
   await expect(page.getByLabel('Value', { exact: true })).toHaveValue(
     'Retained draft',
   );
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: /Back to results/ }).click();
   await page.getByLabel('Owner controls').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.waitForURL(/\/logout/);

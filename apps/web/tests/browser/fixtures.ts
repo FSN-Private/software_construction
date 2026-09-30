@@ -121,7 +121,11 @@ export function detail(assetId: string, webVersion: number) {
 
 export async function fixture(
   page: Page,
-  options: { performance?: boolean; previewFailed?: boolean } = {},
+  options: {
+    performance?: boolean;
+    previewFailed?: boolean;
+    preview?: boolean;
+  } = {},
 ) {
   let preference = { hideGeolocation: true, version: 1 };
   let webVersion = 0;
@@ -148,7 +152,7 @@ export async function fixture(
   await page.route('**/platform-config.js', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `window.__PLATFORM_CONFIG__={apiBaseUrl:"${browserTestOrigin}",cognitoHostedUiUrl:"${browserTestOrigin}",cognitoClientId:"fixture",redirectUri:"${browserTestOrigin}",galleryLibraryId:"main"};`,
+      body: `window.__PLATFORM_CONFIG__={apiBaseUrl:"${browserTestOrigin}",cognitoHostedUiUrl:"${browserTestOrigin}",cognitoClientId:"fixture",redirectUri:"${browserTestOrigin}",galleryLibraryId:"main",previewMode:${!!options.preview}};`,
     }),
   );
   await page.route('**/ready', (route) =>
@@ -440,6 +444,32 @@ export async function fixture(
           version: preference.version + 1,
         };
       return route.fulfill({ json: preference });
+    }
+    if (path.endsWith('/gallery/filter-values')) {
+      const choices: Record<string, string[]> = {
+        camera: ['Sony', 'Original', 'Slow', 'Fast', 'Fixture camera'],
+        lens: ['24-70'],
+        fileType: ['dng'],
+        rating: ['4', '5'],
+        orientation: ['1'],
+        tag: ['landscape', 'portrait'],
+        color: ['red'],
+        focalLength: ['35', '50'],
+        aperture: ['2.8'],
+        shutter: ['0.008'],
+        iso: ['100', '400'],
+        width: ['4000'],
+        height: ['3000'],
+      };
+      const query = url.searchParams.get('q')?.toLowerCase() ?? '';
+      return route.fulfill({
+        json: {
+          values: (choices[url.searchParams.get('facet') ?? ''] ?? [])
+            .filter((value) => value.toLowerCase().includes(query))
+            .map((value) => ({ value, label: value })),
+          hasMore: false,
+        },
+      });
     }
     if (path.endsWith('/gallery')) {
       if (options.performance)
