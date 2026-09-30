@@ -98,6 +98,18 @@ internal static class GalleryBrowseChecks
                     DO UPDATE SET value_state='present',text_value=excluded.text_value,display_text=excluded.display_text
                     """, default, first.Cards[0].AssetId, facet, value);
         }
+        var cameraChoices = await browse.FilterValuesAsync("test-owner", "main", "main", "camera", null, default);
+        Check(cameraChoices.Values.Any(value => value.Value == "Unique Camera"), "Filter choices include values outside the first gallery page");
+        Check((await browse.FilterValuesAsync("test-owner", "main", "main", "camera", "unique", default)).Values.Count == 1,
+            "Filter choices support bounded search");
+        Check((await browse.FilterValuesAsync("another-owner", "main", "main", "camera", null, default)).Values.Count == 0,
+            "Filter choices cannot expose another owner's records");
+        Check((await browse.FilterValuesAsync("test-owner", "main", "main", "iso", null, default)).Values.Any(value => value.Value == "400"),
+            "Numeric filter choices use invariant values");
+        Check((await browse.FilterValuesAsync("test-owner", "main", "other", "camera", null, default)).Values.Count == 0,
+            "Filter choices are branch scoped");
+        await RejectAsync(() => browse.FilterValuesAsync("test-owner", "main", "main", "location", null, default), "invalid_filter");
+        await RejectAsync(() => browse.FilterValuesAsync("test-owner", "main", "main", "camera", new string('x', 101), default), "invalid_filter");
         var cases = new[] {
             ("captureFrom", "2024-05-06T09:00:00Z"), ("captureTo", "2024-05-06T11:00:00Z"),
             ("importFrom", "2024-05-07T09:00:00Z"), ("importTo", "2024-05-07T11:00:00Z"),

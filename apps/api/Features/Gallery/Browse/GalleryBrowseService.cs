@@ -18,6 +18,8 @@ public sealed record GalleryCard(Guid AssetId, string Path, string Filename, str
     string PreviewState, Guid? PreviewRequestId);
 public sealed record GalleryPage(IReadOnlyList<GalleryCard> Cards, long Count, string? NextCursor, long Generation,
     string Sort, string Direction, IReadOnlyDictionary<string, string[]> Filters);
+public sealed record GalleryFilterValue(string Value, string Label);
+public sealed record GalleryFilterValues(IReadOnlyList<GalleryFilterValue> Values, bool HasMore);
 public sealed class GalleryProblem(string code, int status = 400) : Exception(code)
 {
     public string Code { get; } = code;
@@ -43,6 +45,54 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
     };
     private sealed record Cursor(long Generation, long Revision, string Hash, string Sort, string Direction, string? Value1, string? Value2,
         Guid AssetId, DateTimeOffset ExpiresAt);
+
+    public async Task<GalleryFilterValues> FilterValuesAsync(string owner, string library, string branchName, string facet, string? search, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(configuration["Gallery:LibraryId"]) || library != configuration["Gallery:LibraryId"])
+            throw new GalleryProblem("library_unavailable", 404);
+        if (search?.Length > 100) throw new GalleryProblem("invalid_filter");
+        var branch = RefNames.Normalize(branchName);
+        var column = facet switch
+        {
+            "camera" => "g.camera", "lens" => "g.lens", "fileType" => "g.file_type",
+            "rating" => "g.rating::text", "orientation" => "g.orientation::text",
+            "focalLength" => "g.focal_length_mm::text", "aperture" => "g.aperture::text",
+            "shutter" => "g.shutter_seconds::text", "iso" => "g.iso::text",
+            "width" => "g.width::text", "height" => "g.height::text",
+            "tag" or "color" => "f.text_value",
+            _ => throw new GalleryProblem("invalid_filter")
+        };
+        var label = facet is "tag" or "color" ? "COALESCE(f.display_text,f.text_value)" : column;
+        await using var connection = await db.OpenConnectionAsync(ct);
+        var generation = await ScalarAsync(connection,
+            "SELECT generation FROM gallery_generations WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND state='active'",
+            ct, owner, library, branch) as long?;
+        if (generation is null) return new([], false);
+        var multi = facet is "tag" or "color";
+        var join = multi
+            ? " JOIN gallery_facet_values f ON f.owner_id=g.owner_id AND f.library_id=g.library_id AND f.branch_name=g.branch_name AND f.generation=g.generation AND f.asset_id=g.asset_id AND f.facet=$5 AND f.value_state='present'"
+            : "";
+        var searchParameter = multi ? "$6" : "$5";
+        var sql = $"""
+            SELECT value,MIN(label) FROM (
+              SELECT {column} AS value,{label} AS label
+              FROM gallery_projection g JOIN assets a ON a.id=g.asset_id AND a.owner_id=g.owner_id{join}
+              WHERE g.owner_id=$1 AND g.library_id=$2 AND g.branch_name=$3 AND g.generation=$4
+                AND a.state IN ('active','restored') AND g.projection_state IN ('complete','stale')
+            ) choices WHERE value IS NOT NULL AND value<>'' AND ({searchParameter}='' OR strpos(lower(value),lower({searchParameter}))>0)
+            GROUP BY value ORDER BY value LIMIT 101
+            """;
+        var values = new List<GalleryFilterValue>();
+        await using var command = multi
+            ? Command(connection, sql, owner, library, branch, generation.Value, facet, search?.Trim() ?? "")
+            : Command(connection, sql, owner, library, branch, generation.Value, search?.Trim() ?? "");
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            values.Add(new(reader.GetString(0), reader.GetString(1)));
+        var hasMore = values.Count > 100;
+        if (hasMore) values.RemoveAt(values.Count - 1);
+        return new(values, hasMore);
+    }
 
     public async Task<GalleryPage> BrowseAsync(string owner, string library, IQueryCollection query, CancellationToken ct)
     {
