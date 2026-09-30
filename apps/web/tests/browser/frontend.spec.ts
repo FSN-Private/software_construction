@@ -161,6 +161,12 @@ test('every existing facet stays discoverable; privacy hides location until expl
     'Location present',
   ])
     await expect(page.getByLabel(label, { exact: true })).toBeVisible();
+  await page.getByLabel('Existing Latitude').selectOption('40.5');
+  await expect(page.getByLabel('Latitude minimum')).toHaveValue('40.5');
+  await expect(page.getByLabel('Latitude maximum')).toHaveValue('40.5');
+  await page.getByLabel('Existing Longitude').selectOption('-74.25');
+  await expect(page.getByLabel('Longitude minimum')).toHaveValue('-74.25');
+  await expect(page.getByLabel('Longitude maximum')).toHaveValue('-74.25');
 });
 
 test('scoped search, density and secondary import preserve applied gallery context', async ({

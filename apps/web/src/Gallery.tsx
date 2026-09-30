@@ -1822,26 +1822,17 @@ export function Gallery({
                   <details
                     className="filter-group"
                     onToggle={(event) =>
-                      toggleGroup('Location', event.currentTarget.open)
+                      toggleGroup('Location', event.currentTarget.open, [
+                        'latitude',
+                        'longitude',
+                      ])
                     }
                   >
                     <summary>Location</summary>
                     {expandedGroups.includes('Location') && (
                       <div className="gallery-filters">
-                        <div className="filter-pair">
-                          {['latitudeMin', 'latitudeMax'].map((key) =>
-                            renderFilter(
-                              filterFields.find((field) => field.key === key)!,
-                            ),
-                          )}
-                        </div>
-                        <div className="filter-pair">
-                          {['longitudeMin', 'longitudeMax'].map((key) =>
-                            renderFilter(
-                              filterFields.find((field) => field.key === key)!,
-                            ),
-                          )}
-                        </div>
+                        {renderRange('latitude', 'Latitude')}
+                        {renderRange('longitude', 'Longitude')}
                         <label>
                           Location present
                           <select

@@ -59,11 +59,17 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
             "focalLength" => "g.focal_length_mm::text", "aperture" => "g.aperture::text",
             "shutter" => "g.shutter_seconds::text", "iso" => "g.iso::text",
             "width" => "g.width::text", "height" => "g.height::text",
+            "latitude" => "g.latitude::text", "longitude" => "g.longitude::text",
             "tag" or "color" => "f.text_value",
             _ => throw new GalleryProblem("invalid_filter")
         };
         var label = facet is "tag" or "color" ? "COALESCE(f.display_text,f.text_value)" : column;
         await using var connection = await db.OpenConnectionAsync(ct);
+        if (facet is "latitude" or "longitude")
+        {
+            var hidden = await ScalarAsync(connection, "SELECT hide_geolocation FROM gallery_preferences WHERE owner_id=$1", ct, owner) as bool? ?? true;
+            if (hidden) throw new GalleryProblem("location_hidden");
+        }
         var generation = await ScalarAsync(connection,
             "SELECT generation FROM gallery_generations WHERE owner_id=$1 AND library_id=$2 AND branch_name=$3 AND state='active'",
             ct, owner, library, branch) as long?;
