@@ -6,7 +6,7 @@
 
 ## Summary
 
-Compose/restyle the existing React client to match the saved gallery, modal left filters and image inspector. Reuse native dialogs, existing services and history/lifecycle components. No new dependency, service, persistent entity or API contract.
+Compose/restyle the existing React client to match the saved gallery, modal left filters and image inspector. Reuse native dialogs and history/lifecycle components. The owner revision adds one bounded read-only gallery filter-values API; no new dependency, service or persistent entity.
 
 ## Technical Context
 
@@ -48,3 +48,15 @@ M0: approved spec, plan/research/contracts/tasks and consistency review committe
 M1: workspace/gallery/filters, docs and relevant checks committed.
 M2: inspector/history and regressions committed.
 M3: cross-cutting evidence/convergence/remediation committed. Required external evidence must remain incomplete if unavailable; no push authorized.
+
+## 2026-09-30 owner-requested revision
+
+The owner-approved interaction changes require one read-only API addition. `GET /v1/libraries/{library}/gallery/filter-values?branch=&facet=&q=` returns at most 100 distinct active, present values for one allowlisted facet, with a `hasMore` flag. It uses the same owner guard, canonical library, active branch generation, active/restored assets and geolocation preference as browse, and `private, no-store` response behavior. `q` searches normalized value text; no location facet is exposed. Numeric results are invariant strings usable in the current min/max query; text results use stored display text where available. This avoids deriving values from a single page or downloading the entire index. No new table, dependency or migration.
+
+In the client, native `<details>` groups keep the drawer compact. Categorical selects and optional numeric value picks use the new endpoint; existing free numeric bounds remain. Capture and import dates use a two-column row at desktop drawer width. Failed value lookup leaves a labelled retry state and free entry for numerical criteria. The drawer fetches values only on open and when a group's search changes, with cancellation on close/branch change. The current filter URL and draft/apply behavior remain authoritative.
+
+The gallery stays mounted under a native `<dialog>` detail overlay. Existing detail content, exact-version checks, metadata edit guards, and URL history remain. ImageHistory's selection stays in the overlay; its comparison action adds a second commit picker and uses the existing compare result/provenance component within the overlay. The advanced full lineage view stays available by a distinct action. The overlay scrolls independently and focus returns to its tile. Browser tests cover direct links, Back, dirty edits, selection and privacy.
+
+The import screen gains a directory input using `webkitdirectory`; browser-provided `webkitRelativePath` is the import path. Duplicate exact paths are rejected before hashing or batch creation; identical basenames in different subfolders are accepted. Real batch/upload contracts remain untouched. The local Playwright preview fixture identifies itself and disables import rather than reporting a backend-shaped `fixture_unavailable` error. Preview uses a long-lived headed browser without the Playwright Inspector panel occupying viewport width. A 1440px and zoom geometry check distinguishes a true layout defect from Inspector docking.
+
+Revision milestones: M4 specs/contract and tests; M5 filter API/UI plus responsive layout; M6 overlay/comparison and folder import/preview guidance; M7 validation/convergence/documentation. Each is committed locally on the matching branch. Existing T009/T011 external evidence remains open. Rollback uses the previous web/API artifacts; no persistent data changes.
