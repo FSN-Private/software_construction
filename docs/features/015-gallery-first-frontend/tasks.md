@@ -45,3 +45,14 @@ M1 validation: TypeScript/source/rendered-accessibility checks passed; Chromium 
 ## Phase 7: Convergence
 
 - [ ] T011 Time the owner's rating + camera/tag → image → capture metadata/history → gallery return journey without diagnostics, record the result against SC-002's two-minute target in docs/features/015-gallery-first-frontend/validation.md, and remediate any observed usability blocker (partial; SC-002). Requires owner participation; deterministic browser navigation checks do not substitute for the timed owner journey.
+
+## Phase 8: Owner-requested revision — M4 through M7
+
+- [x] T012 Document the 2026-09-30 owner-approved behavior and read-only values contract in spec/plan/tasks/contracts; check constitution, requirement traceability, branch/clean tree and contract risks. M4. FR-019–023; AC-015–018; NFR-017–018.
+- [ ] T013 Add owner/branch-scoped bounded searchable filter-values API over the active gallery projection in apps/api/Features/Gallery/, with integration checks for beyond-page values, owner isolation, hidden location, numeric values and invalid facets. M4/M5. FR-020; AC-016; NFR-017.
+- [ ] T014 Make grouped compact filters, one-row date ranges, API-backed existing choices and free numeric bounds in apps/web/src/Gallery.tsx/gallery.css; update browser tests and guide. M5. FR-019–020; AC-015–016; NFR-017.
+- [ ] T015 Make gallery use full viewport and image detail a native overlay that preserves URL/back/focus, exact selected preview and same-overlay comparison; update ImageHistory/Comparison and browser tests. M6. FR-021/023; AC-015/018; NFR-006/008.
+- [ ] T016 Add recursive folder selection with relative-path collision validation; identify the preview fixture as read-only and remove Inspector docking from the interactive preview. Update import/preview browser tests and web guide. M6. FR-022; AC-017; NFR-018.
+- [ ] T017 Run affected API/web tests, type/format/build/accessibility and deterministic responsive/privacy/preview regressions; update validation evidence and run convergence. Commit M7. FR-019–023; AC-015–018; NFR-017–018. Keep T009/T011 pending until external evidence exists.
+
+Revision traceability: FR-019→T014; FR-020→T013/T014; FR-021→T015; FR-022→T016; FR-023→T015; AC-015→T014/T015/T017; AC-016→T013/T014/T017; AC-017→T016/T017; AC-018→T015/T017; NFR-017→T013/T014/T017; NFR-018→T016/T017.
