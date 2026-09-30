@@ -484,8 +484,9 @@ export async function fixture(
     if (path.endsWith('/gallery')) {
       if (options.performance)
         await new Promise((resolve) => setTimeout(resolve, 504));
+      const offset = Number(url.searchParams.get('cursor') ?? 0);
       const cards = options.performance
-        ? Array.from({ length: 40 }, (_, index) => card(index + 1))
+        ? Array.from({ length: 40 }, (_, index) => card(offset + index + 1))
         : url.searchParams.has('cursor')
           ? [card(2)]
           : [card(1)];
@@ -495,8 +496,11 @@ export async function fixture(
         json: {
           cards,
           count: options.performance ? 100_000 : 2,
-          nextCursor:
-            options.performance || url.searchParams.has('cursor')
+          nextCursor: options.performance
+            ? offset + cards.length < 100_000
+              ? String(offset + cards.length)
+              : null
+            : url.searchParams.has('cursor')
               ? null
               : 'page-two',
           generation: 1,

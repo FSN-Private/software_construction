@@ -60,3 +60,7 @@ Revision traceability: FR-019→T014; FR-020→T013/T014/T018; FR-021→T015; FR
 ## Phase 9: Convergence
 
 - [x] T018 Offer owner-authorized existing latitude/longitude choices in the Location filter group only when gallery privacy is set to show location; retain free numeric bounds and prove hidden mode exposes no choices. Add API/browser integration checks and update the contract, guide and validation. FR-020, AC-016, NFR-017 (partial). PostgreSQL/S3 integration and the 114-test browser matrix passed 2026-09-30.
+
+## Phase 10: Owner-reported viewport and preview regressions — M8
+
+- [x] T019 Keep gallery scroll position fixed while filter or image-detail dialogs are open, make the headed preview viewport follow window resizing, and give its 100,000-image fixture truthful cursor paging with working Next/Previous buttons. Add browser checks for scroll lock, preview resizing and pagination; update the web guide and validation evidence, then commit M8. FR-002/021, AC-002/015/018, NFR-018. Frontend browser matrix, preview verification, and paging regressions passed 2026-09-30.

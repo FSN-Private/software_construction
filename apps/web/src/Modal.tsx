@@ -1,5 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
+let openModalCount = 0;
+
 export function Modal({
   title,
   onClose,
@@ -15,9 +17,13 @@ export function Modal({
   useEffect(() => {
     const dialog = ref.current!;
     const opener = document.activeElement as HTMLElement | null;
+    if (openModalCount++ === 0)
+      document.documentElement.classList.add('modal-open');
     dialog.showModal();
     return () => {
       dialog.close();
+      if (--openModalCount === 0)
+        document.documentElement.classList.remove('modal-open');
       opener?.focus();
     };
   }, []);

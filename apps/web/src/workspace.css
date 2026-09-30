@@ -23,6 +23,9 @@ main {
   width: 100%;
   min-width: 0;
 }
+html.modal-open {
+  overflow: hidden;
+}
 [hidden] {
   display: none !important;
 }
