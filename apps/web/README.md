@@ -30,12 +30,11 @@ No data migration is required. Release/rollback uses the existing immutable web 
 
 For a separately running local Vite server on Windows, set `BROWSER_TEST_EXTERNAL_SERVER=1` before the browser command to avoid managing that server as a Playwright child. Fixture screenshots and measurements appear under ignored test-results; live capacity, supported screen-reader, rollout/rollback and owner visual acceptance remain separate evidence requirements.
 
-To inspect the gallery locally without a configured owner backend, keep your Vite server running, then run from the repository root in a second PowerShell terminal (change the port if your server uses another one):
+To inspect the gallery locally without a configured owner backend, keep your Vite server running, then run from the repository root in a second PowerShell terminal. The browser test defaults to port 4173; set `BROWSER_TEST_PORT` to your server's actual port only if it differs.
 
 ```powershell
 $env:GALLERY_PREVIEW='1'
 $env:BROWSER_TEST_EXTERNAL_SERVER='1'
-$env:BROWSER_TEST_PORT='5173'
 npm --prefix apps/web run test:browser -- preview.spec.ts --project='Chrome for Testing' --headed
 ```
 
