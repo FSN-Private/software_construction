@@ -460,7 +460,17 @@ export async function fixture(
         iso: ['100', '400'],
         width: ['4000'],
         height: ['3000'],
+        latitude: ['40.5'],
+        longitude: ['-74.25'],
       };
+      if (
+        preference.hideGeolocation &&
+        ['latitude', 'longitude'].includes(url.searchParams.get('facet') ?? '')
+      )
+        return route.fulfill({
+          status: 400,
+          json: { code: 'location_hidden' },
+        });
       const query = url.searchParams.get('q')?.toLowerCase() ?? '';
       return route.fulfill({
         json: {

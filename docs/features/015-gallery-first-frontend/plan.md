@@ -14,7 +14,7 @@ TypeScript 6.0.3, React 19.2.8, Vite 8.2.2 and existing pinned Playwright 1.63.0
 
 ## Constitution Check
 
-Pre-design: clean worktree, matching branch, master divergence 0 behind/1 ahead, approved spec. Post-design: no architecture/contract/dependency change; tasks map every requirement; local milestones only. External capacity, rollout, supported screen-reader and owner visual acceptance need actual evidence or remain explicitly incomplete. No extension hooks exist. Local research rather than delegated agents follows repository restriction on delegation.
+Initial design: clean worktree, matching branch, master divergence 0 behind/1 ahead, approved spec. The 2026-09-30 owner revision adds one specified read-only API contract without schema, dependency or infrastructure changes; tasks map every new requirement and local milestones remain separate from deployment. External capacity, rollout, supported screen-reader and owner visual acceptance need actual evidence or remain explicitly incomplete. No extension hooks exist. Local research rather than delegated agents follows repository restriction on delegation.
 
 ## Project Structure and Approach
 
@@ -51,7 +51,7 @@ M3: cross-cutting evidence/convergence/remediation committed. Required external 
 
 ## 2026-09-30 owner-requested revision
 
-The owner-approved interaction changes require one read-only API addition. `GET /v1/libraries/{library}/gallery/filter-values?branch=&facet=&q=` returns at most 100 distinct active, present values for one allowlisted facet, with a `hasMore` flag. It uses the same owner guard, canonical library, active branch generation, active/restored assets and geolocation preference as browse, and `private, no-store` response behavior. `q` searches normalized value text; no location facet is exposed. Numeric results are invariant strings usable in the current min/max query; text results use stored display text where available. This avoids deriving values from a single page or downloading the entire index. No new table, dependency or migration.
+The owner-approved interaction changes require one read-only API addition. `GET /v1/libraries/{library}/gallery/filter-values?branch=&facet=&q=` returns at most 100 distinct active, present values for one allowlisted facet, with a `hasMore` flag. It uses the same owner guard, canonical library, active branch generation, active/restored assets and geolocation preference as browse, and `private, no-store` response behavior. `q` searches normalized value text; latitude/longitude choices are available only after the owner enables location in gallery privacy. Numeric results are invariant strings usable in the current min/max query; text results use stored display text where available. This avoids deriving values from a single page or downloading the entire index. No new table, dependency or migration.
 
 In the client, native `<details>` groups keep the drawer compact. Categorical selects and optional numeric value picks use the new endpoint; existing free numeric bounds remain. Capture and import dates use a two-column row at desktop drawer width. Failed value lookup leaves a labelled retry state and free entry for numerical criteria. The drawer fetches values only on open and when a group's search changes, with cancellation on close/branch change. The current filter URL and draft/apply behavior remain authoritative.
 

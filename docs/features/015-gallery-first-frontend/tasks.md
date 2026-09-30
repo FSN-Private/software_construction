@@ -53,6 +53,10 @@ M1 validation: TypeScript/source/rendered-accessibility checks passed; Chromium 
 - [x] T014 Make grouped compact filters, one-row date ranges, API-backed existing choices and free numeric bounds in apps/web/src/Gallery.tsx/gallery.css; update browser tests and guide. M5. FR-019–020; AC-015–016; NFR-017. Full browser matrix passed 2026-09-30.
 - [x] T015 Make gallery use full viewport and image detail a native overlay that preserves URL/back/focus, exact selected preview and same-overlay comparison; update ImageHistory/Comparison and browser tests. M6. FR-021/023; AC-015/018; NFR-006/008. Full browser matrix passed 2026-09-30.
 - [x] T016 Add recursive folder selection with relative-path collision validation; identify the preview fixture as read-only and remove Inspector docking from the interactive preview. Update import/preview browser tests and web guide. M6. FR-022; AC-017; NFR-018. Full browser matrix and preview verification passed 2026-09-30.
-- [ ] T017 Run affected API/web tests, type/format/build/accessibility and deterministic responsive/privacy/preview regressions; update validation evidence and run convergence. Commit M7. FR-019–023; AC-015–018; NFR-017–018. Keep T009/T011 pending until external evidence exists. — IN PROGRESS
+- [x] T017 Run affected API/web tests, type/format/build/accessibility and deterministic responsive/privacy/preview regressions; update validation evidence and run convergence. Commit M7. FR-019–023; AC-015–018; NFR-017–018. Local checks passed; convergence appended T018, which was remediated and revalidated on 2026-09-30. T009/T011 and T010's external completion gate remain open.
 
 Revision traceability: FR-019→T014; FR-020→T013/T014; FR-021→T015; FR-022→T016; FR-023→T015; AC-015→T014/T015/T017; AC-016→T013/T014/T017; AC-017→T016/T017; AC-018→T015/T017; NFR-017→T013/T014/T017; NFR-018→T016/T017.
+
+## Phase 9: Convergence
+
+- [x] T018 Offer owner-authorized existing latitude/longitude choices in the Location filter group only when gallery privacy is set to show location; retain free numeric bounds and prove hidden mode exposes no choices. Add API/browser integration checks and update the contract, guide and validation. FR-020, AC-016, NFR-017 (partial). PostgreSQL/S3 integration and the 114-test browser matrix passed 2026-09-30.

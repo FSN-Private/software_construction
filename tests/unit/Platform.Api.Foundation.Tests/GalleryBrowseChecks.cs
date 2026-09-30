@@ -66,6 +66,8 @@ internal static class GalleryBrowseChecks
         await RejectAsync(() => details.GetAsync("another-owner", "main", "main", first.Cards[0].AssetId, default), "asset_unavailable");
         var preferences = new GalleryPreferenceService(db, configuration);
         Check((await preferences.GetAsync("test-owner", "main", default)).HideGeolocation, "Geolocation defaults hidden");
+        await RejectAsync(() => browse.FilterValuesAsync("test-owner", "main", "main", "latitude", null, default), "location_hidden");
+        await RejectAsync(() => browse.FilterValuesAsync("test-owner", "main", "main", "longitude", null, default), "location_hidden");
         await using (var locationFixture = db.CreateCommand("UPDATE gallery_projection SET has_location=true,latitude=40.5,longitude=-74.25 WHERE owner_id='test-owner' AND asset_id=$1"))
         {
             locationFixture.Parameters.AddWithValue(first.Cards[0].AssetId);
@@ -76,6 +78,10 @@ internal static class GalleryBrowseChecks
         await RejectAsync(() => preferences.RevealAsync("another-owner", "main", "main", first.Cards[0].AssetId, "op_gallery_test", default), "location_unavailable");
         var visible = await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show");
         Check(!visible.HideGeolocation && visible.Version == 2, "Owner preference updates with CAS");
+        Check((await browse.FilterValuesAsync("test-owner", "main", "main", "latitude", null, default)).Values.Any(value => decimal.TryParse(value.Value, System.Globalization.CultureInfo.InvariantCulture, out var latitude) && latitude == 40.5m),
+            "Visible owner location exposes existing numeric choices");
+        Check((await browse.FilterValuesAsync("test-owner", "main", "main", "longitude", null, default)).Values.Any(value => decimal.TryParse(value.Value, System.Globalization.CultureInfo.InvariantCulture, out var longitude) && longitude == -74.25m),
+            "Visible owner longitude exposes existing numeric choices");
         Check(await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show") == visible, "Preference idempotent replay");
         await RejectAsync(() => preferences.SetAsync("test-owner", "main", new(true, 1), default, "gallery-preference-stale"), "preference_conflict");
         var locationMatches = await browse.BrowseAsync("test-owner", "main", Query(("locationPresent", "true")), default);
