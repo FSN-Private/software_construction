@@ -45,3 +45,13 @@ The reviewer inspected the approved spec, plan, tasks, validation record, consti
 **R1 disposition:** unchanged. T009/T010/T011 require live capacity, owner visual/timed journey, supported screen reader, and pre-production rollout/rollback evidence or explicit named waivers before feature completion and merge.
 
 **Round 2 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1 and R2 pending the stated evidence or remediation, plus a green CI run.
+
+## Round 3: asynchronous scroll assertion
+
+**Reviewed range:** `master...875e02d0975c2158e2204712d773aa3159276b85` (19 commits; 0 behind `master`). The independent `gpt-6-sol` reviewer inspected the full updated branch context and the new test/plan/validation diff read-only. `git diff --check master...HEAD` passed.
+
+**Reviewer result:** `PASS` to push the test correction to PR #30, with no unresolved significant push blocker. The detail-return test now polls for scroll restoration while retaining its existing `<5px` tolerance. The gallery schedules restoration in `requestAnimationFrame`; an immediate assertion could run before that frame. A persistent scroll jump still fails. The next Linux Firefox CI run must establish whether the application actually restores position; T020 remains open until verified.
+
+**Prior findings:** R1 remains a high delivery/merge gate for T009/T010/T011 external evidence or named waivers. R2 remains a high merge gate for the pre-existing vulnerable `brace-expansion` 5.0.9 bundle and failing audit/Trivy checks under T021. No waiver or scanner suppression was accepted.
+
+**Round 3 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1, R2, and pending green Firefox/required CI.
