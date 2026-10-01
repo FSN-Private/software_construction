@@ -14,11 +14,12 @@
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "validate:dependencies": "npm ls --all",
     "validate:licenses": "node scripts/validate-licenses.mjs",
+    "validate:vendor": "node scripts/validate-vendor.mjs",
     "validate:vulnerabilities": "node ../../scripts/audit-dependencies.mjs . --omit=dev",
-    "validate": "npm run check && npm run synth && npm run assert && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
+    "validate": "npm run validate:vendor && npm run check && npm run synth && npm run assert && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.267.0",
+    "aws-cdk-lib": "file:vendor/aws-cdk-lib-2.267.0-brace-expansion-5.0.12.tgz",
     "constructs": "10.8.1"
   },
   "devDependencies": {

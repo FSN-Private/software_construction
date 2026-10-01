@@ -1,0 +1,20 @@
+{
+  "decision": "docs/architecture/decisions/0013-temporary-patched-cdk-bundle.md",
+  "upstream": {
+    "name": "aws-cdk-lib",
+    "version": "2.267.0",
+    "url": "https://registry.npmjs.org/aws-cdk-lib/-/aws-cdk-lib-2.267.0.tgz",
+    "integrity": "sha512-ubmc2Th+XFjQAy6cnihRmH9Xxf9X2iZ5Vuf0g/4kBiBSoLahJy5cwJB5TmicEpitZ+fHBRyfoAZ4BkLk4G0Stg==",
+    "license": "Apache-2.0"
+  },
+  "replacement": {
+    "name": "brace-expansion",
+    "version": "5.0.12",
+    "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz",
+    "integrity": "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==",
+    "license": "MIT"
+  },
+  "subtree": "package/node_modules/brace-expansion/",
+  "archive": "aws-cdk-lib-2.267.0-brace-expansion-5.0.12.tgz",
+  "sha512": "fc3cdba3244ef7bf4dd98236d79c9a37dbd8a4e0e370f86c585ab5ed120aa10386ef44cdbf7f16d1f56a2632a94ea5079d0d65637a0b7a10007594f65e7ec056"
+}
