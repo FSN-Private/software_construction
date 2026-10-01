@@ -54,12 +54,19 @@ public sealed class GalleryBrowseService(NpgsqlDataSource db, IDataProtectionPro
         var branch = RefNames.Normalize(branchName);
         var column = facet switch
         {
-            "camera" => "g.camera", "lens" => "g.lens", "fileType" => "g.file_type",
-            "rating" => "g.rating::text", "orientation" => "g.orientation::text",
-            "focalLength" => "g.focal_length_mm::text", "aperture" => "g.aperture::text",
-            "shutter" => "g.shutter_seconds::text", "iso" => "g.iso::text",
-            "width" => "g.width::text", "height" => "g.height::text",
-            "latitude" => "g.latitude::text", "longitude" => "g.longitude::text",
+            "camera" => "g.camera",
+            "lens" => "g.lens",
+            "fileType" => "g.file_type",
+            "rating" => "g.rating::text",
+            "orientation" => "g.orientation::text",
+            "focalLength" => "g.focal_length_mm::text",
+            "aperture" => "g.aperture::text",
+            "shutter" => "g.shutter_seconds::text",
+            "iso" => "g.iso::text",
+            "width" => "g.width::text",
+            "height" => "g.height::text",
+            "latitude" => "g.latitude::text",
+            "longitude" => "g.longitude::text",
             "tag" or "color" => "f.text_value",
             _ => throw new GalleryProblem("invalid_filter")
         };
