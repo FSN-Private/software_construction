@@ -33,3 +33,15 @@ The reviewer inspected the approved spec, plan, tasks, validation record, consti
 **Push gate:** `PASS` for branch push and review PR.
 
 **Merge gate:** external acceptance evidence or explicit named waivers for T009/T010/T011 remain required in addition to passing PR CI.
+
+## Round 2: PR #30 CI correction
+
+**Reviewed range:** `master...975ba414` (17 feature/review commits; branch 0 behind `master`). Independent `gpt-6-sol` reviewer inspected the full updated diff, the new formatting and modal-focus changes, relevant tests, spec/plan/tasks/validation, and the first PR CI failure summary. GitHub access from the review sandbox was unavailable, so remote check details came from the implementer's recorded CI logs. The reviewer made no edits.
+
+**Reviewer result:** `PASS` to push the CI-correction commit to PR #30. No new significant push-blocking finding was supported. The C# change is formatting-only; the modal restores focus with `preventScroll`, directly addressing Firefox's reported scroll jump. Local API formatter/build and targeted Chrome browser regression passed. Local Firefox could not create a page, so Linux PR CI must verify that correction. T020 stays open until that result is known.
+
+**Finding R2 (high merge gate; non-blocking for this review push):** Infrastructure npm audit and Trivy reject the pre-existing `aws-cdk-lib` bundle's `brace-expansion` 5.0.9. The latest published CDK package inspected still bundles that vulnerable version. T021 tracks an upstream patched bundle plus audit, infrastructure and Trivy verification. No lockfile substitution, scanner suppression or risk waiver has been made. The reviewer agreed that the branch may be pushed for CI/review, but cannot pass the current required checks or merge while this finding remains.
+
+**R1 disposition:** unchanged. T009/T010/T011 require live capacity, owner visual/timed journey, supported screen reader, and pre-production rollout/rollback evidence or explicit named waivers before feature completion and merge.
+
+**Round 2 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1 and R2 pending the stated evidence or remediation, plus a green CI run.
