@@ -756,9 +756,11 @@ test('returning from detail restores scroll and initiating tile focus', async ({
   await expect(page.locator('.image-inspector')).toBeVisible();
   await page.getByRole('button', { name: /Back to results/ }).click();
   await expect(tile).toBeFocused();
-  expect(
-    Math.abs((await page.evaluate(() => window.scrollY)) - scroll),
-  ).toBeLessThan(5);
+  await expect
+    .poll(async () =>
+      Math.abs((await page.evaluate(() => window.scrollY)) - scroll),
+    )
+    .toBeLessThan(5);
   expect(new URL(page.url()).searchParams.get('camera')).toBe('Fixture');
 });
 
