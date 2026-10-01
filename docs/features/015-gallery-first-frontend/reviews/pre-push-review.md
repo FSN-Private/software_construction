@@ -55,3 +55,13 @@ The reviewer inspected the approved spec, plan, tasks, validation record, consti
 **Prior findings:** R1 remains a high delivery/merge gate for T009/T010/T011 external evidence or named waivers. R2 remains a high merge gate for the pre-existing vulnerable `brace-expansion` 5.0.9 bundle and failing audit/Trivy checks under T021. No waiver or scanner suppression was accepted.
 
 **Round 3 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1, R2, and pending green Firefox/required CI.
+
+## Round 4: passing browser and backend CI evidence
+
+**Reviewed range:** `master...e88770d5af4479fec097be52fe42f017eb703618` (21 commits; 0 behind `master`). The independent `gpt-6-sol` reviewer inspected the full updated branch context and the T020/validation documentation diff read-only. `git diff --check master...HEAD` passed. Direct access to private run 36816408716 was unavailable from the review sandbox; CI outcomes below are based on the implementer's recorded run evidence.
+
+**Reviewer result:** `PASS` to push the documentation update to PR #30, with no unresolved significant push blocker. The new commit changes only `tasks.md` and `validation.md`: it marks T020 complete and records that backend, Chrome/Edge/Firefox web, and Windows jobs passed. The reported required aggregate remains red solely for infrastructure audit and Trivy, tracked by T021.
+
+**Prior findings:** R1 remains a high delivery/merge gate for T009/T010/T011 external evidence or named waivers. R2 remains a high merge gate for the vulnerable pre-existing bundled `brace-expansion` 5.0.9 and failing security checks. No waiver or scanner suppression was accepted.
+
+**Round 4 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1 and R2, including the failing required security checks.
