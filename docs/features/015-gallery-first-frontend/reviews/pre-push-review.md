@@ -65,3 +65,24 @@ The reviewer inspected the approved spec, plan, tasks, validation record, consti
 **Prior findings:** R1 remains a high delivery/merge gate for T009/T010/T011 external evidence or named waivers. R2 remains a high merge gate for the vulnerable pre-existing bundled `brace-expansion` 5.0.9 and failing security checks. No waiver or scanner suppression was accepted.
 
 **Round 4 push gate:** `PASS` for updating the open PR. **Merge gate:** `BLOCKED` by R1 and R2, including the failing required security checks.
+
+## Round 5: owner-approved patched CDK distribution
+
+**Reviewer:** independent `gpt-5.6-sol` agent (read-only; implementing model GPT-6)
+
+**Reviewed range:** `master...f92d72f86d97d53011594088ba9f2204ca5a958f` (23 commits; 0 behind `master`).
+
+**Pending push scope:** commit `f92d72f` plus the dedicated review-record-only commit containing this round, to `origin/feature/015-gallery-first-frontend` for PR #30. No other files or refs are included.
+
+The reviewer inspected the complete feature diff, approved specification and plan, T021/T022, NFR-019, ADR-0013, prior review findings, the committed archive, provenance record, deterministic rebuild/content verifier, installed-content validator, npm manifest and lockfile, infrastructure guide, CI workflows, and recorded validation. The review focused on supply-chain security and provenance, compatibility and functionality, tests, documentation, CI coverage, and change scope.
+
+Independent verification confirmed that the official CDK and replacement archive SHA-512 integrities match the provenance record; the committed archive matches its approved SHA-512; the CDK, replacement and patched archives contain only regular files and no links; and `rebuild-cdk-bundle.py --verify-only` proves that the replacement's 13 files exactly occupy the bundled subtree while all other 7,337 CDK files are unchanged. The manifest and lockfile resolve the local archive with matching npm integrity. CI clean-installs it with scripts disabled, runs the archive/lockfile/installed-version guard, synthesis and template assertions, dependency/license/audit validation, and retains the unchanged Trivy HIGH/CRITICAL failure gate.
+
+**Reviewer result:** `PASS` for pushing the dependency repair to PR #30. No significant blocking issue was found in security, supply-chain provenance, compatibility/functionality, tests/documentation/CI, or scope.
+
+**R2 disposition:** `valid and fixed locally`. The vulnerable bundled `brace-expansion` 5.0.9 is replaced by verified 5.0.12 under the owner-approved ADR without a scanner exemption. Clean installation, archive verification, installed-content validation, infrastructure validation, release-evidence tests and reliability tests pass. PR Trivy and the required aggregate remain the authoritative remote confirmation; T022 remains open until they pass.
+
+**R1 disposition:** remains a non-blocking push note and high merge/feature-acceptance gate. Run 36817362744 now supplies real PostgreSQL/S3 100,000-asset evidence within the recorded NFR-001 targets. Exact 500-version overlay evidence, supported screen-reader walkthrough, owner timed and visual acceptance, and pre-production rollout/rollback evidence—or explicit named waivers—remain required under T009/T010/T011 before merge and completion.
+
+**Round 5 push gate:** `PASS`.
+**Merge gate:** pending green PR Trivy/required CI and the remaining R1 acceptance evidence or explicit named waivers.
