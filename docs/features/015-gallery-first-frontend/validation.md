@@ -4,7 +4,7 @@
 
 **Local implementation:** M0 `a28b12d`, M1 `3258f0f`, M2 `9364eb4`; M3 local evidence is recorded here.
 
-**Result:** The implemented UI and deterministic local checks pass. T009's real-environment and participant evidence is outstanding; the feature completion gate is not met.
+**Current result (2026-10-01):** Implementation and local validation pass. Real 100k-asset evidence is recorded below; the owner explicitly waived the named remaining external evidence checks. Infrastructure and Trivy pass after the approved CDK repair. Final required CI and independent review still gate the authorized rebase merge; waived checks are not claimed as performed.
 
 ## Reviewable layouts
 
@@ -50,14 +50,14 @@ Spec Kit convergence checked FR-001–018, AC-001–014, SC-001–006, the plan,
 - All **75 frontend browser cases passed** across Chrome for Testing 153.0.8010.12, Edge 154.0.4258.37 and Firefox 155.0. The preview verification passed in Chrome; normal owner paging passed separately in all three browsers. Formatting, type checking, source/accessibility checks and production build passed.
 - Full-suite runs on this workstation hit intermittent performance-test failures while unrelated browser actions also slowed sharply. The final frontend-only matrix passed, including browser-native drawer p95 values of Chrome **91 ms**, Edge **98 ms** and Firefox **67 ms**; these exclude Playwright command latency. The existing live-reference 100,000-asset test still awaits its external host under T009. Owner review of the maximized browser remains outstanding.
 
-## Required external evidence before completion
+## Original external evidence requirements (disposition below)
 
 1. Provide a disposable authorized PostgreSQL/S3 reference host with 100,000 assets, cached derivatives, and a 500-version image. Set `GALLERY_LIVE_API` for the browser live-reference case; capture 30 page samples and 40 cached S3 thumbnails in each browser, plus 500-version service usability. Confirm the test host accepts the fixture token or provide a safe equivalent owner-auth configuration. Record p95 values against NFR-001/002 and asset/version population evidence.
 2. Have the owner perform the rating + camera/tag → image → capture metadata/history → gallery return journey and time it against SC-002's two-minute target. Review the six screenshots beside the approved mockup with representative photos and record explicit visual acceptance against SC-001.
 3. Complete the primary browse/filter/detail/version/return/compare flows using keyboard and a supported screen reader. Record browser, screen-reader version, focus/announcement observations, any fixes, and an unresolved-blocker count of zero for SC-005/NFR-006.
 4. In an authorized pre-production environment, run the existing immutable-web-artifact rollout and rollback, then verify original/XMP/commit/ref/working state hashes or IDs and existing direct links remain intact. Record artifact IDs, operation IDs, evidence, and recovery outcome for NFR-013/014. Deployment authorization is separate from implementation approval.
 
-The [web guide](../../../apps/web/README.md) documents usage, preview/session recovery, and rollback intent. T009 and convergence task T011 remain open until the external checks above pass or the owner explicitly waives a named requirement. T010's completion gate likewise remains open pending that evidence and final convergence.
+The [web guide](../../../apps/web/README.md) documents usage, preview/session recovery, and rollback intent. The initial external evidence gate was assigned to T009/T011/T010. Its current disposition is the measured capacity evidence and explicit named owner waivers recorded below.
 
 ## 2026-10-01 PR #30 CI follow-up
 
@@ -88,3 +88,13 @@ Local results for T022/NFR-019:
 - `npm run validate:infrastructure`: passed provenance verification, TypeScript checks/build, offline synthesis, template assertions, secret scanning, dependency tree, licenses and high-severity audit. The isolated install also reported zero npm vulnerabilities.
 - `npm run test:release-evidence` and `npm run test:reliability`: passed. No application behavior, migration or deployment changed; prior passing API/web tests remain applicable.
 - Independent pre-push review and the next GitHub Trivy/required CI run remain necessary before closing T022. T021's upstream-only repair is replaced by the approved T022 alternative once those checks pass. The exit to an upstream distribution remains documented maintenance work.
+
+## Named owner waivers and merge authorization — 2026-10-01
+
+The owner explicitly answered the question naming the remaining external evidence checks: “waive the checks and merge if passing. Then when merging do it as rebase merge”. The unperformed live 500-version overlay, supported screen-reader walkthrough, timed owner journey/reference-based visual acceptance and pre-production rollout/rollback checks are waived for this delivery. This closes the evidence portions mapped in spec.md under NFR-002/006/013/014 and SC-001/002/005 and tasks T009/T011. No test result is claimed for these waived checks. The real 100k-asset CI results above remain measured evidence. Automated functional/accessibility/performance checks, dependency security and required CI retain their gates. The authorized merge method is rebase merge.
+
+## Final convergence and repair CI
+
+Spec Kit convergence on 2026-10-01 checked the current implementation against 23 FRs, 18 ACs, 19 NFRs, six SCs, seven plan decisions and five constitution principles, accounting explicitly for the named waivers. It found zero new missing, partial, contradictory or unrequested buildable gaps, so no new tasks were appended. T010's documentation/convergence work is complete. Review/push authorization and the requested rebase merge are recorded in the task plan.
+
+[Repair run 36830817665](https://github.com/FSN-Private/software_construction/actions/runs/36830817665) passes backend, infrastructure, Trivy security, Windows, the full web browser job and the required aggregate. Final merge must also wait for all required checks on the final documentation/review PR head. T021/T022's dependency repair and remote security validation are complete. No scanner severity change, exemption or high-severity risk waiver was used.
