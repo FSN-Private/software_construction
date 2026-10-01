@@ -24,7 +24,7 @@ export function Modal({
       dialog.close();
       if (--openModalCount === 0)
         document.documentElement.classList.remove('modal-open');
-      opener?.focus();
+      opener?.focus({ preventScroll: true });
     };
   }, []);
   return (

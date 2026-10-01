@@ -64,3 +64,8 @@ Revision traceability: FR-019→T014; FR-020→T013/T014/T018; FR-021→T015; FR
 ## Phase 10: Owner-reported viewport and preview regressions — M8
 
 - [x] T019 Keep gallery scroll position fixed while filter or image-detail dialogs are open, make the headed preview viewport follow window resizing, and give its 100,000-image fixture truthful cursor paging with working Next/Previous buttons. Add browser checks for scroll lock, preview resizing and pagination; update the web guide and validation evidence, then commit M8. FR-002/021, AC-002/015/018, NFR-018. Frontend browser matrix, preview verification, and paging regressions passed 2026-09-30.
+
+## Phase 11: PR CI remediation — M9
+
+- [ ] T020 Resolve the in-repository PR #30 CI failures: apply the C# formatter to the gallery facet switch and prevent the Firefox detail-dialog focus restoration from scrolling the gallery. Verify API formatting/build and targeted browser behavior, record results in validation.md, commit M9, and rerun independent pre-push review before pushing. FR-021, AC-018; no API or data contract change.
+- [ ] T021 Resolve the high-severity `brace-expansion` finding inside the published `aws-cdk-lib` bundle using an upstream package with a patched bundled version, then verify npm audit, package integrity, infrastructure validation and Trivy CI. The latest npm release inspected on 2026-10-01 still bundles 5.0.9; consumer lockfile/override edits cannot replace it safely. External upstream release required; no security-check bypass is authorized.
