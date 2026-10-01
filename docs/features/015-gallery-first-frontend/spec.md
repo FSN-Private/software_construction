@@ -239,3 +239,9 @@ The owner requested a compact grouped filter drawer, selectable values present i
 - **NFR-018**: Preview fixture MUST remain read-only and visibly distinguish itself from a real owner backend; real import continues to use checksum and batch protections. Verify with browser tests and the web guide.
 
 The existing external acceptance requirements T009/T011 remain outstanding until real owner and environment evidence is available. This revision's local implementation can be validated independently of those external gates.
+
+## Owner-approved dependency repair — 2026-10-01
+
+The owner explicitly approved the temporary patched CDK archive described in [ADR-0013](../../architecture/decisions/0013-temporary-patched-cdk-bundle.md) and requested another CI run. This resolves a pre-existing CI vulnerability without changing frontend behavior or deployed infrastructure.
+
+- **NFR-019**: The temporary CDK distribution MUST use verified official npm input archives and replace only its bundled `brace-expansion` with 5.0.12. Every other CDK file and the replacement package contents MUST match their respective verified inputs. The committed archive, lockfile and installed version MUST agree, existing npm audit and Trivy severity gates MUST remain enabled, and clean installation plus infrastructure synthesis/assertions MUST pass. Record provenance, licenses, rebuild verification and removal after an upstream patched release. T022 implements this approved alternative to T021.

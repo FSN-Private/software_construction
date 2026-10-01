@@ -1,7 +1,7 @@
 # Tasks: Gallery-First Frontend
 
 **Input**: Approved spec and derived plan in `docs/features/015-gallery-first-frontend/`.
-**Authorization**: Owner requested full implementation on 2026-09-29. No push/deploy authorization.
+**Authorization**: Owner requested full implementation on 2026-09-29. On 2026-10-01 the owner authorized review, push, PR creation, CI follow-up and merge if checks pass; external acceptance gates still apply. The owner also explicitly approved the temporary patched CDK archive and another CI run in ADR-0013.
 **Tests**: Required by specification; reuse existing browser/API fixtures, add behavioral and layout checks. CSS-only declarations do not need mirrored unit tests; browser geometry/focus checks validate user behavior.
 
 ## Phase 1: Setup and Design — M0
@@ -29,7 +29,7 @@
 ## Phase 6: Cross-Cutting Quality and Convergence — M3
 
 - [x] T008 Validate responsive/zoom/text expansion/focus/reduced motion/contrast, geometry screenshots, error/private-network limits and timing in apps/web/tests/browser/frontend.spec.ts and existing gallery.spec.ts; run web checks and relevant backend regressions. Record exact browser versions/results in docs/features/015-gallery-first-frontend/validation.md. FR-017–018; AC-002, AC-013–014; NFR-002–007, NFR-009–012, NFR-015; SC-001–006. Local validation complete; T009/T011 hold external evidence for SC-001/002/005/006.
-- [ ] T009 Obtain real 100,000-asset capacity, 500-version service performance, supported screen-reader walkthrough, owner visual acceptance and pre-production rollout/rollback evidence in docs/features/015-gallery-first-frontend/validation.md. NFR-001–002, NFR-006, NFR-013–014; SC-001, SC-005–006. External access/participant required; fixture results are not a waiver.
+- [ ] T009 Obtain real 100,000-asset capacity, 500-version service performance, supported screen-reader walkthrough, owner visual acceptance and pre-production rollout/rollback evidence in docs/features/015-gallery-first-frontend/validation.md. NFR-001–002, NFR-006, NFR-013–014; SC-001, SC-005–006. **Partial:** retrieved backend CI run 36817362744 provides real PostgreSQL/S3 100k-asset browse and all-browser live UI/thumbnail results within NFR-001 targets. Exact 500-version overlay, participant and rollout evidence remains required; fixtures are not a waiver.
 - [ ] T010 Update apps/web/README.md and docs/features/015-gallery-first-frontend/validation.md with usage/operations/rollback, run Spec Kit convergence, append/remediate remaining numbered work and commit milestones. NFR-011, NFR-013–016; all FR/AC/SC completion gate. No pre-push review/push unless later explicitly authorized.
 
 ## Dependencies and Execution Strategy
@@ -69,3 +69,4 @@ Revision traceability: FR-019→T014; FR-020→T013/T014/T018; FR-021→T015; FR
 
 - [x] T020 Resolve the in-repository PR #30 CI failures: apply the C# formatter to the gallery facet switch and prevent the Firefox detail-dialog focus restoration from scrolling the gallery. Verify API formatting/build and targeted browser behavior, record results in validation.md, commit M9, and rerun independent pre-push review before pushing. FR-021, AC-018; no API or data contract change. PR run 36816408716 passed backend, web (including Firefox), and Windows; infrastructure/security remain T021.
 - [ ] T021 Resolve the high-severity `brace-expansion` finding inside the published `aws-cdk-lib` bundle using an upstream package with a patched bundled version, then verify npm audit, package integrity, infrastructure validation and Trivy CI. The latest npm release inspected on 2026-10-01 still bundles 5.0.9; consumer lockfile/override edits cannot replace it safely. External upstream release required; no security-check bypass is authorized.
+- [ ] T022 Implement the temporary patched CDK distribution approved by the owner on 2026-10-01 in [ADR-0013](../../architecture/decisions/0013-temporary-patched-cdk-bundle.md) as an alternative to waiting under T021. Commit verified provenance, rebuild/content-verification procedure and archive; update the infrastructure manifest/lockfile/guide; prove clean installation, actual patched contents, npm audit, infrastructure validation and Trivy CI, then obtain independent pre-push review and push to PR #30. NFR-019; M10. **In progress:** real clean installation, archive verification, full infrastructure validation and release/reliability checks pass; independent review and remote Trivy/CI remain.
