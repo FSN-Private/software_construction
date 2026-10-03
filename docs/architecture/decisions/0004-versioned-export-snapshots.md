@@ -1,6 +1,6 @@
 # ADR-0004: Pin export baskets through immutable snapshots and manifests
 
-- Status: Proposed
+- Status: Accepted (maintainer approved 2026-10-04)
 - Date: 2026-09-03
 - Decision owners: Project maintainer
 - Related feature: [Versioned Export Basket](../../features/012-versioned-export-basket/spec.md)

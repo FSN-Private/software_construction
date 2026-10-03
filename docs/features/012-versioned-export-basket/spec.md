@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-03
 
-**Status**: Draft - awaiting product-owner approval
+**Status**: Approved by maintainer in chat on 2026-10-03; implementation design and numbered plan approved on 2026-10-04.
 
 **Owner**: Project maintainer
 
