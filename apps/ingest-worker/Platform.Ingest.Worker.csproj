@@ -29,6 +29,7 @@
     <EmbeddedResource Include="../api/Database/Migrations/017_gallery_edit_idempotency.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.017_gallery_edit_idempotency.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/018_lineage_merge_content.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.018_lineage_merge_content.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/019_tag_audit_link.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.019_tag_audit_link.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/021_export_baskets.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.021_export_baskets.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/020_lineage_branch_reachability.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.020_lineage_branch_reachability.sql" />
   </ItemGroup>
 </Project>
