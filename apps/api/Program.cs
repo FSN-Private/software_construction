@@ -76,6 +76,9 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<GalleryDetailService>();
     builder.Services.AddSingleton<GalleryPreferenceService>();
     builder.Services.AddSingleton<GalleryEditService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportSelectionService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportBasketService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportInvalidationService>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
@@ -103,6 +106,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 IngestEndpoints.Map(app);
+Platform.Api.Features.Exports.ExportEndpoints.Map(app);
 Platform.Api.Features.Lifecycle.AssetEndpoints.Map(app);
 Platform.Api.Features.Reconstruction.ManifestEndpoints.Map(app);
 VersionControlEndpoints.Map(app);
