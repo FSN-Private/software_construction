@@ -13,13 +13,13 @@
 ## Phase 2: Foundation
 
 - [x] T003 Define schema-1 preset/pin/manifest/state/reason/filename contracts and runnable invariant tests in packages/contracts/Exports/ExportContracts.cs and tests/exports/Program.cs; document mandatory manifest, originals semantics and configured catalog/limits in packages/contracts/README.md (FR-010, FR-011, FR-014, FR-017, FR-018, FR-026; AC-009, AC-014, AC-015; NFR-008, NFR-010).
-- [ ] T004 Add owner-scoped basket/snapshot/request/result/package/grant/audit/lease and scoped purge-tombstone/outbox tables in apps/api/Database/Migrations/021_export_baskets.sql, no retention holds or purge-blocking foreign keys; exercise additive apply/old API rollback in tests/integration/exports/run.mjs and document migration (NFR-013; FR-025). - IN PROGRESS
+- [x] T004 Add owner-scoped basket/snapshot/request/result/package/grant/audit/lease and scoped purge-tombstone/outbox tables in apps/api/Database/Migrations/021_export_baskets.sql, no retention holds or purge-blocking foreign keys; exercise additive apply/old API rollback in tests/integration/exports/run.mjs and document migration (NFR-013; FR-025). Apply-twice and prior-reader integration pass; workspace/provider journal is additive within unreleased 021.
 
 ## Phase 3: US1 persistent basket (M1)
 
 Independent test: CRUD, duplicates, defaults and reopening across three filtered gallery contexts preserve exactly expected identities/counts without affecting lifecycle holds.
 
-- [ ] T005 [US1] Implement create/list/rename/default/delete and revision-checked add/remove/clear in apps/api/Features/Exports/ExportBasketService.cs; tests/integration/exports/run.mjs covers 20 saved baskets, distinct duplicates, request evidence surviving basket deletion and race handling; update apps/api/README.md (FR-001, FR-002, FR-006, FR-010; AC-001, AC-004; NFR-018). - IN PROGRESS
+- [x] T005 [US1] Implement create/list/rename/default/delete and revision-checked add/remove/clear in apps/api/Features/Exports/ExportBasketService.cs; tests/integration/exports/run.mjs covers 20 saved baskets, distinct duplicates, request evidence surviving basket deletion and race handling; update apps/api/README.md (FR-001, FR-002, FR-006, FR-010; AC-001, AC-004; NFR-018). CRUD/revision/duplicate/quota/deleted-basket evidence pass; API README updated.
 - [ ] T006 [US1] Map owner-authorized private/no-store basket routes in apps/api/Features/Exports/ExportEndpoints.cs and apps/api/Program.cs; test owner/library boundaries, safe denial/audit payloads in tests/integration/exports/run.mjs; document API errors (FR-022, FR-023; AC-011; NFR-005, NFR-006). - IN PROGRESS
 
 ## Phase 4: US2 exact eligible versions (M1)

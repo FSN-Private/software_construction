@@ -23,6 +23,7 @@ public static class ExportIntegration
             await using var db = NpgsqlDataSource.Create(connection + ";Search Path=" + schema);
             await Platform.Ingest.Worker.DatabaseMigrator.ApplyAsync(db, default);
             await Platform.Ingest.Worker.DatabaseMigrator.ApplyAsync(db, default);
+            await ExportHttpChecks.RunAsync(db);
             await using (var oldReader = db.CreateCommand("SELECT count(*) FROM assets WHERE state='active'"))
                 if ((long)(await oldReader.ExecuteScalarAsync())! != 0) throw new InvalidOperationException("Additive migration old-reader compatibility");
             await using var count = db.CreateCommand("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name LIKE 'export_%'");
@@ -159,6 +160,37 @@ public static class ExportIntegration
         var intent = await invalidation.AdmitWriteAsync("owner", "library", request.Id, 1, writer, default);
         var unknown = await invalidation.AdmitWriteAsync("owner", "library", request.Id, 1, writer, default);
         await invalidation.SettleWriteAsync(unknown, writer, null, false, default);
+        var workspaceRoot = Path.Combine(Path.GetTempPath(), "platform-exports");
+        var workspaceIntent = await invalidation.AdmitWorkspaceAsync("owner", "library", request.Id, 1, writer, workspaceRoot, default);
+        var workspacePath = Path.Combine(workspaceRoot, workspaceIntent.ToString("N"));
+        Directory.CreateDirectory(workspacePath); await File.WriteAllBytesAsync(Path.Combine(workspacePath, "input"), originalBytes);
+        var deadWorkspace = await invalidation.AdmitWorkspaceAsync("owner", "library", request.Id, 1, writer, workspaceRoot, default);
+        var deadPath = Path.Combine(workspaceRoot, deadWorkspace.ToString("N"));
+        Directory.CreateDirectory(deadPath); await File.WriteAllBytesAsync(Path.Combine(deadPath, "package.zip"), originalBytes);
+        using (var child = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = OperatingSystem.IsWindows() ? "powershell" : "/bin/sh",
+            Arguments = OperatingSystem.IsWindows() ? "-NoProfile -Command Start-Sleep -Seconds 2" : "-c \"sleep 2\"",
+            UseShellExecute = false, CreateNoWindow = true,
+        })!)
+        {
+            await using (var connection = await db.OpenConnectionAsync())
+                await ExecuteAsync(connection, "UPDATE export_write_intents SET writer_pid=$2,writer_start_ticks=$3 WHERE id=$1", default, deadWorkspace, child.Id, child.StartTime.ToUniversalTime().Ticks);
+            await child.WaitForExitAsync();
+        }
+        var lostCallback = await invalidation.AdmitWriteAsync("owner", "library", request.Id, 1, writer, default);
+        var callbackKey = $"exports/{request.Id:N}/{lostCallback:N}/package.zip";
+        await invalidation.BeginStorageAsync(lostCallback, writer, "initiate", default);
+        var initiated = await s3.InitiateMultipartUploadAsync(new() { BucketName = bucket, Key = callbackKey });
+        await invalidation.StorageReturnedAsync(lostCallback, writer, initiated.ResponseMetadata.RequestId, initiated.UploadId, null, default);
+        await invalidation.BeginStorageAsync(lostCallback, writer, "part", default);
+        var part = await s3.UploadPartAsync(new() { BucketName = bucket, Key = callbackKey, UploadId = initiated.UploadId, PartNumber = 1, InputStream = new MemoryStream(originalBytes), PartSize = originalBytes.Length });
+        await invalidation.StorageReturnedAsync(lostCallback, writer, part.ResponseMetadata.RequestId, null, null, default);
+        await invalidation.BeginStorageAsync(lostCallback, writer, "complete", default);
+        var completedUpload = await s3.CompleteMultipartUploadAsync(new() { BucketName = bucket, Key = callbackKey, UploadId = initiated.UploadId, PartETags = [new(1, part.ETag)] });
+        await invalidation.StorageReturnedAsync(lostCallback, writer, completedUpload.ResponseMetadata.RequestId, null, completedUpload.VersionId, default);
+        // No SettleWrite callback: production cleanup must recover from the durable provider completion receipt.
+        // Completion seals this intent's storage admission in the same transaction, including across host loss.
         var purge = new ExportPurgeEvent(Guid.NewGuid(), "owner", "library", asset, null, "original", sourceSha, 1, Guid.NewGuid());
         await using (var connection = await db.OpenConnectionAsync())
         {
@@ -175,6 +207,11 @@ public static class ExportIntegration
         Check((await preparation.GetAsync("owner", "library", request.Id, default)).State == "unavailable", "Late upload cannot restore invalidated request");
         await s3.PutObjectAsync(new PutObjectRequest { BucketName = bucket, Key = "derivatives/shared/preview.jpg", InputStream = new MemoryStream(originalBytes) });
         await cleanup.TickAsync(default);
+        Check(Directory.Exists(workspacePath), "Live local media writer remains inventoried and blocks cleanup");
+        Check(!Directory.Exists(deadPath), "OS-proven terminated local writer workspace recovers without a callback");
+        Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = callbackKey })).Versions?.Any() != true, "Lost settlement callback is recovered and its exact versions removed");
+        await invalidation.StopWriterAsync(workspaceIntent, writer, default); await cleanup.TickAsync(default);
+        Check(!Directory.Exists(workspacePath), "Stopped inventoried workspace is verified removed before acknowledgment");
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = lateKey } )).Versions?.Any() != true, "Late settled object versions are deleted");
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = "derivatives/shared/" })).Versions.Count == 1, "Export cleanup preserves shared renderer objects");
         await using (var connection = await db.OpenConnectionAsync()) { await using var tx = await connection.BeginTransactionAsync(); Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Unknown storage outcomes remain draining after settled cleanup"); await tx.CommitAsync(); }
@@ -183,6 +220,8 @@ public static class ExportIntegration
         basket = (await service.MutateAsync("owner", "library", basket.Id, basket.Revision, "clear", null, false, null, null, default))!;
         Check(basket.Items.Count == 0, "Clear is persistent");
         Check((await preparation.GetAsync("owner", "library", request.Id, default)).Snapshot.Items.Count == request.Snapshot.Items.Count, "Basket changes preserve immutable request snapshot");
+        await service.MutateAsync("owner", "library", basket.Id, basket.Revision, "delete", null, false, null, null, default);
+        Check((await preparation.GetAsync("owner", "library", request.Id, default)).Snapshot.Items.Count == request.Snapshot.Items.Count, "Basket deletion preserves immutable request evidence");
         await using var hold = db.CreateCommand("SELECT count(*) FROM lifecycle_holds");
         Check((long)(await hold.ExecuteScalarAsync())! == 1, "Basket changes never add or release lifecycle holds");
         Console.WriteLine("Export persistent basket/selection/authorization/revision/hidden/quota checks passed.");
@@ -190,7 +229,7 @@ public static class ExportIntegration
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task RejectAsync(Func<Task> action) { try { await action(); } catch (ExportProblem) { return; } throw new InvalidOperationException("Expected rejection"); }}
 // MinIO fixture omits unsupported AWS KMS headers; production service still requires AWS KMS.
-public sealed class FixtureS3() : AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = Environment.GetEnvironmentVariable("EXPORT_S3_ENDPOINT") ?? "http://127.0.0.1:9000", ForcePathStyle = true })
+public sealed class FixtureS3() : AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = Environment.GetEnvironmentVariable("EXPORT_S3_ENDPOINT") ?? "http://127.0.0.1:9000", ForcePathStyle = true, MaxErrorRetry = 0 })
 {
     public override Task<InitiateMultipartUploadResponse> InitiateMultipartUploadAsync(InitiateMultipartUploadRequest request, CancellationToken cancellationToken = default)
     { request.ServerSideEncryptionMethod = null; request.ServerSideEncryptionKeyManagementServiceKeyId = null; return base.InitiateMultipartUploadAsync(request, cancellationToken); }

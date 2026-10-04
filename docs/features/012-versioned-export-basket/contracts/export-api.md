@@ -8,7 +8,8 @@ Owner base /v1/libraries/{library}/exports. Bearer owner authorization and owner
 | GET/PATCH/DELETE /baskets/{basket} | Inspect readiness/details, rename/default with revision, delete mutable basket while preserving request evidence. |
 | POST /baskets/{basket}/items | Asset/edit and current/ref/commit selection plus explicit advanced context. Atomically pin exact identities. Working selection rejected. Repeated selections return distinct IDs. |
 | DELETE /baskets/{basket}/items/{item} or /items | Remove/clear with revision; never alter lifecycle holds. |
-| GET /presets | Versioned catalog, metadata behavior, compatibility, limits/warnings; manifest mandatory. |
+| GET /presets and /limits | Versioned preset catalog/metadata behavior and configured capacity/duration/retention limits; manifest mandatory. |
+| POST /baskets/{basket}/items/{item}/preview | Request/inspect the exact stored pin using approved renderer compatibility; recheck current eligibility before returning a private preview locator. |
 | POST /baskets/{basket}/requests | Preset/revision/consent/warning acknowledgment; required idempotency key. 202 snapshot/request immediately; same fingerprint returns original, changed fingerprint conflicts. |
 | GET /requests or /requests/{request} | Owner history/snapshot/progress, safe errors, retry guidance, expiry, package length/hash. |
 | POST /requests/{request}/cancel | Immediate revocation; idempotent draining/terminal cancellation. |

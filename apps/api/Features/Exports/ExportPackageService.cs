@@ -9,7 +9,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using static Platform.Storage.IngestDb;
 namespace Platform.Api.Features.Exports;
-public sealed class ExportPackageService(NpgsqlDataSource source, IAmazonS3 storage, IConfiguration configuration, RenderingService rendering, ExportSelectionService selections, ExportInvalidationService writes)
+
+public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Extensions.DependencyInjection.FromKeyedServices("exports")] IAmazonS3 storage, IConfiguration configuration, RenderingService rendering, ExportSelectionService selections, ExportInvalidationService writes)
 {
     public async Task<bool> PrepareAsync(string owner, string library, Guid id, Guid lease, long generation, CancellationToken ct)
     {
@@ -42,11 +43,13 @@ public sealed class ExportPackageService(NpgsqlDataSource source, IAmazonS3 stor
             }
         }
         var root = configuration["Exports:WorkspaceRoot"] ?? Path.Combine(Path.GetTempPath(), "platform-exports");
-        Directory.CreateDirectory(root); var workspace = Path.Combine(root, Guid.NewGuid().ToString("N")); Directory.CreateDirectory(workspace);
-        var zipPath = Path.Combine(workspace, "package.zip"); var max = ExportConfiguration.Limits(configuration).PackageBytes;
-        if (max < 1 || max > new ExportLimits().PackageBytes) throw new ExportProblem("invalid_export_configuration", 503);
+        var max = ExportConfiguration.Limits(configuration).PackageBytes;
+        var workspaceIntent = await writes.AdmitWorkspaceAsync(owner, library, id, generation, lease, root, ct);
+        var workspace = Path.Combine(Path.GetFullPath(root), workspaceIntent.ToString("N"));
+        var zipPath = Path.Combine(workspace, "package.zip");
         try
         {
+            Directory.CreateDirectory(workspace);
             long copied = 0;
             await using (var zipStream = new FileStream(zipPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920, FileOptions.Asynchronous))
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, true))
@@ -102,30 +105,39 @@ public sealed class ExportPackageService(NpgsqlDataSource source, IAmazonS3 stor
                 await writes.SettleWriteAsync(intent, lease, version, false, CancellationToken.None);
                 throw;
             }
+            finally { await writes.StopWriterAsync(intent, lease, CancellationToken.None); }
             await PublishAsync(owner, library, id, lease, generation, finalManifest, key, version, checksum, package.Length, completed == results.Count ? "completed" : "partial", ct);
             return true;
         }
         finally
         {
-            // This path is generated solely beneath the configured workspace root.
-            Directory.Delete(workspace, true);
+            // Every local operation has finished and its streams are disposed before removing this owned directory.
+            await writes.StopWriterAsync(workspaceIntent, lease, CancellationToken.None);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            await using var db = await source.OpenConnectionAsync(CancellationToken.None);
+            await ExecuteAsync(db, "UPDATE export_write_intents SET state='cleaned',settled_at=now() WHERE id=$1 AND writer_id=$2 AND category='workspace' AND writer_stopped", CancellationToken.None, workspaceIntent, lease);
         }
     }
     private async Task<string> UploadAsync(Guid intent, Guid writer, string key, Stream bytes, CancellationToken ct)
     {
         var bucket = Required("Rendering:DerivativeBucket");
+        await writes.BeginStorageAsync(intent, writer, "initiate", ct);
         var upload = await storage.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest { BucketName = bucket, Key = key, ContentType = "application/zip", ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS, ServerSideEncryptionKeyManagementServiceKeyId = Required("Ingest:KmsKeyId") }, ct);
-        await using (var db = await source.OpenConnectionAsync(ct)) await ExecuteAsync(db, "UPDATE export_write_intents SET multipart_id=$3 WHERE id=$1 AND writer_id=$2", ct, intent, writer, upload.UploadId);
+        await writes.StorageReturnedAsync(intent, writer, upload.ResponseMetadata?.RequestId, upload.UploadId, null, CancellationToken.None);
         var parts = new List<PartETag>(); var buffer = new byte[8 * 1024 * 1024]; var number = 1;
         while (true)
         {
             var count = 0; while (count < buffer.Length) { var read = await bytes.ReadAsync(buffer.AsMemory(count), ct); if (read == 0) break; count += read; }
             if (count == 0) break;
             using var part = new MemoryStream(buffer, 0, count, writable: false);
+            await writes.BeginStorageAsync(intent, writer, "part", ct);
             var result = await storage.UploadPartAsync(new UploadPartRequest { BucketName = bucket, Key = key, UploadId = upload.UploadId, PartNumber = number, InputStream = part, PartSize = count }, ct);
+            await writes.StorageReturnedAsync(intent, writer, result.ResponseMetadata?.RequestId, null, null, CancellationToken.None);
             parts.Add(new PartETag(number++, result.ETag));
         }
+        await writes.BeginStorageAsync(intent, writer, "complete", ct);
         var complete = await storage.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest { BucketName = bucket, Key = key, UploadId = upload.UploadId, PartETags = parts }, ct);
+        await writes.StorageReturnedAsync(intent, writer, complete.ResponseMetadata?.RequestId, null, complete.VersionId, CancellationToken.None);
         return complete.VersionId ?? throw new ExportProblem("storage_unavailable");
     }
     private async Task PublishAsync(string owner, string library, Guid id, Guid lease, long generation, ExportManifest manifest, string? key, string? version, string? sha, long? length, string state, CancellationToken ct)

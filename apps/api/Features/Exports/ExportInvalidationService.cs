@@ -5,6 +5,7 @@ namespace Platform.Api.Features.Exports;
 /// <summary>Trusted in-process feature 011 adapter only. No HTTP publisher is exposed.</summary>
 public sealed class ExportInvalidationService(NpgsqlDataSource source)
 {
+    internal static readonly long ProcessStartTicks = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
     public async Task ApplyAsync(NpgsqlTransaction transaction, ExportPurgeEvent value, CancellationToken ct)
     {
         var db = transaction.Connection ?? throw new ExportProblem("purge_transaction_required");
@@ -32,18 +33,40 @@ public sealed class ExportInvalidationService(NpgsqlDataSource source)
             await AuditAsync(db, value.OwnerId, ExportDatabase.OperationId, "exports.permanently_unavailable", request, "accepted", ct);
         }
     }
-    public async Task<Guid> AdmitWriteAsync(string owner, string library, Guid request, long generation, Guid writer, CancellationToken ct)
+    public Task<Guid> AdmitWriteAsync(string owner, string library, Guid request, long generation, Guid writer, CancellationToken ct) => AdmitAsync(owner, library, request, generation, writer, null, ct);
+    public Task<Guid> AdmitWorkspaceAsync(string owner, string library, Guid request, long generation, Guid writer, string root, CancellationToken ct) => AdmitAsync(owner, library, request, generation, writer, Path.GetFullPath(root), ct);
+    private async Task<Guid> AdmitAsync(string owner, string library, Guid request, long generation, Guid writer, string? root, CancellationToken ct)
     {
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         if (await ScalarAsync(db, "SELECT 1 FROM export_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND generation=$4 AND lease_id=$5 AND state='preparing' AND lease_until>now()", ct, request, owner, library, generation, writer) is null) throw new ExportProblem("cancelled");
         var id = Guid.NewGuid();
-        await ExecuteAsync(db, "INSERT INTO export_write_intents(id,request_id,generation,writer_id,object_key,state) VALUES($1,$2,$3,$4,$5,'admitted')", ct, id, request, generation, writer, $"exports/{request:N}/{id:N}/package.zip");
+        await ExecuteAsync(db, "INSERT INTO export_write_intents(id,request_id,generation,writer_id,object_key,state,category,workspace_path,writer_host,writer_pid,writer_start_ticks) VALUES($1,$2,$3,$4,$5,'admitted',$6,$7,$8,$9,$10)", ct, id, request, generation, writer, root is null ? $"exports/{request:N}/{id:N}/package.zip" : $"workspace:{id:N}", root is null ? "package" : "workspace", root is null ? null : Path.Combine(root, id.ToString("N")), Environment.MachineName, Environment.ProcessId, ProcessStartTicks);
         await tx.CommitAsync(ct); return id;
+    }
+    public async Task BeginStorageAsync(Guid intent, Guid writer, string phase, CancellationToken ct)
+    {
+        await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct);
+        string owner; string library;
+        await using (var cmd = Command(db, "SELECT r.owner_id,r.library_id FROM export_requests r JOIN export_write_intents i ON i.request_id=r.id WHERE i.id=$1 AND i.writer_id=$2", intent, writer))
+        await using (var r = await cmd.ExecuteReaderAsync(ct)) { if (!await r.ReadAsync(ct)) throw new ExportProblem("write_intent_conflict"); owner = r.GetString(0); library = r.GetString(1); }
+        await ExportDatabase.LockAsync(db, owner, library, ct);
+        if (await ExecuteAsync(db, "UPDATE export_write_intents i SET storage_pending=true,storage_phase=$3,provider_receipt=NULL FROM export_requests r WHERE i.id=$1 AND i.writer_id=$2 AND i.request_id=r.id AND i.state='admitted' AND NOT i.writer_stopped AND NOT i.storage_pending AND r.state='preparing' AND r.generation=i.generation AND r.lease_id=i.writer_id AND r.lease_until>now()", ct, intent, writer, phase) == 0) throw new ExportProblem("cancelled");
+        await tx.CommitAsync(ct);
+    }
+    public async Task StorageReturnedAsync(Guid intent, Guid writer, string? receipt, string? upload, string? version, CancellationToken ct)
+    {
+        await using var db = await source.OpenConnectionAsync(ct);
+        if (await ExecuteAsync(db, "UPDATE export_write_intents SET storage_pending=false,provider_receipt=$3,multipart_id=COALESCE($4,multipart_id),object_version=COALESCE($5,object_version),writer_stopped=(storage_phase='complete') WHERE id=$1 AND writer_id=$2 AND storage_pending AND NOT writer_stopped", ct, intent, writer, receipt, upload, version) == 0) throw new ExportProblem("write_intent_conflict");
+    }
+    public async Task StopWriterAsync(Guid intent, Guid writer, CancellationToken ct)
+    {
+        await using var db = await source.OpenConnectionAsync(ct);
+        await ExecuteAsync(db, "UPDATE export_write_intents SET writer_stopped=true WHERE id=$1 AND writer_id=$2", ct, intent, writer);
     }
     public async Task SettleWriteAsync(Guid intent, Guid writer, string? version, bool knownOutcome, CancellationToken ct)
     {
         await using var db = await source.OpenConnectionAsync(ct);
-        if (await ExecuteAsync(db, "UPDATE export_write_intents SET state=$3,object_version=$4,settled_at=CASE WHEN $3='settled' THEN now() ELSE NULL END WHERE id=$1 AND writer_id=$2 AND state IN ('admitted','unknown')", ct, intent, writer, knownOutcome ? "settled" : "unknown", version) == 0) throw new ExportProblem("write_intent_conflict");
+        if (await ExecuteAsync(db, "UPDATE export_write_intents SET state=$3,object_version=COALESCE($4,object_version),settled_at=CASE WHEN $3='settled' THEN now() ELSE NULL END WHERE id=$1 AND writer_id=$2 AND state IN ('admitted','unknown') AND ($3='unknown' OR NOT storage_pending)", ct, intent, writer, knownOutcome ? "settled" : "unknown", version) == 0) throw new ExportProblem("write_intent_conflict");
     }
     public async Task<bool> CanAcknowledgeAsync(NpgsqlConnection db, string owner, string library, Guid eventId, CancellationToken ct)
     {
