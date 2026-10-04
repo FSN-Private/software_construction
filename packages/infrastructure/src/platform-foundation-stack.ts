@@ -1,4 +1,4 @@
-import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, CfnParameter, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
 import { CorsHttpMethod, HttpApi, HttpMethod, HttpRoute, HttpRouteKey, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpServiceDiscoveryIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
@@ -7,7 +7,7 @@ import { FilterPattern, LogGroup, MetricFilter, RetentionDays } from 'aws-cdk-li
 import { Alarm, ComparisonOperator, Dashboard, GraphWidget, Metric, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { BlockPublicAccess, Bucket, BucketEncryption, HttpMethods } from 'aws-cdk-lib/aws-s3';
-import { InstanceClass, InstanceSize, InstanceType, Port, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { InstanceClass, InstanceSize, InstanceType, Peer, Port, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { Cluster, ContainerImage, FargateService, FargateTaskDefinition, LogDrivers, Secret as EcsSecret } from 'aws-cdk-lib/aws-ecs';
 import { Repository, TagMutability } from 'aws-cdk-lib/aws-ecr';
 import { Credentials, DatabaseInstance, DatabaseInstanceEngine, PostgresEngineVersion } from 'aws-cdk-lib/aws-rds';
@@ -17,6 +17,9 @@ import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Secret as SecretsManagerSecret } from 'aws-cdk-lib/aws-secretsmanager';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
+import { AllowedMethods, CachePolicy, Distribution, OriginProtocolPolicy, OriginRequestPolicy, ViewerProtocolPolicy } from 'aws-cdk-lib/aws-cloudfront';
+import { VpcOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
+import { ApplicationLoadBalancer, ApplicationProtocol, ListenerAction, ListenerCondition } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { createOwnerIdentity } from './identity/owner-identity.js';
 
 export interface PlatformFoundationStackProps extends StackProps {
@@ -161,7 +164,7 @@ export class PlatformFoundationStack extends Stack {
       Ingest__Database__Username: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'username'),
       Ingest__Database__Password: EcsSecret.fromSecretsManager(runtimeDatabaseSecret, 'password'),
     };
-    const apiTask = new FargateTaskDefinition(this, 'ApiTask', { family: `platform-${props.environmentName}-api`, cpu: 256, memoryLimitMiB: 2048, executionRole: apiExecutionRole });
+    const apiTask = new FargateTaskDefinition(this, 'ApiTask', { family: `platform-${props.environmentName}-api`, cpu: 256, memoryLimitMiB: 2048, ephemeralStorageGiB: 50, executionRole: apiExecutionRole });
     const apiContainer = apiTask.addContainer('api', {
       containerName: 'api',
       image: ContainerImage.fromEcrRepository(apiRepository, 'bootstrap'),
@@ -227,6 +230,8 @@ export class PlatformFoundationStack extends Stack {
     rendererQueue.grantConsumeMessages(rendererTask.taskRole);
     rendererQueue.grantSendMessages(apiTask.taskRole);
     derivativeBucket.grantRead(apiTask.taskRole, 'derivatives/*');
+    derivativeBucket.grantReadWrite(apiTask.taskRole, 'exports/*');
+    apiTask.taskRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['s3:ListBucketVersions', 's3:ListBucketMultipartUploads'], resources: [derivativeBucket.bucketArn], conditions: { StringLike: { 's3:prefix': ['exports/*'] } } }));
     ingestBucket.grantRead(rendererTask.taskRole, 'sha256/*');
     derivativeBucket.grantReadWrite(rendererTask.taskRole, 'derivatives/*');
     encryptionKey.grantEncryptDecrypt(rendererTask.taskRole);
@@ -249,6 +254,26 @@ export class PlatformFoundationStack extends Stack {
     const apiGatewaySecurityGroup = new SecurityGroup(this, 'ApiGatewaySecurityGroup', { vpc, allowAllOutbound: true });
     apiSecurityGroup.connections.allowFrom(apiGatewaySecurityGroup, Port.tcp(8080));
     const apiService = new FargateService(this, 'ApiService', { cluster, serviceName: `platform-${props.environmentName}-api`, taskDefinition: apiTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [apiSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(60), cloudMapOptions: { cloudMapNamespace: namespace, name: 'api', dnsRecordType: DnsRecordType.SRV, container: apiContainer, containerPort: 8080 } });
+    // Explicit deployment context keeps fixed ALB cost out of the disabled bootstrap.
+    if (this.node.tryGetContext('exportTransport') === 'true') {
+      const transportSecret = new SecretsManagerSecret(this, 'ExportTransportSecret', { generateSecretString: { excludePunctuation: true, passwordLength: 48 } });
+      transportSecret.grantRead(apiExecutionRole);
+      apiContainer.addSecret('Exports__TransportSecret', EcsSecret.fromSecretsManager(transportSecret));
+      apiContainer.addEnvironment('Exports__WebOrigin', props.webOrigin);
+      const alb = new ApplicationLoadBalancer(this, 'ExportDownloadAlb', { vpc, internetFacing: false, vpcSubnets: { subnetType: SubnetType.PRIVATE_ISOLATED }, idleTimeout: Duration.seconds(120) });
+      const prefixList = new CfnParameter(this, 'ExportCloudFrontPrefixListId', { type: 'String', allowedPattern: '^pl-[0-9a-f]+$', description: 'Regional ID for AWS-managed com.amazonaws.global.cloudfront.origin-facing; obtain with ec2 describe-managed-prefix-lists before deployment.' });
+      alb.connections.allowFrom(Peer.prefixList(prefixList.valueAsString), Port.tcp(80));
+      const listener = alb.addListener('ExportDownloadListener', { port: 80, protocol: ApplicationProtocol.HTTP, open: false, defaultAction: ListenerAction.fixedResponse(404) });
+      listener.addTargets('ExportDownloadTargets', { port: 8080, protocol: ApplicationProtocol.HTTP, targets: [apiService], healthCheck: { path: '/live' }, priority: 1, conditions: [ListenerCondition.pathPatterns(['/v1/libraries/*/exports/requests/*/download', '/v1/libraries/*/exports/requests/*/download-session']), ListenerCondition.httpHeader('X-Export-Transport', [transportSecret.secretValue.unsafeUnwrap()])] });
+      const distribution = new Distribution(this, 'ExportDownloads', {
+        defaultBehavior: { origin: VpcOrigin.withApplicationLoadBalancer(alb, { protocolPolicy: OriginProtocolPolicy.HTTP_ONLY, readTimeout: Duration.seconds(120), keepaliveTimeout: Duration.seconds(60), customHeaders: { 'X-Export-Transport': transportSecret.secretValue.unsafeUnwrap() } }), viewerProtocolPolicy: ViewerProtocolPolicy.HTTPS_ONLY, allowedMethods: AllowedMethods.ALLOW_ALL, cachePolicy: CachePolicy.CACHING_DISABLED, originRequestPolicy: OriginRequestPolicy.ALL_VIEWER, compress: false },
+        enableLogging: false,
+        errorResponses: [400, 403, 404, 405, 416, 500, 502, 503, 504].map(httpStatus => ({ httpStatus, ttl: Duration.seconds(0) })),
+      });
+      apiContainer.addEnvironment('Exports__DownloadOrigin', `https://${distribution.distributionDomainName}`);
+      apiContainer.addEnvironment('Exports__Enabled', 'false');
+      new CfnOutput(this, 'ExportDownloadOrigin', { value: `https://${distribution.distributionDomainName}` });
+    }
     const workerService = new FargateService(this, 'WorkerService', { cluster, serviceName: `platform-${props.environmentName}-ingest-worker`, taskDefinition: workerTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [workerSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true } });
     const rendererService = new FargateService(this, 'RendererService', { cluster, serviceName: `platform-${props.environmentName}-render-worker`, taskDefinition: rendererTask, desiredCount: 0, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: true, securityGroups: [rendererSecurityGroup], vpcSubnets: { subnetType: SubnetType.PUBLIC }, circuitBreaker: { rollback: true } });
     const vpcLink = new VpcLink(this, 'ApiVpcLink', { vpc, securityGroups: [apiGatewaySecurityGroup], subnets: { subnetType: SubnetType.PRIVATE_ISOLATED } });
@@ -339,6 +364,9 @@ export class PlatformFoundationStack extends Stack {
     const lineageLatencyAlarm = new Alarm(this, 'LineageLatencyAlarm', { metric: lineageSlow, threshold: 5, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${lineageRunbook}` });
     lineageLatencyAlarm.addAlarmAction(new SnsAction(alerts));
     const renderingRunbook = 'https://github.com/FSN-Private/software_construction/blob/master/docs/runbooks/rendering-operations.md';
+    const exportFailureMetric = new MetricFilter(this, 'ExportFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ ($.State.EventType = "exports.failed") || ($.State.EventType = "exports.worker_unavailable") || ($.State.EventType = "exports.cleanup_pending") }'), metricNamespace: 'Platform/Exports', metricName: 'Failures', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    const exportFailureAlarm = new Alarm(this, 'ExportFailureAlarm', { metric: exportFailureMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: https://github.com/FSN-Private/software_construction/blob/master/docs/operations/export-basket.md` });
+    exportFailureAlarm.addAlarmAction(new SnsAction(alerts));
     const rendererQueueAgeAlarm = new Alarm(this, 'RendererQueueAgeAlarm', { metric: rendererQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 300, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });
     rendererQueueAgeAlarm.addAlarmAction(new SnsAction(alerts));
     const rendererDlqAlarm = new Alarm(this, 'RendererDeadLetterAlarm', { metric: rendererDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });

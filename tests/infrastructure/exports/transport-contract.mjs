@@ -1,0 +1,25 @@
+import { readFileSync } from 'node:fs';
+const file = process.argv[2] ?? 'packages/infrastructure/cdk.out-exports/PlatformFoundation-nonprod.template.json';
+const template = JSON.parse(readFileSync(file, 'utf8'));
+const all = Object.values(template.Resources);
+function require(condition, message) { if (!condition) throw new Error(message); }
+const alb = all.find(r => r.Type === 'AWS::ElasticLoadBalancingV2::LoadBalancer');
+require(alb?.Properties.Scheme === 'internal', 'Download ALB must remain private.');
+const listener = all.find(r => r.Type === 'AWS::ElasticLoadBalancingV2::Listener');
+require(listener?.Properties.DefaultActions[0].FixedResponseConfig?.StatusCode === '404', 'Unrouted ALB traffic must deny by default.');
+const rule = all.find(r => r.Type === 'AWS::ElasticLoadBalancingV2::ListenerRule');
+require(rule?.Properties.Conditions.some(c => c.Field === 'http-header' && c.HttpHeaderConfig.HttpHeaderName === 'X-Export-Transport'), 'Origin authentication header must be required.');
+const paths = rule?.Properties.Conditions.find(c => c.Field === 'path-pattern')?.PathPatternConfig?.Values;
+require(paths?.length === 2 && paths.every(p => /\/download(?:-session)?$/.test(p)), 'Private listener must route only native export endpoints.');
+const cf = all.find(r => r.Type === 'AWS::CloudFront::Distribution')?.Properties.DistributionConfig;
+const behavior = cf?.DefaultCacheBehavior;
+require(behavior?.ViewerProtocolPolicy === 'https-only' && behavior.Compress === false, 'Viewer HTTPS and unmodified ranged ZIP bytes are required.');
+require(behavior.CachePolicyId === '4135ea2d-6df8-44a3-9df3-4b5a84be39ad' && behavior.OriginRequestPolicyId === '216adef6-5c7f-47e4-b989-5492eafa07d3', 'Disable caching and forward viewer cookie/Host/range headers.');
+require(!cf.Logging && cf.CustomErrorResponses.every(e => e.ErrorCachingMinTTL === 0), 'Credentials must not enter access logs or cached errors.');
+require(cf.Origins[0].VpcOriginConfig && cf.Origins[0].OriginCustomHeaders.some(h => h.HeaderName === 'X-Export-Transport'), 'Use an authenticated CloudFront VPC origin.');
+require(template.Parameters.ExportCloudFrontPrefixListId.AllowedPattern === '^pl-[0-9a-f]+$', 'Regional origin-facing prefix list must be supplied.');
+const api = all.find(r => r.Type === 'AWS::ECS::TaskDefinition' && r.Properties.ContainerDefinitions[0].Name === 'api');
+require(api.Properties.EphemeralStorage.SizeInGiB >= 50 && api.Properties.ContainerDefinitions[0].Environment.some(e => e.Name === 'Exports__Enabled' && e.Value === 'false'), 'Reserve package workspace and keep capability disabled at bootstrap.');
+const alarm = all.find(r => r.Type === 'AWS::CloudWatch::Alarm' && r.Properties.AlarmDescription?.includes('docs/operations/export-basket.md'));
+require(alarm?.Properties.Period * alarm.Properties.EvaluationPeriods <= 900 && alarm.Properties.AlarmActions?.length, 'Sustained export failures must alert within fifteen minutes.');
+console.log('Opt-in export transport privacy, routing, cache, capacity and alert contracts passed. Deployment acceptance remains separate.');

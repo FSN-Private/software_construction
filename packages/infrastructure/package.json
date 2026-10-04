@@ -10,6 +10,8 @@
     "check": "tsc --noEmit",
     "build": "tsc",
     "synth": "npm run build && cdk synth --no-lookups --context offline=true --context environment=nonprod --context region=ap-southeast-1 --quiet",
+    "synth:exports": "npm run build && cdk synth --no-lookups --context offline=true --context environment=nonprod --context region=ap-southeast-1 --context exportTransport=true --output cdk.out-exports --quiet",
+    "assert:exports": "node ../../tests/infrastructure/exports/transport-contract.mjs cdk.out-exports/PlatformFoundation-nonprod.template.json",
     "assert": "node scripts/assert-template.mjs",
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "validate:dependencies": "npm ls --all",

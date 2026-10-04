@@ -17,6 +17,8 @@
     "test:version-control": "dotnet run --project tests/version-control/Platform.VersionControl.Tests.csproj",
     "test:windows-sync": "dotnet run --project tests/windows-sync/Platform.WindowsSync.Tests.csproj --no-restore",
     "test:integration": "node tests/integration/api-correlation.mjs",
+    "test:exports": "dotnet run --project tests/exports/Platform.Exports.Tests.csproj",
+    "test:exports-integration": "node tests/integration/exports/run.mjs",
     "test:ingest": "node tests/integration/ingest/run.mjs",
     "test:phase5-contract": "node tests/integration/phase5-contract.mjs",
     "build": "npm --prefix apps/web run build",
