@@ -18,6 +18,19 @@ type Status = {
   message: string;
 };
 
+function tokenExpiry(token: string | undefined): number {
+  try {
+    const payload =
+      token?.split('.')[1]?.replace(/-/g, '+').replace(/_/g, '/') ?? '';
+    const exp = JSON.parse(atob(payload)).exp;
+    return typeof exp === 'number' && Number.isFinite(exp)
+      ? exp * 1000
+      : Infinity;
+  } catch {
+    return Infinity;
+  }
+}
+
 export function App() {
   const config = platformConfig();
   const [token, setToken] = useState(idToken);
@@ -119,12 +132,7 @@ export function App() {
     window.addEventListener('gallery-navigation', update);
     window.addEventListener('owner-session-expired', expire);
     // Only actual JWTs have an expiry; fixture tokens intentionally do not.
-    let expiry = Infinity;
-    try {
-      expiry = Number(JSON.parse(atob(token?.split('.')[1] ?? '')).exp) * 1000;
-    } catch {
-      /* No JWT expiry available. */
-    }
+    const expiry = tokenExpiry(token);
     const timer = window.setInterval(() => {
       if (Date.now() >= expiry) expire();
     }, 1000);
@@ -154,14 +162,7 @@ export function App() {
     window.location.assign(authorize.toString());
   }
   async function signOut() {
-    let bearerExpired = false;
-    try {
-      bearerExpired =
-        Date.now() >=
-        Number(JSON.parse(atob(token?.split('.')[1] ?? '')).exp) * 1000;
-    } catch {
-      /* Unknown expiry still requires server revocation. */
-    }
+    const bearerExpired = Date.now() >= tokenExpiry(token);
     // Download grants never outlive the bearer that minted them.
     if (
       config?.exportsEnabled &&
