@@ -5,6 +5,7 @@ export interface PlatformConfig {
   readonly redirectUri: string;
   readonly galleryLibraryId?: string;
   readonly previewMode?: boolean;
+  readonly exportsEnabled?: boolean;
 }
 
 declare global {

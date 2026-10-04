@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Lineage } from './Lineage';
 import { Modal } from './Modal';
 import { ImageHistory } from './ImageHistory';
+import { addToDefaultBasket } from './export-api';
+import { exportText } from './export-messages';
+import { platformConfig } from './platform-config';
 import { VersionPreview, type ImageVersion } from './Comparison';
 import './gallery.css';
 
@@ -234,6 +237,9 @@ export function Gallery({
   const [refresh, setRefresh] = useState(0);
   const [version, setVersion] = useState<ImageVersion>();
   const [historical, setHistorical] = useState(false);
+  const [exportSelected, setExportSelected] = useState<string[]>([]);
+  const exportBranch = new URLSearchParams(location).get('branch') ?? 'main';
+  useEffect(() => setExportSelected([]), [library, exportBranch]);
   const [editDirty, setEditDirty] = useState(false);
   const dirty = useRef(false);
   dirty.current = editDirty;
@@ -1248,6 +1254,40 @@ export function Gallery({
                     <summary>Image actions</summary>
                     <div className="gallery-actions">
                       <button
+                        hidden={!platformConfig()?.exportsEnabled}
+                        disabled={
+                          busy ||
+                          editDirty ||
+                          !detail.editId ||
+                          (historical && !version?.editId)
+                        }
+                        onClick={() =>
+                          void run(async () => {
+                            if (
+                              detail.working.webVersion !== null &&
+                              !historical
+                            )
+                              throw new Error(
+                                'Commit or discard working changes before adding this version.',
+                              );
+                            await addToDefaultBasket(baseUrl, token, library, {
+                              assetId: detail.assetId,
+                              editId: (historical
+                                ? version?.editId
+                                : detail.editId)!,
+                              selectedVersion: historical
+                                ? version!.commitId
+                                : detail.working.branch,
+                            });
+                            setEditStatus(
+                              'Added exact committed version to the default export basket.',
+                            );
+                          })
+                        }
+                      >
+                        Add selected committed version to basket
+                      </button>
+                      <button
                         disabled={busy}
                         onClick={() => void run(() => downloadOriginal(detail))}
                       >
@@ -1576,9 +1616,71 @@ export function Gallery({
           )}
           {page && (
             <>
+              <button
+                hidden={!platformConfig()?.exportsEnabled}
+                disabled={busy || exportSelected.length === 0}
+                onClick={() =>
+                  void run(async () => {
+                    const branch = params.get('branch') ?? 'main';
+                    for (const assetId of exportSelected) {
+                      const response = await fetch(
+                        `${baseUrl}/v1/libraries/${encodeURIComponent(library)}/gallery/${encodeURIComponent(assetId)}?branch=${encodeURIComponent(branch)}`,
+                        {
+                          headers: { Authorization: `Bearer ${token}` },
+                          cache: 'no-store',
+                        },
+                      );
+                      if (!response.ok)
+                        throw new Error(
+                          exportText('Selected image details unavailable.'),
+                        );
+                      const image = (await response.json()) as Detail;
+                      if (!image.editId || image.working.webVersion !== null)
+                        throw new Error(
+                          exportText(
+                            'Commit or discard working changes before adding selected images.',
+                          ),
+                        );
+                      await addToDefaultBasket(baseUrl, token, library, {
+                        assetId,
+                        editId: image.editId,
+                        selectedVersion: branch,
+                      });
+                      setExportSelected((previous) =>
+                        previous.filter((id) => id !== assetId),
+                      );
+                    }
+                    setEditStatus(
+                      exportText(
+                        'Added selected committed images to the default export basket.',
+                      ),
+                    );
+                  })
+                }
+              >
+                {exportText('Add {count} selected images to basket', {
+                  count: exportSelected.length,
+                })}
+              </button>
               <ul className="gallery-grid">
                 {page.cards.map((card) => (
                   <li key={card.assetId}>
+                    <label hidden={!platformConfig()?.exportsEnabled}>
+                      <input
+                        type="checkbox"
+                        checked={exportSelected.includes(card.assetId)}
+                        onChange={(event) =>
+                          setExportSelected((previous) =>
+                            event.target.checked
+                              ? [...previous, card.assetId]
+                              : previous.filter((id) => id !== card.assetId),
+                          )
+                        }
+                      />
+                      {exportText('Select {name} for export', {
+                        name: card.filename,
+                      })}
+                    </label>
                     <button
                       id={`photo-${card.assetId}`}
                       className="gallery-card"

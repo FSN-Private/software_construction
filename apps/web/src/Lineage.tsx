@@ -3,6 +3,9 @@ import { Comparison, type ComparisonResult } from './Comparison';
 import { MergeReview } from './MergeReview';
 import { BranchSwitcher } from './BranchSwitcher';
 import { HistoryActions } from './HistoryActions';
+import { addToDefaultBasket } from './export-api';
+import { exportText } from './export-messages';
+import { platformConfig } from './platform-config';
 import './lineage.css';
 
 type Commit = {
@@ -58,6 +61,7 @@ export function Lineage({
   const [source, setSource] = useState('');
   const [comparison, setComparison] = useState<ComparisonResult>();
   const [compareError, setCompareError] = useState('');
+  const [exportStatus, setExportStatus] = useState('');
   const [comparing, setComparing] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [mutationsEnabled, setMutationsEnabled] = useState(false);
@@ -211,6 +215,7 @@ export function Lineage({
         />{' '}
         Show hidden commits
       </label>
+      {exportStatus && <p role="status">{exportStatus}</p>}
       {error && <p role="alert">{error}</p>}
       {!page && !error && <p role="status">Loading image history…</p>}
       {page && (
@@ -314,6 +319,50 @@ export function Lineage({
               Selected committed version{' '}
               <code>{selectedNode.commit.commitId}</code>.
             </p>
+          )}
+          {selectedNode && (
+            <button
+              hidden={!platformConfig()?.exportsEnabled}
+              onClick={() => {
+                void (async () => {
+                  const commit = selectedNode.commit;
+                  const response = await fetch(
+                    `${baseUrl}/v1/libraries/${encodeURIComponent(library)}/lineage/images/${encodeURIComponent(asset)}/compare?target=${encodeURIComponent(commit.commitId)}&source=${encodeURIComponent(commit.commitId)}`,
+                    {
+                      headers: { Authorization: `Bearer ${token}` },
+                      cache: 'no-store',
+                    },
+                  );
+                  if (!response.ok)
+                    throw new Error(
+                      exportText('Exact committed image state unavailable.'),
+                    );
+                  const value = (await response.json()) as ComparisonResult;
+                  const state = value.targetStates.find(
+                    (s) =>
+                      s.assetId === asset && s.commitId === commit.commitId,
+                  );
+                  if (!state?.editId)
+                    throw new Error(exportText('Committed edit unavailable.'));
+                  await addToDefaultBasket(baseUrl, token, library, {
+                    assetId: asset,
+                    editId: state.editId,
+                    selectedVersion: commit.commitId,
+                    advancedHistory: showHidden && commit.hidden,
+                  });
+                  setExportStatus(
+                    exportText(
+                      'Added exact committed version to the default basket.',
+                    ),
+                  );
+                })().catch((error) => setCompareError(error.message));
+              }}
+            >
+              {exportText('Add selected committed version to basket')}
+              {selectedNode.commit.hidden
+                ? exportText(' (advanced hidden history)')
+                : ''}
+            </button>
           )}
           <section aria-labelledby="choose-comparison-heading">
             <h4 id="choose-comparison-heading">
