@@ -8,6 +8,10 @@ Maintainer explicitly approved restoring the plan/API contract's admitted-transf
 
 The automatic approval-review authority blocker recorded in rounds 6–7 is resolved by the explicit approval. Finding 013 remediation awaits independent verification; T029 and deployed/manual/trusted-promotion evidence still prevent full acceptance, T025/T026 completion or production enablement.
 
+Round-8 reviewer independently verifies 013 resolved at `532c924`, with no unresolved blocking local implementation finding. The historical pending-verification statement above records the pre-review checkpoint; full acceptance gates remain open.
+
+Subsequent preset-presentation follow-up for 011: full PostgreSQL/MinIO runner passes an unavailable-XMP RAW pin showing rendered unavailability but original readiness and the exact `.cr2` name. `BROWSER_TEST_DISABLE_FIREFOX_ACCESSIBILITY=1 BROWSER_TEST_PORT=4196 playwright test exports.spec.ts` passes **39 cases** across Chrome/Edge/Firefox (57.8 seconds), including preset-specific names/readiness and separate rendered-preview availability. Web build/typecheck, format/source/accessibility-structure checks and API formatter verification pass. Capacity runner passes 20 baskets/250 items/10 retained requests with p95 open 235.8 ms, update 316.5 ms and submit 90.4 ms, within 2-second interaction/3-second submission budgets. These remain local server fixtures, not browser performance/usability/manual/deployed acceptance.
+
 - Pinned .NET 10.0.400, Node 24.20.0, npm 11.19.0 available.
 - `dotnet restore tests/exports/Platform.Exports.Tests.csproj`: passed; existing dependencies only, vulnerability metadata retrieved.
 - `dotnet run --project tests/exports/Platform.Exports.Tests.csproj --no-restore`: passed contract/name/manifest/hash/metadata/purge-scope checks.

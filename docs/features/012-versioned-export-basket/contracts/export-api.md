@@ -31,4 +31,6 @@ Operator /v1/exports/operations: GET aggregate status; POST pause/resume/drain/c
 
 Safe machine reasons: committed_version_required, advanced_history_required, source_unavailable, selected_version_unavailable, permanently_unavailable, incompatible_renderer, metadata_confirmation_required, quota_exceeded, integrity_error, export_paused, cancelled, expired, retryable, idempotency_key_reused. Client localizes labels; identifiers/checksums/UTC stay locale-neutral.
 
+Basket item `availability`, `reason` and `outputName` describe rendered exports and rendered-preview eligibility. Additive `originalAvailability`, `originalReason` and `originalOutputName` describe unchanged-original eligibility and the exact preset-specific output name independently of XMP availability. Clients select the appropriate fields for the selected preset; an available original does not imply that its rendered preview is available. These fields expose no storage locator.
+
 Permanent unavailability requires the trusted durable tombstone in [purge-invalidation.md](purge-invalidation.md); missing bytes alone indicate unavailable/integrity error. Feature 011 publisher integration is T029's full acceptance/rollout dependency.

@@ -3,7 +3,7 @@ import { fixture, assetOne, image, detail } from './fixtures';
 
 async function exportsFixture(
   page: Page,
-  options: { items?: number; pending?: boolean } = {},
+  options: { items?: number; pending?: boolean; unavailableXmp?: boolean } = {},
 ) {
   await fixture(page, { exports: true });
   const pin = {
@@ -14,7 +14,7 @@ async function exportsFixture(
     originalSha256: 'a'.repeat(64),
     originalByteLength: 4,
     xmpSha256: 'b'.repeat(64),
-    displayName: 'image-1.jpg',
+    displayName: options.unavailableXmp ? 'source.CR2' : 'image-1.jpg',
     versionLabel: 'Committed main',
     reference: 'main',
     advancedHistory: false,
@@ -28,10 +28,15 @@ async function exportsFixture(
       revision: 1,
       items: Array.from({ length: options.items ?? 1 }, (_, index) => ({
         pin: { ...pin, itemId: `selection-${index + 1}` },
-        availability: 'ready',
+        availability: options.unavailableXmp ? 'unavailable' : 'ready',
         previewState: 'not_requested',
         outputName: 'image-image-1-selection-1.jpg',
-        reason: null,
+        reason: options.unavailableXmp ? 'selected_version_unavailable' : null,
+        originalAvailability: 'ready',
+        originalOutputName: options.unavailableXmp
+          ? 'source-image-1-selection-1.CR2'
+          : 'image-image-1-selection-1.jpg',
+        originalReason: null,
       })),
     },
   ];
@@ -219,6 +224,47 @@ test('persistent basket detail, privacy consent and native download exchange', a
   );
   await page.getByRole('button', { name: 'Gallery', exact: true }).click();
   await expect(page).toHaveURL(/rating=4&branch=main/);
+});
+
+test('original preset displays RAW naming and independent readiness when XMP is unavailable', async ({
+  page,
+}) => {
+  await exportsFixture(page, { unavailableXmp: true });
+  await page.goto('/#id_token=fixture-token');
+  await page
+    .getByRole('button', { name: 'Export baskets', exact: true })
+    .click();
+  const selection = page.locator('summary').filter({ hasText: 'source.CR2' });
+  await selection.click();
+  await expect(
+    page.getByText('Output: image-image-1-selection-1.jpg', { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('combobox', { name: 'Output preset' })
+    .selectOption('originals-v1');
+  await expect(selection).toHaveText('source.CR2 · Committed main · Ready');
+  await expect(
+    page.getByText('Output: source-image-1-selection-1.CR2', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', {
+      name: 'Preview exact pinned version / refresh preview',
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText('Rendered preview is unavailable for this selection.'),
+  ).toBeVisible();
+  await page.getByLabel('I accept the embedded metadata disclosure.').check();
+  await expect(
+    page.getByRole('button', { name: 'Prepare immutable export' }),
+  ).toBeEnabled();
+  await page
+    .getByRole('combobox', { name: 'Output preset' })
+    .selectOption('jpeg-2048-private-v1');
+  await expect(selection).not.toHaveText('source.CR2 · Committed main · Ready');
+  await expect(
+    page.getByText('Output: image-image-1-selection-1.jpg', { exact: true }),
+  ).toBeVisible();
 });
 
 test('large basket cost consent, configured capacity and cancellation guidance', async ({

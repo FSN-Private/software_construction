@@ -305,7 +305,11 @@ export function ExportBasket({
                 <details>
                   <summary>
                     {item.pin.displayName} · {item.pin.versionLabel} ·{' '}
-                    {exportMessage(item.availability)}
+                    {exportMessage(
+                      preset === 'originals-v1'
+                        ? (item.originalAvailability ?? item.availability)
+                        : item.availability,
+                    )}
                   </summary>
                   <p>
                     {exportText('Committed version ')}
@@ -320,7 +324,9 @@ export function ExportBasket({
                   </p>
                   <p>
                     {exportText('Output: ')}
-                    {item.outputName}
+                    {preset === 'originals-v1'
+                      ? (item.originalOutputName ?? item.outputName)
+                      : item.outputName}
                   </p>
                   <button
                     disabled={busy || item.availability !== 'ready'}
@@ -371,7 +377,20 @@ export function ExportBasket({
                       {exportMessage(previews[item.pin.itemId].state)}
                     </p>
                   )}
-                  {item.reason && <p>{exportMessage(item.reason)}</p>}
+                  {preset === 'originals-v1' &&
+                  item.originalAvailability !== undefined
+                    ? item.originalReason && (
+                        <p>{exportMessage(item.originalReason)}</p>
+                      )
+                    : item.reason && <p>{exportMessage(item.reason)}</p>}
+                  {preset === 'originals-v1' &&
+                    item.availability !== 'ready' && (
+                      <p>
+                        {exportText(
+                          'Rendered preview is unavailable for this selection.',
+                        )}
+                      </p>
+                    )}
                 </details>
                 <button
                   disabled={busy}
