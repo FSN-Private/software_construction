@@ -38,6 +38,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.RequireHttpsMetadata = true;
 });
 builder.Services.AddAuthorization();
+builder.Services.AddCors(options => options.AddPolicy("exports-download", policy => Platform.Api.Features.Exports.ExportConfiguration.DownloadCors(policy, builder.Configuration["Exports:WebOrigin"])));
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationMiddlewareResultHandler, Platform.Api.Features.Exports.ExportAuthorizationResultHandler>();
 builder.Services.AddDataProtection();
 var ingestConnection = IngestDatabaseConfiguration.ResolveConnectionString(builder.Configuration.GetConnectionString("Ingest"), key => builder.Configuration[key]);
 if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:Bucket"]) && !string.IsNullOrWhiteSpace(builder.Configuration["Ingest:KmsKeyId"]))
@@ -87,6 +89,8 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddHostedService<Platform.Api.Features.Exports.ExportPreparationWorker>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
+// Export multipart admission is journaled once per call; invisible initiation retries could create untracked uploads.
+builder.Services.AddKeyedSingleton<IAmazonS3>("exports", (_, _) => new AmazonS3Client(new AmazonS3Config { MaxErrorRetry = 0 }));
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
@@ -109,6 +113,7 @@ app.Use(async (context, next) =>
     await next(context);
 });
 app.UseAuthentication();
+app.UseCors();
 app.UseAuthorization();
 app.UseMiddleware<IdempotencyMiddleware>();
 IngestEndpoints.Map(app);

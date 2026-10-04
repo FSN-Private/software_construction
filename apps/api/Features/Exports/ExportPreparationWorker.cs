@@ -2,6 +2,7 @@ using Npgsql;
 using Platform.Contracts.Exports;
 using static Platform.Storage.IngestDb;
 namespace Platform.Api.Features.Exports;
+
 public sealed class ExportPreparationWorker(NpgsqlDataSource source, ExportPackageService packages, ExportCleanupService cleanup, IConfiguration configuration, ILogger<ExportPreparationWorker> logger) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(PreparationLoopAsync(stoppingToken), MaintenanceLoopAsync(stoppingToken));

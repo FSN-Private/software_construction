@@ -33,7 +33,12 @@ CREATE INDEX export_tombstone_scope ON export_purge_tombstones(owner_id,library_
 CREATE TABLE export_write_intents (
  id uuid PRIMARY KEY, request_id uuid NOT NULL REFERENCES export_requests(id), generation bigint NOT NULL,
  writer_id uuid NOT NULL, object_key text NOT NULL UNIQUE, state text NOT NULL CHECK(state IN ('admitted','settled','unknown','cleaned')),
- object_version text, multipart_id text, created_at timestamptz NOT NULL DEFAULT now(), settled_at timestamptz
+ object_version text, multipart_id text, created_at timestamptz NOT NULL DEFAULT now(), settled_at timestamptz,
+ category text NOT NULL DEFAULT 'package' CHECK(category IN ('package','workspace')), workspace_path text,
+ writer_host text NOT NULL, writer_pid integer NOT NULL, writer_start_ticks bigint NOT NULL,
+ writer_stopped boolean NOT NULL DEFAULT false, storage_pending boolean NOT NULL DEFAULT false,
+ storage_phase text, provider_receipt text,
+ CHECK((category='workspace')=(workspace_path IS NOT NULL))
 );
 CREATE TABLE export_download_sessions (
  id uuid PRIMARY KEY, owner_id text NOT NULL, session_hash char(64) NOT NULL, expires_at timestamptz NOT NULL, revoked_at timestamptz, UNIQUE(owner_id,session_hash)

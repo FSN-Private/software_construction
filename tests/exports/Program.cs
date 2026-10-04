@@ -24,5 +24,21 @@ Check(ExportRange.Parse("bytes=-3", "", "\"hash\"", 10) == (7, 9, true), "Suffix
 Check(ExportRange.Parse("bytes=8-", "old", "\"hash\"", 10) == (0, 9, false), "If-Range mismatch returns full immutable representation");
 Reject(() => ExportRange.Parse("bytes=10-", "", "\"hash\"", 10)); Reject(() => ExportRange.Parse("bytes=0-1,3-4", "", "\"hash\"", 10));
 if (Environment.GetEnvironmentVariable("EXPORT_INTEGRATION") == "1") await ExportIntegration.RunAsync();
+if (Environment.GetEnvironmentVariable("EXPORT_JPEG_CORPUS") is { } corpus)
+{
+    var files = Directory.GetFiles(corpus, "*.jpg"); Check(files.Length == 8, "Four exact XMP selections at two dimensions");
+    foreach (var file in files)
+    {
+        var encoded = await File.ReadAllBytesAsync(file);
+        Check(JpegMetadata.Transform(encoded, true).SequenceEqual(encoded), "Real encoded retain JPEG remains byte-identical");
+        byte[] metadata = [0xff, 0xe1, 0, 8, 71, 80, 83, 0, 1, 2];
+        var injected = encoded[..2].Concat(metadata).Concat(encoded[2..]).ToArray();
+        var clean = JpegMetadata.Transform(encoded, false);
+        Check(JpegMetadata.Transform(injected, false).SequenceEqual(clean), "Real encoded JPEG removes added descriptive metadata without changing image bytes");
+        Check(JpegMetadata.Transform(clean, false).SequenceEqual(clean), "Private JPEG transform is idempotent");
+    }
+    Check(files.Select(f => ExportIntegrity.Hash(File.ReadAllBytes(f))).Distinct().Count() == 8, "Actual historical XMP renders remain distinguishable");
+    Console.WriteLine("Eight real encoded JPEG metadata and exact-XMP distinctness checks passed.");
+}
 static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 static void Reject(Action action) { try { action(); } catch (ExportProblem) { return; } throw new InvalidOperationException("Expected safe rejection"); }
