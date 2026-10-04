@@ -179,6 +179,18 @@ public static class ExportIntegration
             revoking.Response.Body = revocationSink;
             await RejectAsync(async () => await downloads.StreamAsync(revoking, "library", ready.Id, default));
             Check(revocationSink.Length > 0 && revocationSink.Length < zipped.Length, "Pre-mint bearer stream stops after in-flight session revocation");
+            var expiringBearer = BearerRequest("expiring-admitted-bearer");
+            var credentialExpiry = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddSeconds(3).ToUnixTimeSeconds());
+            var identity = (ClaimsIdentity)expiringBearer.User.Identity!;
+            identity.RemoveClaim(identity.FindFirst("exp")!); identity.AddClaim(new Claim("exp", credentialExpiry.ToUnixTimeSeconds().ToString()));
+            using var credentialSink = new ExpiringExportSink(async () => await Task.Delay(Math.Max(1100, (int)(credentialExpiry - DateTimeOffset.UtcNow).TotalMilliseconds + 1100)));
+            expiringBearer.Response.Body = credentialSink;
+            await downloads.StreamAsync(expiringBearer, "library", ready.Id, default);
+            Check(DateTimeOffset.UtcNow > credentialExpiry && ExportIntegrity.Hash(credentialSink.ToArray()) == ready.PackageSha256, "Admitted bearer transfer finishes byte-exact after actual credential expiry");
+            var laterBearer = BearerRequest("expiring-admitted-bearer"); laterBearer.User = expiringBearer.User; laterBearer.Request.Headers.Range = "bytes=1-3";
+            await RejectAsync(async () => await downloads.StreamAsync(laterBearer, "library", ready.Id, default));
+            laterBearer.Request.Method = "HEAD";
+            await RejectAsync(async () => await downloads.StreamAsync(laterBearer, "library", ready.Id, default));
         }
         using (var zip = new ZipArchive(new MemoryStream(zipped)))
         {
@@ -200,6 +212,26 @@ public static class ExportIntegration
         var cookie = exchange.Response.Headers.SetCookie.ToString().Split(';')[0];
         DefaultHttpContext CookieRequest() { var c = new DefaultHttpContext(); c.Request.Scheme = "https"; c.Request.Host = new HostString("downloads.example.test"); c.Request.Headers.Cookie = cookie; c.Request.Method = "HEAD"; return c; }
         await downloads.StreamAsync(CookieRequest(), "library", request.Id, default);
+        if (Environment.GetEnvironmentVariable("EXPORT_PERFORMANCE") != "1")
+        {
+            var cookieHash = ExportIntegrity.Hash(System.Text.Encoding.UTF8.GetBytes(cookie.Split('=')[1]));
+            var admittedCookie = CookieRequest(); admittedCookie.Request.Method = "GET";
+            using var credentialSink = new ExpiringExportSink(async () => {
+                await using var connection = await db.OpenConnectionAsync();
+                await ExecuteAsync(connection, "UPDATE export_download_sessions SET expires_at=now()-interval '1 second' WHERE id=(SELECT session_id FROM export_download_grants WHERE token_hash=$1); UPDATE export_download_grants SET expires_at=now()-interval '1 second',bearer_expires_at=now()-interval '1 second' WHERE token_hash=$1", default, cookieHash);
+                await Task.Delay(1100);
+            });
+            admittedCookie.Response.Body = credentialSink;
+            await downloads.StreamAsync(admittedCookie, "library", request.Id, default);
+            Check(ExportIntegrity.Hash(credentialSink.ToArray()) == ready.PackageSha256, "Admitted native cookie transfer finishes after grant/session expiry without changing package bytes");
+            var laterCookie = CookieRequest(); laterCookie.Request.Headers.Range = "bytes=1-3";
+            await RejectAsync(async () => await downloads.StreamAsync(laterCookie, "library", request.Id, default));
+            laterCookie.Request.Method = "GET";
+            await RejectAsync(async () => await downloads.StreamAsync(laterCookie, "library", request.Id, default));
+            // Restore only fixture timestamps so the independent active-cookie revocation assertion remains meaningful.
+            await using var restore = await db.OpenConnectionAsync();
+            await ExecuteAsync(restore, "UPDATE export_download_sessions SET expires_at=now()+interval '10 minutes' WHERE id=(SELECT session_id FROM export_download_grants WHERE token_hash=$1); UPDATE export_download_grants SET expires_at=now()+interval '5 minutes',bearer_expires_at=now()+interval '10 minutes' WHERE token_hash=$1", default, cookieHash);
+        }
         await downloads.RevokeAsync(mint, "owner", default);
         await RejectAsync(async () => await downloads.StreamAsync(CookieRequest(), "library", request.Id, default));
         await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "ALTER TABLE gallery_generations RENAME TO fixture_unavailable_gallery_generations", default);

@@ -2,6 +2,12 @@
 
 Approved design and tasks: 2026-10-04. Branch feature/012-versioned-export-basket; base 2680c6a. Planning milestone 36e8347.
 
+## Approved admitted-transfer correction (2026-10-04)
+
+Maintainer explicitly approved restoring the plan/API contract's admitted-transfer rule. `node tests/integration/exports/run.mjs` passes the full real PostgreSQL/MinIO suite after the correction. A bearer transfer starts with a valid short-lived credential, crosses its actual expiry during the first progressing write and completes with the exact published ZIP checksum; subsequent ranged GET and HEAD are rejected. A native-cookie transfer crosses injected grant/bearer/session expiry and also completes with exact bytes; subsequent ranged GET/HEAD are rejected. Fixture timestamps are restored only to independently prove active cookie revocation still denies access. Existing actual in-flight bearer revocation and package-expiry fixtures continue to stop remaining bytes. These are local service fixtures, not deployed CloudFront/browser transfer acceptance. API formatting and formatter verification pass. No new expiry checks are removed from admission, minting or exchange.
+
+The automatic approval-review authority blocker recorded in rounds 6–7 is resolved by the explicit approval. Finding 013 remediation awaits independent verification; T029 and deployed/manual/trusted-promotion evidence still prevent full acceptance, T025/T026 completion or production enablement.
+
 - Pinned .NET 10.0.400, Node 24.20.0, npm 11.19.0 available.
 - `dotnet restore tests/exports/Platform.Exports.Tests.csproj`: passed; existing dependencies only, vulnerability metadata retrieved.
 - `dotnet run --project tests/exports/Platform.Exports.Tests.csproj --no-restore`: passed contract/name/manifest/hash/metadata/purge-scope checks.

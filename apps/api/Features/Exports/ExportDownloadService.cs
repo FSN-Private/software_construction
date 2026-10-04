@@ -60,15 +60,15 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         Platform.Api.Telemetry.PlatformTelemetry.ExportDownloadAttempts.Add(1);
         RequireOrigin(c);
         await using var db = await source.OpenConnectionAsync(ct);
-        string owner; Guid session; DateTimeOffset? bearerExpiry = null;
+        string owner; Guid session;
         await using (var tx = await db.BeginTransactionAsync(ct))
         {
             if (Platform.Contracts.OwnerAuthorization.TryGetOwner(c.User, out var bearerOwner))
             {
                 owner = bearerOwner;
-                bearerExpiry = BearerExpiry(c);
+                var bearerExpiry = BearerExpiry(c);
                 await LockOwnerAsync(db, owner, ct);
-                session = (Guid)(await ScalarAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,session_hash) DO UPDATE SET expires_at=GREATEST(export_download_sessions.expires_at,excluded.expires_at) RETURNING id", ct, Guid.NewGuid(), owner, SessionHash(c), bearerExpiry.Value))!;
+                session = (Guid)(await ScalarAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,session_hash) DO UPDATE SET expires_at=GREATEST(export_download_sessions.expires_at,excluded.expires_at) RETURNING id", ct, Guid.NewGuid(), owner, SessionHash(c), bearerExpiry))!;
             }
             else { var token = c.Request.Cookies[Cookie]; if (token is null || token.Length != 64) throw new ExportProblem("download_denied", 403); var grant = await LookupAsync(db, Hash(token), id, library, "cookie", ct); owner = grant.Owner; session = grant.Session; }
             c.Items["exports.audit_owner"] = owner;
@@ -97,8 +97,8 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
                 {
                     await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
                     await ReadyAsync(db, owner, library, id, ct);
-                    await RequireSessionAsync(db, session, ct);
-                    if (bearerExpiry <= DateTimeOffset.UtcNow) throw new ExportProblem("download_denied", 403);
+                    // Credential expiry controls admission; admitted transfers still observe revocation and lifecycle changes.
+                    if (await ScalarAsync(db, "SELECT 1 FROM export_download_sessions WHERE id=$1 AND revoked_at IS NULL", ct, session) is null) throw new ExportProblem("download_denied", 403);
                     await tx.CommitAsync(ct); checkedAt = DateTimeOffset.UtcNow;
                 }
                 var read = await bytes.ResponseStream.ReadAsync(buffer, ct); if (read == 0) break; sent += read;
