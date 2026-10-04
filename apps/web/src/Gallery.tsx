@@ -238,6 +238,7 @@ export function Gallery({
   const [version, setVersion] = useState<ImageVersion>();
   const [historical, setHistorical] = useState(false);
   const [exportSelected, setExportSelected] = useState<string[]>([]);
+  const [exportStatus, setExportStatus] = useState('');
   const exportBranch = new URLSearchParams(location).get('branch') ?? 'main';
   useEffect(() => setExportSelected([]), [library, exportBranch]);
   const [editDirty, setEditDirty] = useState(false);
@@ -1650,7 +1651,7 @@ export function Gallery({
                         previous.filter((id) => id !== assetId),
                       );
                     }
-                    setEditStatus(
+                    setExportStatus(
                       exportText(
                         'Added selected committed images to the default export basket.',
                       ),
@@ -1662,6 +1663,7 @@ export function Gallery({
                   count: exportSelected.length,
                 })}
               </button>
+              {exportStatus && <p role="status">{exportStatus}</p>}
               <ul className="gallery-grid">
                 {page.cards.map((card) => (
                   <li key={card.assetId}>

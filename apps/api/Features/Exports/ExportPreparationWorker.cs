@@ -53,19 +53,24 @@ public sealed class ExportPreparationWorker(NpgsqlDataSource source, ExportPacka
         var heartbeat = HeartbeatAsync(id, lease, generation, timeout, heartbeatStop.Token);
         try
         {
-            var started = System.Diagnostics.Stopwatch.StartNew();
             var done = await packages.PrepareAsync(owner, library, id, lease, generation, timeout.Token);
-            Platform.Api.Telemetry.PlatformTelemetry.ExportPreparationDuration.Record(started.Elapsed.TotalMilliseconds);
-            if (done) { Platform.Api.Telemetry.PlatformTelemetry.ExportPrepared.Add(1); logger.LogInformation("Export preparation settled {EventType}", "exports.prepared"); }
+            if (done)
+            {
+                var state = await ScalarAsync(db, "SELECT state FROM export_requests WHERE id=$1 AND generation=$2", ct, id, generation) as string;
+                if (state is "completed" or "partial" or "failed") Platform.Api.Telemetry.PlatformTelemetry.ExportPreparationDuration.Record(Math.Max(0, (DateTime.UtcNow - created).TotalMilliseconds));
+                if (state is "completed" or "partial") { Platform.Api.Telemetry.PlatformTelemetry.ExportPrepared.Add(1); logger.LogInformation("Export preparation settled {EventType}", "exports.prepared"); }
+                if (state is "partial" or "failed") { Platform.Api.Telemetry.PlatformTelemetry.ExportFailed.Add(1); logger.LogWarning("Export preparation has failed items {EventType}", "exports.failed"); }
+            }
             if (!done) await Platform.Storage.IngestDb.ExecuteAsync(db, "UPDATE export_requests SET state='pending',lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$2 AND generation=$3 AND state='preparing'", ct, id, lease, generation);
         }
         catch (Exception error) when (error is ExportProblem or Amazon.S3.AmazonS3Exception or IOException or OperationCanceledException)
         {
             var reason = error is ExportProblem problem && ExportStates.Reasons.Contains(problem.Code) ? problem.Code : error is OperationCanceledException ? "resource_limit" : "storage_unavailable";
-            Platform.Api.Telemetry.PlatformTelemetry.ExportFailed.Add(1, new KeyValuePair<string, object?>("reason", reason)); logger.LogWarning("Export preparation failed {EventType} {ReasonCode}", "exports.failed", reason);
             await using var tx = await db.BeginTransactionAsync(CancellationToken.None);
             if (await Platform.Storage.IngestDb.ExecuteAsync(db, "UPDATE export_requests SET state='failed',reason=$4,lease_id=NULL,lease_until=NULL,completed_at=now(),expires_at=now()+interval '24 hours' WHERE id=$1 AND lease_id=$2 AND generation=$3 AND state='preparing'", CancellationToken.None, id, lease, generation, reason) != 0)
             {
+                Platform.Api.Telemetry.PlatformTelemetry.ExportPreparationDuration.Record(Math.Max(0, (DateTime.UtcNow - created).TotalMilliseconds));
+                Platform.Api.Telemetry.PlatformTelemetry.ExportFailed.Add(1, new KeyValuePair<string, object?>("reason", reason)); logger.LogWarning("Export preparation failed {EventType} {ReasonCode}", "exports.failed", reason);
                 await Platform.Storage.IngestDb.ExecuteAsync(db, "UPDATE export_results SET outcome=jsonb_build_object('itemId',item_id,'status','failed','reason',$2::text,'filename',NULL,'byteLength',NULL,'sha256',NULL) WHERE request_id=$1 AND outcome->>'status'='pending'", CancellationToken.None, id, reason);
                 await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.preparation_failed", id, "failed", CancellationToken.None, reason);
             }

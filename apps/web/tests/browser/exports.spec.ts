@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { fixture, assetOne, image } from './fixtures';
+import { fixture, assetOne, image, detail } from './fixtures';
 
 async function exportsFixture(
   page: Page,
@@ -454,4 +454,67 @@ test('image history and explicit hidden lineage additions use the selected commi
     advancedHistory: true,
     editId: '30000000-0000-0000-0000-000000000001',
   });
+});
+
+test('gallery rejects mutable working selection and library history adds exact changed versions', async ({
+  page,
+}) => {
+  await exportsFixture(page);
+  await page.route('**/gallery/*?branch=*', (route) =>
+    new URL(route.request().url()).pathname.endsWith(assetOne)
+      ? route.fulfill({ json: detail(assetOne, 1) })
+      : route.fallback(),
+  );
+  const selections: unknown[] = [];
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      /\/exports\/baskets\/[^/]+\/items$/.test(new URL(request.url()).pathname)
+    )
+      selections.push(request.postDataJSON().selection);
+  });
+  await page.route('**/version-control/graph/**', (route) =>
+    route.fulfill({
+      json: [
+        {
+          commitId: '3'.repeat(64),
+          parents: [],
+          message: 'Selected library commit',
+          authoredAt: '2026-09-01T00:00:00Z',
+          hidden: false,
+          changes: [{ assetId: assetOne, path: 'photos/image-1.jpg' }],
+        },
+      ],
+    }),
+  );
+  await page.goto('/#id_token=fixture-token');
+  await page.getByLabel('Select image-1.jpg for export').check();
+  await page
+    .getByRole('button', { name: 'Add 1 selected images to basket' })
+    .click();
+  await expect(page.getByRole('alert')).toContainText(
+    'Commit or discard working changes before adding selected images.',
+  );
+  expect(selections).toHaveLength(0);
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page
+    .getByRole('button', {
+      name: 'Add changed image versions to basket',
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText(
+      'Added exact committed image versions to the default export basket.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(selections).toEqual([
+    {
+      assetId: assetOne,
+      editId: '30000000-0000-0000-0000-000000000001',
+      selectedVersion: '3'.repeat(64),
+      advancedHistory: false,
+    },
+  ]);
 });
