@@ -150,6 +150,16 @@ public static class ExportIntegration
         var ready = await preparation.GetAsync("owner", "library", request.Id, default);
         Check(ready.State == "completed" && ready.Outcomes.Count == basket.Items.Count && ready.Outcomes.All(o => o.Sha256 == sourceSha && o.Render is null), "All duplicate original outputs remain byte exact without rendering");
         var downloads = new ExportDownloadService(db, s3, configuration);
+        DefaultHttpContext BearerRequest(string token)
+        {
+            var c = new DefaultHttpContext(); c.Request.Scheme = "https"; c.Request.Host = new HostString("downloads.example.test");
+            c.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner"), new Claim("cognito:groups", "owner"), new Claim("exp", DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds().ToString())], "fixture"));
+            c.Request.Headers.Authorization = "Bearer " + token; c.Response.Body = new MemoryStream(); return c;
+        }
+        var revokedBeforeMint = BearerRequest("revoked-before-mint");
+        await downloads.RevokeAsync(revokedBeforeMint, "owner", default);
+        await RejectAsync(async () => await downloads.StreamAsync(revokedBeforeMint, "library", ready.Id, default));
+        await RejectAsync(async () => await downloads.MintAsync(revokedBeforeMint, "owner", "library", ready.Id, default));
         var context = new DefaultHttpContext(); context.Request.Scheme = "https"; context.Request.Host = new HostString("downloads.example.test");
         context.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner"), new Claim("cognito:groups", "owner"), new Claim("exp", DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds().ToString())], "fixture"));
         context.Request.Headers.Authorization = "Bearer fixture"; context.Response.Body = new MemoryStream();
@@ -164,13 +174,18 @@ public static class ExportIntegration
             await RejectAsync(async () => await downloads.StreamAsync(stopped, "library", ready.Id, default));
             Check(sink.Length > 0 && sink.Length < zipped.Length && sink.LargestWrite <= 81920, "Active transfer stops at expiry with bounded writes before remaining package bytes are sent");
             await using var connection = await db.OpenConnectionAsync(); await ExecuteAsync(connection, "UPDATE export_requests SET expires_at=now()+interval '24 hours' WHERE id=$1", default, ready.Id);
+            var revoking = BearerRequest("revoked-during-bearer-stream");
+            using var revocationSink = new ExpiringExportSink(async () => { await downloads.RevokeAsync(revoking, "owner", default); await Task.Delay(1100); });
+            revoking.Response.Body = revocationSink;
+            await RejectAsync(async () => await downloads.StreamAsync(revoking, "library", ready.Id, default));
+            Check(revocationSink.Length > 0 && revocationSink.Length < zipped.Length, "Pre-mint bearer stream stops after in-flight session revocation");
         }
         using (var zip = new ZipArchive(new MemoryStream(zipped)))
         {
             Check(zip.Entries.Count == basket.Items.Count + 2 && zip.GetEntry("manifest.json") is not null && zip.GetEntry("failures.json") is not null, "ZIP includes every requested output and mandatory evidence");
             foreach (var outcome in ready.Outcomes) { using var data = new MemoryStream(); await zip.GetEntry(outcome.Filename!)!.Open().CopyToAsync(data); Check(data.ToArray().SequenceEqual(originalBytes), "Unchanged original bytes verified inside ZIP"); }
         }
-        context = new DefaultHttpContext(); context.Request.Scheme = "https"; context.Request.Host = new HostString("downloads.example.test"); context.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner"), new Claim("cognito:groups", "owner")], "fixture")); context.Request.Headers.Range = "bytes=1-3"; context.Response.Body = new MemoryStream();
+        context = BearerRequest("range-fixture"); context.Request.Headers.Range = "bytes=1-3";
         await downloads.StreamAsync(context, "library", request.Id, default);
         Check(context.Response.StatusCode == 206 && ((MemoryStream)context.Response.Body).ToArray().SequenceEqual(zipped[1..4]), "Native range returns exact immutable bytes");
         var mint = new DefaultHttpContext(); mint.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner"), new Claim("cognito:groups", "owner"), new Claim("exp", DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds().ToString())], "fixture")); mint.Request.Headers.Authorization = "Bearer fixture-session";
@@ -192,6 +207,14 @@ public static class ExportIntegration
         var retained = new List<Guid>(); var acknowledgments = new List<double>();
         for (var number = 0; number < 9; number++) { var clock = System.Diagnostics.Stopwatch.StartNew(); retained.Add((await preparation.SubmitAsync("owner", "library", basket.Id, submit, "retained-" + number, default)).Id); acknowledgments.Add(clock.Elapsed.TotalMilliseconds); }
         Check((await preparation.ListAsync("owner", "library", default)).Count(r => r.BasketId == basket.Id) == 10, "Ten requests per basket retained");
+        await using (var connection = await db.OpenConnectionAsync())
+            await ExecuteAsync(connection, "INSERT INTO export_requests(id,owner_id,library_id,basket_id,idempotency_key,fingerprint,snapshot,state,created_at) SELECT h.id,r.owner_id,r.library_id,r.basket_id,'terminal-history-'||h.n,r.fingerprint,jsonb_set(jsonb_set(r.snapshot,'{requestId}',to_jsonb(h.id)),'{items}','[]'::jsonb),'cancelled',now()+h.n*interval '1 second' FROM export_requests r CROSS JOIN (SELECT gen_random_uuid() id,n FROM generate_series(1,201) n) h WHERE r.id=$1", default, request.Id);
+        var historyPage = await preparation.ListAsync("owner", "library", default);
+        Check(historyPage.Any(r => r.Id == ready.Id) && historyPage.Count(r => r.State == "cancelled") == 200, "New terminal history cannot evict retained requests from listing");
+        var historyCursor = historyPage.Last(r => r.State == "cancelled").Id;
+        var olderHistory = await preparation.ListAsync("owner", "library", default, historyCursor);
+        Check(olderHistory.Count == 1 && olderHistory[0].State == "cancelled" && !historyPage.Any(r => r.Id == olderHistory[0].Id), "Stable cursor exposes older terminal evidence without page overlap");
+        Check((await preparation.ListAsync("intruder", "library", default, historyCursor)).Count == 0, "Foreign request cursor reveals no owner history");
         await RejectAsync(async () => await preparation.SubmitAsync("owner", "library", basket.Id, submit, "retained-overflow", default));
         acknowledgments.Sort(); Console.WriteLine($"Export immutable submit p95={acknowledgments[^1]:F1}ms items={basket.Items.Count}; ten retained requests enforced.");
         Check(acknowledgments[^1] <= 3000, "Immutable snapshot acknowledgment timing budget");
@@ -231,7 +254,7 @@ public static class ExportIntegration
                 Check(await packages.PrepareAsync("owner", "library", faultRequest.Id, writer, 1, default), "Faulted item preparation reaches a complete mixed outcome");
                 var mixed = await preparation.GetAsync("owner", "library", faultRequest.Id, default);
                 Check(mixed.State == "partial" && mixed.Outcomes.Count(o => o.Status == "completed") == basket.Items.Count - 1 && mixed.Outcomes.Count(o => o.Reason == (fault == "corrupt" ? "integrity_error" : "storage_unavailable")) == 1, "Corrupt/missing exact input never appears as a successful output");
-                var mixedContext = new DefaultHttpContext(); mixedContext.Request.Scheme = "https"; mixedContext.Request.Host = new HostString("downloads.example.test"); mixedContext.User = context.User; mixedContext.Response.Body = new MemoryStream();
+                var mixedContext = BearerRequest("mixed-fixture");
                 await downloads.StreamAsync(mixedContext, "library", mixed.Id, default);
                 using var mixedZip = new ZipArchive(new MemoryStream(((MemoryStream)mixedContext.Response.Body).ToArray()));
                 Check(mixedZip.Entries.Count == basket.Items.Count + 1, "Mixed ZIP contains successful outputs plus full manifest and failures");

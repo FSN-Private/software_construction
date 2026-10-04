@@ -50,8 +50,9 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
     }
     public async Task RevokeAsync(HttpContext c, string owner, CancellationToken ct)
     {
+        var expiry = BearerExpiry(c);
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await LockOwnerAsync(db, owner, ct);
-        await ExecuteAsync(db, "UPDATE export_download_sessions SET revoked_at=now() WHERE owner_id=$1 AND session_hash=$2; UPDATE export_download_grants g SET revoked_at=now() FROM export_download_sessions s WHERE g.session_id=s.id AND s.owner_id=$1 AND s.revoked_at IS NOT NULL", ct, owner, SessionHash(c));
+        await ExecuteAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at,revoked_at) VALUES($3,$1,$2,$4,now()) ON CONFLICT(owner_id,session_hash) DO UPDATE SET revoked_at=now(); UPDATE export_download_grants g SET revoked_at=now() FROM export_download_sessions s WHERE g.session_id=s.id AND s.owner_id=$1 AND s.revoked_at IS NOT NULL", ct, owner, SessionHash(c), Guid.NewGuid(), expiry);
         await tx.CommitAsync(ct);
     }
     public async Task StreamAsync(HttpContext c, string library, Guid id, CancellationToken ct)
@@ -59,18 +60,20 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         Platform.Api.Telemetry.PlatformTelemetry.ExportDownloadAttempts.Add(1);
         RequireOrigin(c);
         await using var db = await source.OpenConnectionAsync(ct);
-        string owner; Guid? session = null;
+        string owner; Guid session; DateTimeOffset? bearerExpiry = null;
         await using (var tx = await db.BeginTransactionAsync(ct))
         {
             if (Platform.Contracts.OwnerAuthorization.TryGetOwner(c.User, out var bearerOwner))
             {
                 owner = bearerOwner;
-                if (await ScalarAsync(db, "SELECT 1 FROM export_download_sessions WHERE owner_id=$1 AND session_hash=$2 AND revoked_at IS NOT NULL", ct, owner, SessionHash(c)) is not null) throw new ExportProblem("download_denied", 403);
-                session = await ScalarAsync(db, "SELECT id FROM export_download_sessions WHERE owner_id=$1 AND session_hash=$2", ct, owner, SessionHash(c)) as Guid?;
+                bearerExpiry = BearerExpiry(c);
+                await LockOwnerAsync(db, owner, ct);
+                session = (Guid)(await ScalarAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,session_hash) DO UPDATE SET expires_at=GREATEST(export_download_sessions.expires_at,excluded.expires_at) RETURNING id", ct, Guid.NewGuid(), owner, SessionHash(c), bearerExpiry.Value))!;
             }
             else { var token = c.Request.Cookies[Cookie]; if (token is null || token.Length != 64) throw new ExportProblem("download_denied", 403); var grant = await LookupAsync(db, Hash(token), id, library, "cookie", ct); owner = grant.Owner; session = grant.Session; }
             c.Items["exports.audit_owner"] = owner;
             await ExportDatabase.LockAsync(db, owner, library, ct); await ReadyAsync(db, owner, library, id, ct);
+            await RequireSessionAsync(db, session, ct);
             await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.download_admitted", id, "accepted", ct); await tx.CommitAsync(ct);
         }
         string key; string version; string sha; long length;
@@ -94,7 +97,8 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
                 {
                     await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
                     await ReadyAsync(db, owner, library, id, ct);
-                    if (session.HasValue && await ScalarAsync(db, "SELECT 1 FROM export_download_sessions WHERE id=$1 AND revoked_at IS NULL", ct, session) is null) throw new ExportProblem("download_denied", 403);
+                    await RequireSessionAsync(db, session, ct);
+                    if (bearerExpiry <= DateTimeOffset.UtcNow) throw new ExportProblem("download_denied", 403);
                     await tx.CommitAsync(ct); checkedAt = DateTimeOffset.UtcNow;
                 }
                 var read = await bytes.ResponseStream.ReadAsync(buffer, ct); if (read == 0) break; sent += read;
@@ -112,6 +116,16 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         var trustedTransport = config["Exports:TransportSecret"] is { Length: >= 32 } secret && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(c.Request.Headers["X-Export-Transport"].ToString()));
         if ((!c.Request.IsHttps && !trustedTransport) || !string.Equals(c.Request.Host.Value, new Uri(Origin).Authority, StringComparison.OrdinalIgnoreCase)) throw new ExportProblem("download_denied", 403);
         c.Response.Headers.CacheControl = "private, no-store"; c.Response.Headers["Referrer-Policy"] = "no-referrer";
+    }
+    private static DateTimeOffset BearerExpiry(HttpContext c)
+    {
+        if (!long.TryParse(c.User.FindFirst("exp")?.Value, out var exp) || !c.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal)) throw new ExportProblem("unauthenticated", 401);
+        var expiry = DateTimeOffset.FromUnixTimeSeconds(exp);
+        return expiry > DateTimeOffset.UtcNow ? expiry : throw new ExportProblem("unauthenticated", 401);
+    }
+    private static async Task RequireSessionAsync(NpgsqlConnection db, Guid session, CancellationToken ct)
+    {
+        if (await ScalarAsync(db, "SELECT 1 FROM export_download_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>now()", ct, session) is null) throw new ExportProblem("download_denied", 403);
     }
     private static async Task ReadyAsync(NpgsqlConnection db, string owner, string library, Guid id, CancellationToken ct)
     {

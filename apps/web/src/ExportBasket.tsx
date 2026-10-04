@@ -13,6 +13,12 @@ export function ExportBasket({
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [selected, setSelected] = useState('');
   const [requests, setRequests] = useState<ExportRequest[]>([]);
+  const [olderRequests, setOlderRequests] = useState<ExportRequest[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string>();
+  const [hasOlder, setHasOlder] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const previousStates = useRef<Record<string, string>>({});
+  const historyLoaded = useRef(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [preset, setPreset] = useState('jpeg-2048-private-v1');
@@ -39,16 +45,76 @@ export function ExportBasket({
   );
   const basket =
     baskets.find((b) => b.id === selected) ?? baskets.find((b) => b.isDefault);
+  function acceptRequests(history: ExportRequest[]) {
+    const signature = (r: ExportRequest) =>
+      `${r.state}:${r.outcomes.map((o) => o.status).join(',')}`;
+    const changed = history.filter(
+      (r) =>
+        previousStates.current[r.id] &&
+        previousStates.current[r.id] !== signature(r),
+    );
+    if (changed.length)
+      setAnnouncement(
+        changed
+          .map(
+            (r) =>
+              exportText(
+                'Export {id}: {state}. {completed} completed, {failed} failed.',
+                {
+                  id: r.id.slice(0, 8),
+                  state: exportMessage(r.state),
+                  completed: r.outcomes.filter((o) => o.status === 'completed')
+                    .length,
+                  failed: r.outcomes.filter((o) =>
+                    ['failed', 'unavailable'].includes(o.status),
+                  ).length,
+                },
+              ) +
+              (['completed', 'partial'].includes(r.state)
+                ? ' ' + exportText('Download available.')
+                : ''),
+          )
+          .join(' '),
+      );
+    previousStates.current = Object.fromEntries(
+      history.map((r) => [r.id, signature(r)]),
+    );
+    setRequests(history);
+    const terminal = history.filter((r) =>
+      ['expired', 'cancelled', 'unavailable'].includes(r.state),
+    );
+    if (!historyLoaded.current) {
+      setHasOlder(terminal.length === 200);
+      setHistoryCursor(terminal.at(-1)?.id);
+    }
+  }
+  async function loadOlder() {
+    if (!historyCursor) return;
+    const history = await api<ExportRequest[]>(
+      `/requests?before=${encodeURIComponent(historyCursor)}`,
+    );
+    historyLoaded.current = true;
+    setOlderRequests((previous) => [
+      ...previous,
+      ...history.filter((r) => !previous.some((p) => p.id === r.id)),
+    ]);
+    setHistoryCursor(history.at(-1)?.id);
+    setHasOlder(history.length === 200);
+  }
   async function refresh() {
     const [saved, history] = await Promise.all([
       api<Basket[]>('/baskets'),
       api<ExportRequest[]>('/requests'),
     ]);
     setBaskets(saved);
-    setRequests(history);
+    acceptRequests(history);
   }
   useEffect(() => {
     let active = true;
+    historyLoaded.current = false;
+    previousStates.current = {};
+    setOlderRequests([]);
+    setAnnouncement('');
     const load = () => {
       void Promise.all([
         exportApi(baseUrl, token, library)<Basket[]>('/baskets'),
@@ -58,7 +124,7 @@ export function ExportBasket({
         .then(([b, r, configured]) => {
           if (active) {
             setBaskets(b);
-            setRequests(r);
+            acceptRequests(r);
             setLimits(configured);
           }
         })
@@ -441,7 +507,15 @@ export function ExportBasket({
         </>
       )}
       <h3>{exportText('Export requests')}</h3>
-      {requests.map((request) => (
+      <p role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </p>
+      {[
+        ...requests,
+        ...olderRequests.filter(
+          (r) => !requests.some((current) => current.id === r.id),
+        ),
+      ].map((request) => (
         <article key={request.id}>
           <h4>
             {exportText('Request ')}
@@ -545,6 +619,11 @@ export function ExportBasket({
           )}
         </article>
       ))}
+      {hasOlder && (
+        <button disabled={busy} onClick={() => void run(loadOlder)}>
+          {exportText('Load older export requests')}
+        </button>
+      )}
     </section>
   );
 }

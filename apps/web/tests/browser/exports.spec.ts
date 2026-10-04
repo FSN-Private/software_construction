@@ -243,7 +243,7 @@ test('large basket cost consent, configured capacity and cancellation guidance',
   ).toBeEnabled();
   await page.getByRole('button', { name: 'Cancel preparation' }).click();
   await expect(
-    page.getByText(/Cancelling; storage cleanup pending/),
+    page.locator('article').getByText(/Cancelling; storage cleanup pending/),
   ).toBeVisible();
 });
 
@@ -379,6 +379,111 @@ test('submission retry retains its key and sign-out waits for download revocatio
   await expect(
     page.getByRole('heading', { name: 'Export baskets', exact: true }),
   ).toBeVisible();
+});
+
+test('retained requests stay discoverable behind pageable history and polling announces results', async ({
+  page,
+}) => {
+  await exportsFixture(page, { pending: true });
+  const terminal = (id: string) => ({
+    id,
+    basketId: 'basket-1',
+    state: 'cancelled',
+    snapshot: { presetId: 'originals-v1', items: [] },
+    outcomes: [],
+    packageSha256: null,
+    expiresAtUtc: null,
+  });
+  let complete = false;
+  await page.route('**/exports/requests*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has('before'))
+      return route.fulfill({ json: [terminal('older-terminal')] });
+    return route.fulfill({
+      json: [
+        {
+          ...terminal('retained-request'),
+          state: complete ? 'completed' : 'pending',
+          outcomes: complete
+            ? [{ itemId: 'result', status: 'completed', reason: null }]
+            : [],
+        },
+        ...Array.from({ length: 200 }, (_, i) =>
+          terminal(`recent-terminal-${i}`),
+        ),
+      ],
+    });
+  });
+  await page.goto('/#id_token=fixture-token');
+  await page
+    .getByRole('button', { name: 'Export baskets', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', {
+      name: 'Request retained-request',
+      exact: true,
+    }),
+  ).toBeVisible();
+  const older = page.getByRole('button', {
+    name: 'Load older export requests',
+  });
+  await older.focus();
+  complete = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('exports-changed')));
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Download available.' }),
+  ).toContainText('1 completed, 0 failed');
+  await expect(older).toBeFocused();
+  await older.click();
+  await expect(
+    page.getByRole('heading', { name: 'Request older-terminal', exact: true }),
+  ).toBeVisible();
+  await expect(older).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event('exports-changed')));
+  await expect(
+    page.getByRole('heading', { name: 'Request older-terminal', exact: true }),
+  ).toBeVisible();
+});
+
+test('expired bearer signs out and clears drafts without an impossible authenticated revocation', async ({
+  page,
+}) => {
+  await exportsFixture(page);
+  const now = new Date('2026-10-04T12:00:00Z');
+  await page.clock.install({ time: now });
+  const token = `fixture.${Buffer.from(JSON.stringify({ exp: now.getTime() / 1000 - 10 })).toString('base64')}.signature`;
+  await page.route('**/v1/session', (route) =>
+    route.fulfill({ json: { operationId: 'expiry-signout' } }),
+  );
+  await page.route('**/v1/version', (route) =>
+    route.fulfill({ json: { releaseId: 'fixture' } }),
+  );
+  let revocations = 0;
+  await page.route('**/exports/session/revoke', (route) => {
+    revocations++;
+    return route.fulfill({ status: 401 });
+  });
+  await page.route('**/logout?**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<p>Signed out</p>' }),
+  );
+  await page.goto(`/#id_token=${token}`);
+  await page.clock.runFor(1500);
+  await expect(page.getByText(/Your session expired/)).toBeVisible();
+  await page.evaluate(() => {
+    sessionStorage.setItem('gallery.draft.expired', 'private draft');
+    window.addEventListener('gallery-sign-out', () =>
+      sessionStorage.setItem('signout-observed', 'yes'),
+    );
+  });
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(/\/logout\?/);
+  expect(revocations).toBe(0);
+  expect(
+    await page.evaluate(() => sessionStorage.getItem('gallery.draft.expired')),
+  ).toBeNull();
+  expect(
+    await page.evaluate(() => sessionStorage.getItem('signout-observed')),
+  ).toBe('yes');
 });
 
 test('clearing and deleting saved selections preserve immutable request evidence', async ({

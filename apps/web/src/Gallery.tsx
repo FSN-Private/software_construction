@@ -1269,7 +1269,9 @@ export function Gallery({
                               !historical
                             )
                               throw new Error(
-                                'Commit or discard working changes before adding this version.',
+                                exportText(
+                                  'Commit or discard working changes before adding this version.',
+                                ),
                               );
                             await addToDefaultBasket(baseUrl, token, library, {
                               assetId: detail.assetId,
@@ -1281,12 +1283,14 @@ export function Gallery({
                                 : detail.working.branch,
                             });
                             setEditStatus(
-                              'Added exact committed version to the default export basket.',
+                              exportText(
+                                'Added exact committed version to the default export basket.',
+                              ),
                             );
                           })
                         }
                       >
-                        Add selected committed version to basket
+                        {exportText('Add selected committed version to basket')}
                       </button>
                       <button
                         disabled={busy}
