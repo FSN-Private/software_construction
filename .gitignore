@@ -18,5 +18,7 @@ playwright-report/
 *.tfvars
 .cdk.staging/
 cdk.out/
+cdk.out-*/
+cdk.out-*/
 .dotnet-cli/
 .npm-cache/

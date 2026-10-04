@@ -33,6 +33,7 @@ jobs:
       - run: dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore
       - run: npm run lint
       - run: npm run test:backend
+      - run: npm run test:exports
       - name: Start isolated ingest dependencies
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
       - name: Run Feature 006 PostgreSQL and capacity checks
@@ -48,6 +49,8 @@ jobs:
           GALLERY_CAPACITY: '1'
           GALLERY_LIVE_BROWSER: '1'
         run: npm run test:ingest
+      - name: Run Feature 012 export database and private storage checks
+        run: npm run test:exports-integration
       - name: Stop isolated ingest dependencies
         if: always()
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 down
@@ -104,6 +107,8 @@ jobs:
           cache-dependency-path: packages/infrastructure/package-lock.json
       - run: npm --prefix packages/infrastructure ci --ignore-scripts
       - run: npm run validate:infrastructure
+      - run: npm --prefix packages/infrastructure run synth:exports
+      - run: npm --prefix packages/infrastructure run assert:exports
       - run: npm run test:release-evidence
       - run: npm run test:reliability
 

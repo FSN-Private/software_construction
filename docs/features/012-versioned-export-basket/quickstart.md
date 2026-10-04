@@ -1,6 +1,6 @@
 ﻿# Export validation guide
 
-Proposed checks; implementation must create runners/fixtures below. These have not passed today.
+Run checks from the repository root. Exact results and outstanding gates are recorded in [validation.md](validation.md); local fixture success does not certify deployed transport or the feature 011 publisher.
 
 1. npm run validate:toolchain; existing local PostgreSQL/S3 integration setup; approved darktable corpus; owner/operator/unauthorized fixtures.
 2. dotnet run --project tests/exports/Platform.Exports.Tests.csproj: filename/manifest/consent/state/lease/checksum invariants.
@@ -10,6 +10,12 @@ Proposed checks; implementation must create runners/fixtures below. These have n
 6. npm run validate, relevant backend/integration suites, web format/typecheck/build, infrastructure validation for infrastructure edits. Rehearse additive migration/old API rollback; scan logs for fixture private paths/GPS/contact/secrets.
 7. Extract downloaded ZIP and independently verify package hash and every output hash/length. Move refs/hide/rewrite and prove no substitutions. Cancel/expire/purge then retry grants/ranges: deny.
 8. Convergence, complete appended work, independent alternate-model review, record exact commands/results. No push/deployment authorization.
+
+Windows native corpus: `tests/exports/RenderCorpus.ps1 -Image sha256:<existing-local-renderer-image-id>` reproduces all eight reference pixel outputs and exercises real encoded JPEG metadata transforms. Artifacts remain under ignored `artifacts/`. Trusted Linux registry admission remains a separate required check.
+
+Opt-in transport contracts: `npm --prefix packages/infrastructure run synth:exports`, then `npm --prefix packages/infrastructure run assert:exports`. Both bootstrap and opt-in templates must pass; synthesis is read-only and does not deploy the fixed-cost ALB.
+
+If Windows Firefox hangs on checkbox focus with its accessibility service enabled, `BROWSER_TEST_DISABLE_FIREFOX_ACCESSIBILITY=1` permits a diagnostic automation run. Record this condition with the result. It does not satisfy supported screen-reader/manual accessibility acceptance.
 
 ## Review remediation checks
 
