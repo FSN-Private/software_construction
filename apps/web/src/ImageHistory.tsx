@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { addToDefaultBasket } from './export-api';
+import { exportText } from './export-messages';
+import { platformConfig } from './platform-config';
 import {
   Comparison,
   type ComparisonResult,
@@ -48,6 +51,7 @@ export function ImageHistory({
   const [compareSource, setCompareSource] = useState('');
   const [comparison, setComparison] = useState<ComparisonResult>();
   const [error, setError] = useState('');
+  const [exportStatus, setExportStatus] = useState('');
   const [refresh, setRefresh] = useState(0);
   const selectionRequest = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
@@ -133,6 +137,7 @@ export function ImageHistory({
       <p className="muted history-caption">
         Image states in library-wide commits.
       </p>
+      {exportStatus && <p role="status">{exportStatus}</p>}
       {error && (
         <p role="alert">
           {error}{' '}
@@ -185,6 +190,48 @@ export function ImageHistory({
                     {node.commit.parents.join(', ') || 'Original commit'}
                   </p>
                 </details>
+                <button
+                  hidden={!platformConfig()?.exportsEnabled}
+                  onClick={() => {
+                    void (async () => {
+                      const response = await fetch(
+                        `${baseUrl}/v1/libraries/${encodeURIComponent(library)}/lineage/images/${encodeURIComponent(asset)}/compare?target=${encodeURIComponent(node.commit.commitId)}&source=${encodeURIComponent(node.commit.commitId)}`,
+                        {
+                          headers: { Authorization: `Bearer ${token}` },
+                          cache: 'no-store',
+                        },
+                      );
+                      if (!response.ok)
+                        throw new Error(
+                          exportText(
+                            'Exact committed image state unavailable.',
+                          ),
+                        );
+                      const value = (await response.json()) as ComparisonResult;
+                      const exact = value.targetStates.find(
+                        (s) =>
+                          s.assetId === asset &&
+                          s.commitId === node.commit.commitId,
+                      );
+                      if (!exact?.editId)
+                        throw new Error(
+                          exportText('Exact committed edit unavailable.'),
+                        );
+                      await addToDefaultBasket(baseUrl, token, library, {
+                        assetId: asset,
+                        editId: exact.editId,
+                        selectedVersion: node.commit.commitId,
+                      });
+                      setExportStatus(
+                        exportText(
+                          'Added exact committed version to the default basket.',
+                        ),
+                      );
+                    })().catch((error) => setError(error.message));
+                  }}
+                >
+                  {exportText('Add this committed version to basket')}
+                </button>
                 {(node.commit.parents.length > 1 ||
                   node.hiddenParentIds.length > 0) && (
                   <small>

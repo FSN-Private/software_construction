@@ -125,6 +125,7 @@ export async function fixture(
     performance?: boolean;
     previewFailed?: boolean;
     preview?: boolean;
+    exports?: boolean;
   } = {},
 ) {
   let preference = { hideGeolocation: true, version: 1 };
@@ -152,7 +153,7 @@ export async function fixture(
   await page.route('**/platform-config.js', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `window.__PLATFORM_CONFIG__={apiBaseUrl:"${browserTestOrigin}",cognitoHostedUiUrl:"${browserTestOrigin}",cognitoClientId:"fixture",redirectUri:"${browserTestOrigin}",galleryLibraryId:"main",previewMode:${!!options.preview}};`,
+      body: `window.__PLATFORM_CONFIG__={apiBaseUrl:"${browserTestOrigin}",cognitoHostedUiUrl:"${browserTestOrigin}",cognitoClientId:"fixture",redirectUri:"${browserTestOrigin}",galleryLibraryId:"main",previewMode:${!!options.preview},exportsEnabled:${!!options.exports}};`,
     }),
   );
   await page.route('**/ready', (route) =>

@@ -1,5 +1,15 @@
 # Web validation
 
+## Versioned export baskets (feature 012)
+
+Set `exportsEnabled` only after the backend capability and its acceptance gates are ready. Gallery multi-selection and image/library history actions add exact committed versions to the default saved basket. Changing branch clears pending gallery selection; saved pins remain exact across browsing. Commit working edits before adding them. Hidden history requires an explicit advanced selection.
+
+Export baskets supports saved/default baskets, revision-safe edits, readiness, exact pinned previews and immutable preparation requests. Choose unchanged originals or a versioned JPEG metadata preset. Originals do not apply XMP; originals and retained metadata require disclosure consent. Large selections require a cost acknowledgment. Requests show per-item outcomes, checksums, expiry and cancellation/retry guidance. ZIP downloads use a native form exchange and browser streaming; only the small manifest uses a JavaScript Blob. Sign-out revokes native download sessions before ending the owner session.
+
+Export labels, reason messages, confirmations and named placeholders use the English fallback catalog in src/export-messages.ts; add locale catalogs there. Dates follow the browser locale. Submission retries retain the same immutable-request key until the input changes or an acknowledgment succeeds. Failed download-session revocation keeps the owner session open with visible retry guidance.
+
+Run `npm run test:browser -- exports.spec.ts`, gallery/history regressions, format, typecheck and build. On the affected Windows Firefox environment, `BROWSER_TEST_DISABLE_FIREFOX_ACCESSIBILITY=1` enables diagnostic automation; record this workaround and perform screen-reader acceptance separately. See [feature evidence](../../docs/features/012-versioned-export-basket/validation.md) and [operations](../../docs/operations/export-basket.md) for the unmerged feature 011 publisher and deployed native-download gates.
+
 After owner sign-in, the library screen accepts images and darktable XMP sidecars as individual files or a recursively selected folder. Folder imports preserve each relative path, so `a/photo.jpg` and `b/photo.jpg` remain distinct; duplicate destination paths stop before upload. The screen calculates SHA-256 locally, shows resumable per-item progress and corrective quarantine codes, and verifies downloaded bytes. Keep source files until a batch reports active. Reselect the same files or folder and batch ID to resume an interruption.
 
 Move/rename preserves identity and path history. Delete is recoverable for 90 days; the screen displays the locale-formatted deadline and accepts an alternate path when the original destination is occupied. A hold blocks deletion. An integrity-error record remains visible but cannot be downloaded or changed until the recovery runbook is completed.

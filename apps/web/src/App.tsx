@@ -4,6 +4,9 @@ import { Library } from './Library';
 import { Gallery } from './Gallery';
 import { BranchSwitcher } from './BranchSwitcher';
 import { LibraryHistory } from './LibraryHistory';
+import { ExportBasket } from './ExportBasket';
+import { exportApi } from './export-api';
+import { exportText } from './export-messages';
 import { Modal } from './Modal';
 import { reauthenticationReturnPath } from './recent-auth';
 import './workspace.css';
@@ -19,9 +22,16 @@ export function App() {
   const config = platformConfig();
   const [token, setToken] = useState(idToken);
   const [expired, setExpired] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
   const [view, setView] = useState('gallery');
   const scrollPositions = useRef<Record<string, number>>({});
   function openView(next: string) {
+    if (
+      next === 'exports' &&
+      next !== view &&
+      !window.dispatchEvent(new Event('gallery-guard', { cancelable: true }))
+    )
+      return;
     scrollPositions.current[view] = window.scrollY;
     setView(next);
   }
@@ -143,7 +153,23 @@ export function App() {
     }).toString();
     window.location.assign(authorize.toString());
   }
-  function signOut() {
+  async function signOut() {
+    if (config?.exportsEnabled && config.galleryLibraryId && token) {
+      try {
+        await exportApi(config.apiBaseUrl, token, config.galleryLibraryId)(
+          '/session/revoke',
+          'POST',
+          {},
+        );
+      } catch {
+        setSignOutError(
+          exportText(
+            'Download-session revocation failed. Try signing out again.',
+          ),
+        );
+        return;
+      }
+    }
     window.dispatchEvent(new Event('gallery-sign-out'));
     setToken(undefined);
     setExpired(false);
@@ -217,6 +243,14 @@ export function App() {
               >
                 History
               </button>
+              <button
+                className={view === 'exports' ? 'active' : ''}
+                hidden={!config.exportsEnabled}
+                aria-current={view === 'exports' ? 'page' : undefined}
+                onClick={() => openView('exports')}
+              >
+                {exportText('Export baskets')}
+              </button>
             </nav>
             <button
               className="branch-control"
@@ -248,6 +282,7 @@ export function App() {
           </>
         )}
       </header>
+      {signOutError && <p role="alert">{signOutError}</p>}
       {(!signedIn || expired) && (
         <section className="sign-in" aria-labelledby="sign-in-heading">
           <span className="eyebrow">YOUR PRIVATE PHOTO LIBRARY</span>
@@ -268,6 +303,15 @@ export function App() {
       )}
       {signedIn && (
         <div hidden={expired}>
+          {config.exportsEnabled &&
+            config.galleryLibraryId &&
+            view === 'exports' && (
+              <ExportBasket
+                baseUrl={config.apiBaseUrl}
+                token={token}
+                library={config.galleryLibraryId}
+              />
+            )}
           {config.galleryLibraryId && (
             <div hidden={view !== 'gallery'}>
               <Gallery

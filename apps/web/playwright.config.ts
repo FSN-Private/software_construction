@@ -19,7 +19,19 @@ export default defineConfig({
       name: 'Microsoft Edge',
       use: { browserName: 'chromium', channel: 'msedge' },
     },
-    { name: 'Firefox', use: { browserName: 'firefox' } },
+    {
+      name: 'Firefox',
+      use: {
+        browserName: 'firefox',
+        ...(process.env.BROWSER_TEST_DISABLE_FIREFOX_ACCESSIBILITY === '1'
+          ? {
+              launchOptions: {
+                firefoxUserPrefs: { 'accessibility.force_disabled': 1 },
+              },
+            }
+          : {}),
+      },
+    },
   ],
   webServer: process.env.BROWSER_TEST_EXTERNAL_SERVER
     ? undefined

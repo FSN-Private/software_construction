@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import { addToDefaultBasket } from './export-api';
+import { exportText } from './export-messages';
+import type { ImageVersion } from './Comparison';
+import { platformConfig } from './platform-config';
 
 type Commit = {
   commitId: string;
@@ -24,6 +28,7 @@ export function LibraryHistory({
 }) {
   const [commits, setCommits] = useState<Commit[]>();
   const [error, setError] = useState('');
+  const [exportStatus, setExportStatus] = useState('');
   const [offset, setOffset] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -74,6 +79,7 @@ export function LibraryHistory({
         />{' '}
         Show hidden library commits
       </label>
+      {exportStatus && <p role="status">{exportStatus}</p>}
       {error && (
         <p role="alert">
           {error}{' '}
@@ -99,6 +105,52 @@ export function LibraryHistory({
                 <p>Parents: {commit.parents.join(', ') || 'Original commit'}</p>
               </details>
               <div className="gallery-actions">
+                <button
+                  hidden={!platformConfig()?.exportsEnabled}
+                  onClick={() => {
+                    void (async () => {
+                      for (const assetId of new Set(
+                        commit.changes.map((c) => c.assetId),
+                      )) {
+                        const response = await fetch(
+                          `${baseUrl}/v1/libraries/${encodeURIComponent(library)}/lineage/images/${encodeURIComponent(assetId)}/compare?target=${encodeURIComponent(commit.commitId)}&source=${encodeURIComponent(commit.commitId)}`,
+                          {
+                            headers: { Authorization: `Bearer ${token}` },
+                            cache: 'no-store',
+                          },
+                        );
+                        if (!response.ok)
+                          throw new Error(
+                            exportText('Committed image states unavailable.'),
+                          );
+                        const data = (await response.json()) as {
+                          targetStates: ImageVersion[];
+                        };
+                        for (const state of data.targetStates.filter((s) =>
+                          commit.changes.some((c) => c.assetId === s.assetId),
+                        )) {
+                          if (state.editId)
+                            await addToDefaultBasket(baseUrl, token, library, {
+                              assetId: state.assetId,
+                              editId: state.editId,
+                              selectedVersion: commit.commitId,
+                              advancedHistory: showHidden && commit.hidden,
+                            });
+                        }
+                      }
+                      setExportStatus(
+                        exportText(
+                          'Added exact committed image versions to the default export basket.',
+                        ),
+                      );
+                    })().catch((error) => setError(error.message));
+                  }}
+                >
+                  {exportText('Add changed image versions to basket')}
+                  {commit.hidden
+                    ? exportText(' (advanced hidden history)')
+                    : ''}
+                </button>
                 {Array.from(
                   new Map(
                     commit.changes.map((change) => [change.assetId, change]),
