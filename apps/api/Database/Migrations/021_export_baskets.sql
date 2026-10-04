@@ -1,4 +1,5 @@
-﻿-- Feature 012 is additive. Pins/tombstones never acquire source retention holds.
+-- Feature 012 is additive. Pins/tombstones never acquire source retention holds.
+ALTER TABLE render_requests ADD COLUMN export_pin jsonb;
 CREATE TABLE export_baskets (
  id uuid PRIMARY KEY, owner_id text NOT NULL, library_id text NOT NULL, name text NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
  is_default boolean NOT NULL DEFAULT false, revision bigint NOT NULL DEFAULT 1 CHECK(revision>0), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
@@ -39,7 +40,7 @@ CREATE TABLE export_download_sessions (
 );
 CREATE TABLE export_download_grants (
  token_hash char(64) PRIMARY KEY, request_id uuid NOT NULL REFERENCES export_requests(id), session_id uuid NOT NULL REFERENCES export_download_sessions(id),
- kind text NOT NULL CHECK(kind IN ('bootstrap','cookie')), expires_at timestamptz NOT NULL, consumed_at timestamptz, revoked_at timestamptz
+ kind text NOT NULL CHECK(kind IN ('bootstrap','cookie')), expires_at timestamptz NOT NULL, bearer_expires_at timestamptz NOT NULL, consumed_at timestamptz, revoked_at timestamptz
 );
 CREATE TABLE export_operations (singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), paused boolean NOT NULL DEFAULT false, draining boolean NOT NULL DEFAULT false);
 INSERT INTO export_operations(singleton) VALUES(true);
@@ -50,3 +51,10 @@ BEGIN
  RETURN NEW;
 END; $$;
 CREATE TRIGGER export_snapshot_immutable BEFORE UPDATE ON export_requests FOR EACH ROW EXECUTE FUNCTION export_snapshot_immutable();
+CREATE FUNCTION export_tombstone_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'immutable_export_tombstone'; END IF;
+ IF (to_jsonb(NEW)-'acknowledged_at') IS DISTINCT FROM (to_jsonb(OLD)-'acknowledged_at') OR (OLD.acknowledged_at IS NOT NULL AND NEW.acknowledged_at IS DISTINCT FROM OLD.acknowledged_at) THEN RAISE EXCEPTION 'immutable_export_tombstone'; END IF;
+ RETURN NEW;
+END; $$;
+CREATE TRIGGER export_tombstone_immutable BEFORE UPDATE OR DELETE ON export_purge_tombstones FOR EACH ROW EXECUTE FUNCTION export_tombstone_immutable();

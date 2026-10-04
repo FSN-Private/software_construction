@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using Platform.Contracts.Rendering;
 namespace Platform.Contracts.Exports;
@@ -24,7 +24,8 @@ public sealed record ExportBasket(Guid Id, string Name, bool IsDefault, long Rev
 public sealed record ExportItemView(ExportPin Pin, string Availability, string PreviewState, string OutputName, string? Reason);
 public sealed record ExportSelection(Guid AssetId, Guid EditId, string SelectedVersion, bool AdvancedHistory = false);
 public sealed record ExportSubmit(string PresetId, long Revision, bool MetadataConfirmed = false, bool WarningAcknowledged = false);
-public sealed record ExportSnapshot(int SchemaVersion, Guid RequestId, string PresetId, bool MetadataConfirmed, DateTimeOffset CapturedAtUtc, IReadOnlyList<ExportPin> Items);
+public sealed record ExportRenderer(string Profile, string Release, string Digest, string Matrix);
+public sealed record ExportSnapshot(int SchemaVersion, Guid RequestId, string PresetId, bool MetadataConfirmed, DateTimeOffset CapturedAtUtc, IReadOnlyList<ExportPin> Items, ExportRenderer? Renderer = null, bool WarningAcknowledged = false);
 public sealed record ExportTransform(string Id, string InputSha256, string OutputSha256);
 public sealed record ExportOutcome(Guid ItemId, string Status, string? Reason, string? Filename, long? ByteLength, string? Sha256, RenderProvenance? Render = null, ExportTransform? Transform = null);
 public sealed record ExportManifest(int SchemaVersion, ExportSnapshot Snapshot, IReadOnlyList<ExportOutcome> Outcomes)
@@ -33,6 +34,7 @@ public sealed record ExportManifest(int SchemaVersion, ExportSnapshot Snapshot, 
     {
         if (SchemaVersion != 1 || Snapshot.SchemaVersion != 1 || Snapshot.Items.Count == 0 || Outcomes.Count != Snapshot.Items.Count || Outcomes.Select(o => o.ItemId).Distinct().Count() != Outcomes.Count) throw new ExportProblem("integrity_error");
         var preset = ExportPreset.Get(Snapshot.PresetId);
+        if (preset.ConfirmationRequired && !Snapshot.MetadataConfirmed) throw new ExportProblem("integrity_error");
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pin in Snapshot.Items)
         {
@@ -53,6 +55,7 @@ public sealed record ExportManifest(int SchemaVersion, ExportSnapshot Snapshot, 
             {
                 var render = item.Render ?? throw new ExportProblem("integrity_error"); render.Validate();
                 if (render.SourceSha256 != pin.Original.Sha256 || render.XmpSha256 != pin.Xmp.Sha256 || render.SelectedVersion != pin.CommitId || item.Transform?.Id != preset.Metadata || item.Transform.OutputSha256 != item.Sha256 || !ExportIntegrity.IsSha256(item.Transform.InputSha256)) throw new ExportProblem("integrity_error");
+                if (Snapshot.Renderer is not { } selected || render.Profile != selected.Profile || render.RendererRelease != selected.Release || render.RendererArtifactDigest != selected.Digest || render.CompatibilityMatrix != selected.Matrix) throw new ExportProblem("integrity_error");
             }
         }
     }
@@ -60,7 +63,7 @@ public sealed record ExportManifest(int SchemaVersion, ExportSnapshot Snapshot, 
 public sealed record ExportRequestView(Guid Id, Guid BasketId, string State, ExportSnapshot Snapshot, IReadOnlyList<ExportOutcome> Outcomes, DateTimeOffset CreatedAtUtc, DateTimeOffset? ExpiresAtUtc, string? PackageSha256, long? PackageByteLength, string? Reason);
 public sealed record ExportLimits(int Items = 250, int Baskets = 20, int Requests = 10, long PackageBytes = 10L * 1024 * 1024 * 1024, int PreparationSeconds = 7200, int RetentionHours = 24)
 {
-    public void Validate() { if (Items is < 1 or > 250 || Baskets < 20 || Requests < 10 || PackageBytes < 1 || PreparationSeconds is < 1 or > 7200 || RetentionHours != 24) throw new ExportProblem("invalid_export_configuration", 503); }
+    public void Validate() { if (Items is < 1 or > 250 || Baskets is < 20 or > 100 || Requests is < 10 or > 100 || PackageBytes is < 1 or > 10L * 1024 * 1024 * 1024 || PreparationSeconds is < 1 or > 7200 || RetentionHours != 24) throw new ExportProblem("invalid_export_configuration", 503); }
 }
 public static class ExportIntegrity
 {

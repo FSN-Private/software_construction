@@ -1,4 +1,4 @@
-﻿using Npgsql;
+using Npgsql;
 using Platform.Contracts.Exports;
 using Platform.Contracts.Rendering;
 using Platform.Api.Features.VersionControl.Query;
@@ -32,12 +32,24 @@ public sealed class ExportSelectionService(NpgsqlDataSource source)
     }
     public async Task<string?> AvailabilityAsync(NpgsqlConnection db, string owner, string library, ExportPin pin, bool originals, CancellationToken ct)
     {
-        var purged = await ScalarAsync(db, "SELECT 1 FROM export_purge_tombstones WHERE owner_id=$1 AND library_id=$2 AND asset_id=$3 AND ((category='original' AND content_sha256=$4) OR (NOT $7 AND category='xmp' AND edit_id=$5 AND content_sha256=$6)) LIMIT 1", ct, owner, library, pin.AssetId, pin.Original.Sha256, pin.EditId, pin.Xmp.Sha256, originals);
-        if (purged is not null) return "permanently_unavailable";
-        var retained = await ScalarAsync(db, "SELECT 1 FROM assets a JOIN edit_identities e ON e.asset_id=a.id WHERE a.id=$1 AND e.id=$2 AND a.owner_id=$3 AND (a.state IN ('active','restored') OR a.state='recoverable-deleted' AND a.deleted_until>now() OR EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND (h.expires_at IS NULL OR h.expires_at>now()))) AND ($4 OR EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND h.source_reference=$5 AND (h.expires_at IS NULL OR h.expires_at>now())))", ct, pin.AssetId, pin.EditId, owner, originals, "vc:" + pin.CommitId);
-        if (retained is null) return originals ? "source_unavailable" : "selected_version_unavailable";
-        if (!await ContentMatchesAsync(db, pin.Original, ct)) return "source_unavailable";
-        return !originals && !await ContentMatchesAsync(db, pin.Xmp, ct) ? "selected_version_unavailable" : null;
+        return (await AvailabilityBatchAsync(db, owner, library, [pin], originals, ct))[pin.ItemId];
+    }
+    public static async Task<IReadOnlyDictionary<Guid, string?>> AvailabilityBatchAsync(NpgsqlConnection db, string owner, string library, IReadOnlyList<ExportPin> pins, bool originals, CancellationToken ct)
+    {
+        await using var cmd = Command(db, """
+            WITH pins AS (SELECT p, (p->>'assetId')::uuid asset, (p->>'editId')::uuid edit FROM jsonb_array_elements($3::jsonb) p)
+            SELECT (p->>'itemId')::uuid,
+            CASE
+              WHEN EXISTS(SELECT 1 FROM export_purge_tombstones t WHERE t.owner_id=$1 AND t.library_id=$2 AND t.asset_id=asset AND ((t.category='original' AND t.content_sha256=p->'original'->>'sha256') OR (NOT $4 AND t.category='xmp' AND t.edit_id=edit AND t.content_sha256=p->'xmp'->>'sha256'))) THEN 'permanently_unavailable'
+              WHEN NOT EXISTS(SELECT 1 FROM assets a JOIN edit_identities e ON e.asset_id=a.id WHERE a.id=asset AND e.id=edit AND a.owner_id=$1 AND (a.state IN ('active','restored') OR a.state='recoverable-deleted' AND a.deleted_until>now() OR EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND (h.expires_at IS NULL OR h.expires_at>now()))) AND ($4 OR EXISTS(SELECT 1 FROM lifecycle_holds h WHERE h.asset_id=a.id AND h.source_reference='vc:'||(p->>'commitId') AND (h.expires_at IS NULL OR h.expires_at>now())))) THEN CASE WHEN $4 THEN 'source_unavailable' ELSE 'selected_version_unavailable' END
+              WHEN NOT EXISTS(SELECT 1 FROM content_objects c WHERE c.sha256=p->'original'->>'sha256' AND c.storage_key=p->'original'->>'key' AND c.storage_version=p->'original'->>'version' AND c.byte_length=(p->'original'->>'byteLength')::bigint AND c.integrity_state='authoritative') THEN 'source_unavailable'
+              WHEN NOT $4 AND NOT EXISTS(SELECT 1 FROM content_objects c WHERE c.sha256=p->'xmp'->>'sha256' AND c.storage_key=p->'xmp'->>'key' AND c.storage_version=p->'xmp'->>'version' AND c.byte_length=(p->'xmp'->>'byteLength')::bigint AND c.integrity_state='authoritative') THEN 'selected_version_unavailable'
+              ELSE NULL END
+            FROM pins
+            """, owner, library, ExportDatabase.Encode(pins), originals);
+        await using var reader = await cmd.ExecuteReaderAsync(ct); var result = new Dictionary<Guid, string?>();
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+        return result;
     }
     public async Task<string?> AvailabilityAsync(string owner, string library, ExportPin pin, bool originals, CancellationToken ct)
     {
@@ -51,5 +63,4 @@ public sealed class ExportSelectionService(NpgsqlDataSource source)
         await using var r = await cmd.ExecuteReaderAsync(ct); if (!await r.ReadAsync(ct)) throw new ExportProblem("source_unavailable", 404);
         return new(r.GetString(0), r.GetString(1), sha, r.GetInt64(2));
     }
-    private static async Task<bool> ContentMatchesAsync(NpgsqlConnection db, RenderInputObject value, CancellationToken ct) => await ScalarAsync(db, "SELECT 1 FROM content_objects WHERE sha256=$1 AND storage_key=$2 AND storage_version=$3 AND byte_length=$4 AND integrity_state='authoritative'", ct, value.Sha256, value.Key, value.Version, value.ByteLength) is not null;
 }

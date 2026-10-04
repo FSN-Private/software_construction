@@ -1,4 +1,4 @@
-﻿namespace Platform.Contracts.Exports;
+namespace Platform.Contracts.Exports;
 public static class JpegMetadata
 {
     public static byte[] Transform(ReadOnlySpan<byte> input, bool retain)

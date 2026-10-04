@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Platform.Contracts;
 using Platform.Contracts.Exports;
 namespace Platform.Api.Features.Exports;
@@ -11,16 +11,56 @@ public static class ExportEndpoints
     {
         var group = app.MapGroup("/v1/libraries/{library}/exports").RequireAuthorization().AddEndpointFilter<ExportGuard>();
         group.MapGet("/presets", () => Results.Ok(ExportPreset.Catalog));
-        group.MapGet("/baskets", async (string library, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.ListAsync(Owner(c), library, ct)));
-        group.MapPost("/baskets", async (string library, BasketInput input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.CreateAsync(Owner(c), library, input.Name, ct)));
-        group.MapGet("/baskets/{id:guid}", async (string library, Guid id, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.GetAsync(Owner(c), library, id, ct)));
-        group.MapPatch("/baskets/{id:guid}", async (string library, Guid id, BasketUpdate input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.MutateAsync(Owner(c), library, id, input.Revision, "rename", input.Name, input.IsDefault, null, null, ct)));
-        group.MapDelete("/baskets/{id:guid}", async (string library, Guid id, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.MutateAsync(Owner(c), library, id, revision, "delete", null, false, null, null, ct)));
-        group.MapPost("/baskets/{id:guid}/items", async (string library, Guid id, ItemInput input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.MutateAsync(Owner(c), library, id, input.Revision, "add", null, false, input.Selection, null, ct)));
-        group.MapDelete("/baskets/{id:guid}/items", async (string library, Guid id, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.MutateAsync(Owner(c), library, id, revision, "clear", null, false, null, null, ct)));
-        group.MapDelete("/baskets/{id:guid}/items/{item:guid}", async (string library, Guid id, Guid item, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(await service.MutateAsync(Owner(c), library, id, revision, "remove", null, false, null, item, ct)));
+        group.MapGet("/baskets", async (string library, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok((await service.ListAsync(Owner(c), library, ct)).Select(ExportPublic.Basket)));
+        group.MapPost("/baskets", async (string library, BasketInput input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.CreateAsync(Owner(c), library, input.Name, ct))));
+        group.MapGet("/baskets/{id:guid}", async (string library, Guid id, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.GetAsync(Owner(c), library, id, ct))));
+        group.MapPatch("/baskets/{id:guid}", async (string library, Guid id, BasketUpdate input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.MutateAsync(Owner(c), library, id, input.Revision, "rename", input.Name, input.IsDefault, null, null, ct))));
+        group.MapDelete("/baskets/{id:guid}", async (string library, Guid id, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.MutateAsync(Owner(c), library, id, revision, "delete", null, false, null, null, ct))));
+        group.MapPost("/baskets/{id:guid}/items", async (string library, Guid id, ItemInput input, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.MutateAsync(Owner(c), library, id, input.Revision, "add", null, false, input.Selection, null, ct))));
+        group.MapDelete("/baskets/{id:guid}/items", async (string library, Guid id, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.MutateAsync(Owner(c), library, id, revision, "clear", null, false, null, null, ct))));
+        group.MapDelete("/baskets/{id:guid}/items/{item:guid}", async (string library, Guid id, Guid item, long revision, HttpContext c, [FromServices] ExportBasketService service, CancellationToken ct) => Results.Ok(ExportPublic.Basket(await service.MutateAsync(Owner(c), library, id, revision, "remove", null, false, null, item, ct))));
+        group.MapPost("/baskets/{id:guid}/requests", async (string library, Guid id, ExportSubmit input, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => Results.Accepted(value: ExportPublic.Request(await service.SubmitAsync(Owner(c), library, id, input, c.Request.Headers["Idempotency-Key"].ToString(), ct))));
+        group.MapGet("/requests", async (string library, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => Results.Ok((await service.ListAsync(Owner(c), library, ct)).Select(ExportPublic.Request)));
+        group.MapGet("/requests/{id:guid}", async (string library, Guid id, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => Results.Ok(ExportPublic.Request(await service.GetAsync(Owner(c), library, id, ct))));
+        group.MapPost("/requests/{id:guid}/cancel", async (string library, Guid id, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => Results.Ok(ExportPublic.Request(await service.CancelAsync(Owner(c), library, id, ct))));
+        group.MapPost("/baskets/{id:guid}/items/{item:guid}/preview", async (string library, Guid id, Guid item, HttpContext c, [FromServices] ExportBasketService baskets, [FromServices] Platform.Api.Features.Rendering.RenderingService rendering, [FromServices] Npgsql.NpgsqlDataSource source, CancellationToken ct) =>
+        {
+            var owner = Owner(c); var basket = await baskets.GetAsync(owner, library, id, ct);
+            var pin = basket.Items.SingleOrDefault(i => i.Pin.ItemId == item)?.Pin ?? throw new ExportProblem("export_not_found", 404);
+            await using var db = await source.OpenConnectionAsync(ct); var compatibility = await rendering.ExportCompatibilityAsync(db, ct);
+            var result = await rendering.RequestPinnedAsync(owner, library, pin, compatibility, ct);
+            await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
+            var available = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, [pin], false, ct);
+            if (available[pin.ItemId] is { } unavailable) throw new ExportProblem(unavailable);
+            c.Items["platform.idempotency.reissue"] = true;
+            var locator = result.State == Platform.Contracts.Rendering.RenderState.Completed ? (await rendering.LocateAsync(owner, library, result.RequestId, ct)).Locator : null;
+            await tx.CommitAsync(ct);
+            return Results.Ok(new { state = result.State.ToString().ToLowerInvariant(), result.RequestId, result.Provenance, locator });
+        });
+        group.MapPost("/requests/{id:guid}/download-grants", async (string library, Guid id, HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => Results.Ok(await service.MintAsync(c, Owner(c), library, id, ct)));
+        group.MapPost("/session/revoke", async (HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => { await service.RevokeAsync(c, Owner(c), ct); return Results.NoContent(); });
+        group.MapGet("/requests/{id:guid}/manifest", async (string library, Guid id, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => { var request = await service.GetAsync(Owner(c), library, id, ct); if (request.Outcomes.Any(o => o.Status == "pending")) throw new ExportProblem("export_not_ready"); return Results.Ok(ExportPublic.Manifest(new(1, request.Snapshot, request.Outcomes))); });
+        app.MapPost("/v1/libraries/{library}/exports/requests/{id:guid}/download-session", async (string library, Guid id, HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => await service.ExchangeAsync(c, library, id, ct)).WithMetadata(new ExportNativeExchange()).AddEndpointFilter<ExportDownloadGuard>();
+        app.MapMethods("/v1/libraries/{library}/exports/requests/{id:guid}/download", ["GET", "HEAD"], async (string library, Guid id, HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => await service.StreamAsync(c, library, id, ct)).AddEndpointFilter<ExportDownloadGuard>();
+        app.MapGet("/v1/exports/operations", async (HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.GetAsync(c.User, ct))).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
+        app.MapPost("/v1/exports/operations/{action}", async (string action, HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.SetAsync(c.User, action, ct))).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
     }
     public static string Owner(HttpContext c) => OwnerAuthorization.TryGetOwner(c.User, out var owner) ? owner : throw new ExportProblem("unauthenticated", 401);
+}
+public sealed record ExportNativeExchange;
+public sealed class ExportDownloadGuard : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+    {
+        try { return await next(invocation); }
+        catch (ExportProblem error) when (!invocation.HttpContext.Response.HasStarted)
+        {
+            var c = invocation.HttpContext;
+            var owner = c.Items["exports.audit_owner"]?.ToString() ?? (OwnerAuthorization.TryGetOwner(c.User, out var bearerOwner) ? bearerOwner : "anonymous");
+            if (c.RequestServices.GetService<IAuditWriter>() is { } audit) await audit.WriteAsync(AuditEvent.Create(owner, ExportDatabase.OperationId, "exports.download_denied", "denied", error.Code), c.RequestAborted);
+            return RequestContracts.Problem(c, error.Status, error.Code, "Download unavailable");
+        }
+    }
 }
 public sealed class ExportGuard(IConfiguration config, ILogger<ExportGuard> logger) : IEndpointFilter
 {
@@ -30,15 +70,15 @@ public sealed class ExportGuard(IConfiguration config, ILogger<ExportGuard> logg
         try
         {
             _ = ExportEndpoints.Owner(c);
-            if (!config.GetValue<bool>("Exports:Enabled")) throw new ExportProblem("exports_disabled", 503);
+            if (!config.GetValue<bool>("Exports:Enabled") && !c.Request.Path.Value!.EndsWith("/exports/session/revoke", StringComparison.Ordinal)) throw new ExportProblem("exports_disabled", 503);
             return await next(invocation);
         }
-        catch (Exception error) when (error is ExportProblem or Platform.Contracts.VersionControl.VersionControlProblem)
+        catch (Exception error) when (error is ExportProblem or Platform.Contracts.VersionControl.VersionControlProblem or Platform.Api.Features.Rendering.RenderingProblem)
         {
-            var code = error is ExportProblem export ? export.Code : "selected_version_unavailable";
-            var status = error is ExportProblem problem ? problem.Status : 404;
+            var code = error is ExportProblem export ? export.Code : error is Platform.Api.Features.Rendering.RenderingProblem render ? render.Code : "selected_version_unavailable";
+            var status = error is ExportProblem problem ? problem.Status : error is Platform.Api.Features.Rendering.RenderingProblem renderingProblem ? renderingProblem.Status : 404;
             if (OwnerAuthorization.TryGetOwner(c.User, out var owner) && c.RequestServices.GetService<IAuditWriter>() is { } audit)
-                await audit.WriteAsync(AuditEvent.Create(owner, c.Items["platform.operation_id"]?.ToString() ?? "op_export", "exports.access_denied", "denied", code), c.RequestAborted);
+                await audit.WriteAsync(AuditEvent.Create(owner, c.Items["platform.operation_id"]?.ToString() ?? ExportDatabase.OperationId, "exports.access_denied", "denied", code), c.RequestAborted);
             else logger.LogWarning("Export operation denied {ReasonCode}", code);
             return RequestContracts.Problem(c, status, code, "Export request unavailable");
         }

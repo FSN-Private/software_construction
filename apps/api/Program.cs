@@ -79,6 +79,12 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportSelectionService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportBasketService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportInvalidationService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportPreparationService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportPackageService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportDownloadService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportCleanupService>();
+    builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportOperationsService>();
+    builder.Services.AddHostedService<Platform.Api.Features.Exports.ExportPreparationWorker>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());

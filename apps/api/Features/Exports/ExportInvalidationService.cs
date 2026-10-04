@@ -1,12 +1,13 @@
-﻿using Npgsql;
+using Npgsql;
 using Platform.Contracts.Exports;
 using static Platform.Storage.IngestDb;
 namespace Platform.Api.Features.Exports;
 /// <summary>Trusted in-process feature 011 adapter only. No HTTP publisher is exposed.</summary>
 public sealed class ExportInvalidationService(NpgsqlDataSource source)
 {
-    public async Task ApplyAsync(NpgsqlConnection db, ExportPurgeEvent value, CancellationToken ct)
+    public async Task ApplyAsync(NpgsqlTransaction transaction, ExportPurgeEvent value, CancellationToken ct)
     {
+        var db = transaction.Connection ?? throw new ExportProblem("purge_transaction_required");
         value.Validate(); await ExportDatabase.LockAsync(db, value.OwnerId, value.LibraryId, ct);
         await using (var check = Command(db, "SELECT owner_id,library_id,asset_id,edit_id,category,content_sha256,generation,evidence_id FROM export_purge_tombstones WHERE event_id=$1", value.EventId))
         await using (var r = await check.ExecuteReaderAsync(ct))
@@ -28,7 +29,7 @@ public sealed class ExportInvalidationService(NpgsqlDataSource source)
         foreach (var request in requests)
         {
             await ExecuteAsync(db, "UPDATE export_requests SET state='unavailable',reason='permanently_unavailable',generation=generation+1 WHERE id=$1; UPDATE export_download_grants SET revoked_at=now() WHERE request_id=$1", ct, request);
-            await AuditAsync(db, value.OwnerId, "op_export", "exports.permanently_unavailable", request, "accepted", ct);
+            await AuditAsync(db, value.OwnerId, ExportDatabase.OperationId, "exports.permanently_unavailable", request, "accepted", ct);
         }
     }
     public async Task<Guid> AdmitWriteAsync(string owner, string library, Guid request, long generation, Guid writer, CancellationToken ct)
@@ -58,5 +59,12 @@ public sealed class ExportInvalidationService(NpgsqlDataSource source)
             while (await r.ReadAsync(ct)) { var snapshot = ExportDatabase.Decode<ExportSnapshot>(r.GetString(0)); if (snapshot.Items.Any(pin => value.Affects(pin, snapshot.PresetId)) && !r.IsDBNull(1) && r.GetString(1) != "cleaned") pending = true; }
         }
         return !pending;
+    }
+    public async Task<bool> AcknowledgeAsync(NpgsqlTransaction transaction, string owner, string library, Guid eventId, CancellationToken ct)
+    {
+        var db = transaction.Connection ?? throw new ExportProblem("purge_transaction_required");
+        if (!await CanAcknowledgeAsync(db, owner, library, eventId, ct)) return false;
+        await ExecuteAsync(db, "UPDATE export_purge_tombstones SET acknowledged_at=COALESCE(acknowledged_at,now()) WHERE event_id=$1 AND owner_id=$2 AND library_id=$3", ct, eventId, owner, library);
+        return true;
     }
 }

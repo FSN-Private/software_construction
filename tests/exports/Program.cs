@@ -1,5 +1,6 @@
-﻿using Platform.Contracts.Exports;
+using Platform.Contracts.Exports;
 using Platform.Contracts.Rendering;
+using Platform.Api.Features.Exports;
 var sha = new string('a', 64);
 var pin = new ExportPin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new string('b', 64), new RenderInputObject("originals/a", "v1", sha, 4), new RenderInputObject("xmp/a", "v1", new string('c', 64), 4), "CON. RAW", "historical", "main", false, DateTimeOffset.UnixEpoch);
 pin.Validate(); var original = ExportPreset.Get("originals-v1");
@@ -18,6 +19,10 @@ var purge = new ExportPurgeEvent(Guid.NewGuid(), "owner", "library", pin.AssetId
 Check(!purge.Affects(pin, original.Id) && purge.Affects(pin, "jpeg-2048-private-v1"), "XMP purge does not invalidate originals");
 Check(!purge.Affects(pin with { AssetId = Guid.NewGuid() }, "jpeg-2048-private-v1"), "Other assets remain independent");
 Console.WriteLine("Export contract checks passed.");
+Check(ExportRange.Parse("bytes=1-3", "", "\"hash\"", 10) == (1, 3, true), "Explicit range bounds");
+Check(ExportRange.Parse("bytes=-3", "", "\"hash\"", 10) == (7, 9, true), "Suffix ranges");
+Check(ExportRange.Parse("bytes=8-", "old", "\"hash\"", 10) == (0, 9, false), "If-Range mismatch returns full immutable representation");
+Reject(() => ExportRange.Parse("bytes=10-", "", "\"hash\"", 10)); Reject(() => ExportRange.Parse("bytes=0-1,3-4", "", "\"hash\"", 10));
 if (Environment.GetEnvironmentVariable("EXPORT_INTEGRATION") == "1") await ExportIntegration.RunAsync();
 static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 static void Reject(Action action) { try { action(); } catch (ExportProblem) { return; } throw new InvalidOperationException("Expected safe rejection"); }
