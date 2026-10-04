@@ -3,7 +3,7 @@
 **Branch**: feature/012-versioned-export-basket | **Date**: 2026-10-03 | **Spec**: [spec.md](spec.md)
 **Status**: Approved by maintainer in chat on 2026-10-04; implementation in progress. Feature 011 end-to-end purge evidence is an explicit completion dependency.
 **Base**: fetched origin/master at 2680c6a; initial divergence 0 behind / 0 ahead.
-**Execution source**: [tasks.md](tasks.md). No push, merge or deployment authorized.
+**Execution source**: [tasks.md](tasks.md). Maintainer now authorizes pushing the disabled implementation checkpoint, opening its PR, following CI and rebase-merging if checks and independent review pass. Deployment, production enablement and full feature acceptance remain gated; feature 011 integration will follow separately.
 
 ## Summary
 
