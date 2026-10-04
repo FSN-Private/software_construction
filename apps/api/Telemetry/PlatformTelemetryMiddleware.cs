@@ -12,6 +12,7 @@ public sealed class PlatformTelemetryMiddleware(
         var operationId = operationIds.Resolve(context.Request.Headers[PlatformTelemetry.OperationIdHeader].FirstOrDefault());
         context.Response.Headers[PlatformTelemetry.OperationIdHeader] = operationId;
         context.Items[PlatformTelemetry.OperationIdItemKey] = operationId;
+        Platform.Api.Features.Exports.ExportDatabase.Operation.Value = operationId;
 
         using var activity = PlatformTelemetry.ActivitySource.StartActivity("http.request", ActivityKind.Server);
         activity?.SetTag("platform.operation_id", operationId);

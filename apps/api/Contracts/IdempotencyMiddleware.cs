@@ -8,6 +8,7 @@ public sealed class IdempotencyMiddleware(RequestDelegate next, IdempotencyStore
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        if (context.GetEndpoint()?.Metadata.GetMetadata<Platform.Api.Features.Exports.ExportNativeExchange>() is not null) { await next(context); return; }
         if (!HttpMethods.IsPost(context.Request.Method) && !HttpMethods.IsPut(context.Request.Method) && !HttpMethods.IsPatch(context.Request.Method) && !HttpMethods.IsDelete(context.Request.Method)) { await next(context); return; }
         if (!RequestContracts.HasIdempotencyKey(context)) { await RequestContracts.Problem(context, StatusCodes.Status400BadRequest, "idempotency_key_required", "Idempotency key required").ExecuteAsync(context); return; }
         if (!OwnerAuthorization.TryGetOwner(context.User, out var ownerId)) { await next(context); return; }

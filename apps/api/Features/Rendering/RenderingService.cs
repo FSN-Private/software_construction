@@ -1,5 +1,7 @@
 using Npgsql;
 using Platform.Contracts.Rendering;
+using Platform.Contracts.Exports;
+using Platform.Api.Features.Exports;
 using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.Rendering;
@@ -16,6 +18,36 @@ public sealed class RenderingProblem(string code, int status = 409) : Exception(
 
 public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersionResolver versions, IConfiguration configuration, IRenderQueueDispatcher? queue = null, IPrivateDerivativeLocator? locator = null, RenderOperationsService? operations = null)
 {
+    public async Task<ExportRenderer> ExportCompatibilityAsync(NpgsqlConnection db, CancellationToken ct)
+    {
+        var profile = configuration["Rendering:RenderProfile"] ?? "render-v1";
+        var compatible = await CompatibilityAsync(db, profile, false, ct) ?? throw new ExportProblem("incompatible_renderer");
+        return new(profile, compatible.Release, compatible.Digest, compatible.Matrix);
+    }
+    public async Task<RenditionStatusView> RequestPinnedAsync(string owner, string library, ExportPin pin, ExportRenderer expected, CancellationToken ct)
+    {
+        pin.Validate();
+        if (operations is not null && await operations.IsPausedAsync(ct)) throw new RenderingProblem("rendering_paused");
+        await using var db = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await db.BeginTransactionAsync(ct);
+        await ExportDatabase.LockAsync(db, owner, library, ct);
+        var reason = await new ExportSelectionService(dataSource).AvailabilityAsync(db, owner, library, pin, false, ct);
+        if (reason is not null) throw new ExportProblem(reason);
+        var profile = configuration["Rendering:RenderProfile"] ?? "render-v1";
+        var compatibility = await CompatibilityAsync(db, profile, false, ct) ?? throw new RenderingProblem("incompatible_renderer");
+        if (expected != new ExportRenderer(profile, compatibility.Release, compatibility.Digest, compatibility.Matrix)) throw new RenderingProblem("incompatible_renderer");
+        var request = new RenditionRequest(owner, library, pin.AssetId, pin.EditId, pin.CommitId, RenditionKind.Preview2048, profile, compatibility.Release, compatibility.Digest, compatibility.Matrix, pin.Original.Sha256, pin.Xmp.Sha256);
+        var id = Guid.NewGuid();
+        var created = await ScalarAsync(db, "INSERT INTO render_requests(id,owner_id,library_id,request_key,asset_id,edit_id,selected_version,rendition,profile,renderer_release,renderer_artifact_digest,matrix_version,source_sha256,xmp_sha256,state,export_pin) VALUES($1,$2,$3,$4,$5,$6,$7,'preview-2048',$8,$9,$10,$11,$12,$13,'pending',$14::jsonb) ON CONFLICT(owner_id,library_id,request_key) DO NOTHING RETURNING id", ct, id, owner, library, request.Key, pin.AssetId, pin.EditId, pin.CommitId, profile, compatibility.Release, compatibility.Digest, compatibility.Matrix, pin.Original.Sha256, pin.Xmp.Sha256, ExportDatabase.Encode(pin)) as Guid?;
+        id = created ?? (Guid)(await ScalarAsync(db, "SELECT id FROM render_requests WHERE owner_id=$1 AND library_id=$2 AND request_key=$3", ct, owner, library, request.Key))!;
+        await ExecuteAsync(db, "UPDATE render_requests SET export_pin=$2::jsonb WHERE id=$1 AND export_pin IS NULL", ct, id, ExportDatabase.Encode(pin));
+        if (created.HasValue)
+            await ExecuteAsync(db, "INSERT INTO render_attempts(id,request_id,attempt_number,state,worker_policy_version) VALUES($1,$2,1,'pending','render-policy-v1'); INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($3,$4,$5,$2,$1,'requested')", ct, Guid.NewGuid(), id, Guid.NewGuid(), owner, library);
+        var result = await StatusAsync(db, owner, library, id, !created.HasValue, ct);
+        await transaction.CommitAsync(ct);
+        if (created.HasValue && queue is not null) await queue.EnqueueAsync(Message(id, result.AttemptId!.Value, request, pin.Original, pin.Xmp), ct);
+        return result;
+    }
     public async Task<RenditionStatusView> RequestAsync(string owner, RenditionRequestInput input, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(input.LibraryId) || input.AssetId == Guid.Empty || input.EditId == Guid.Empty || string.IsNullOrWhiteSpace(input.SelectedVersion) || string.IsNullOrWhiteSpace(input.Profile))
@@ -157,14 +189,22 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
     {
         if (queue is null) return;
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = Command(connection, "SELECT asset_id,edit_id,selected_version,rendition,profile,renderer_release,renderer_artifact_digest,matrix_version,source_sha256,xmp_sha256 FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND state='pending'", requestId, owner, library);
+        await using var command = Command(connection, "SELECT asset_id,edit_id,selected_version,rendition,profile,renderer_release,renderer_artifact_digest,matrix_version,source_sha256,xmp_sha256,export_pin::text FROM render_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND state='pending'", requestId, owner, library);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return;
         var asset = reader.GetGuid(0);
         var edit = reader.GetGuid(1);
         var selectedVersion = reader.GetString(2);
         var request = new RenditionRequest(owner, library, asset, edit, selectedVersion, ParseRendition(reader.GetString(3)), reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8).Trim(), reader.GetString(9).Trim());
+        var pin = reader.IsDBNull(10) ? null : ExportDatabase.Decode<ExportPin>(reader.GetString(10));
         await reader.DisposeAsync();
+        if (pin is not null)
+        {
+            var reason = await new ExportSelectionService(dataSource).AvailabilityAsync(connection, owner, library, pin, false, cancellationToken);
+            if (reason is not null) return;
+            await queue.EnqueueAsync(Message(requestId, attemptId, request, pin.Original, pin.Xmp), cancellationToken);
+            return;
+        }
         var source = await SourceAsync(connection, owner, library, asset, edit, cancellationToken) ?? throw new RenderingProblem("source_unavailable", 404);
         var xmp = await ContentAsync(connection, request.XmpSha256, "xmp", cancellationToken) ?? throw new RenderingProblem("selected_version_unavailable", 404);
         await queue.EnqueueAsync(Message(requestId, attemptId, request, source.Original, xmp), cancellationToken);

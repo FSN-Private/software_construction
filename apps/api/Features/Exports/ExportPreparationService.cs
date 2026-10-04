@@ -1,13 +1,13 @@
-﻿using Npgsql;
+using Npgsql;
 using Platform.Contracts.Exports;
 using static Platform.Storage.IngestDb;
 namespace Platform.Api.Features.Exports;
-public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBasketService baskets, ExportSelectionService selections)
+public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBasketService baskets, Platform.Api.Features.Rendering.RenderingService? rendering = null, IConfiguration? configuration = null)
 {
     public async Task<ExportRequestView> SubmitAsync(string owner, string library, Guid basketId, ExportSubmit input, string key, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(key) || key.Length > 200) throw new ExportProblem("idempotency_key_required", 400);
-        var preset = ExportPreset.Get(input.PresetId); var fingerprint = ExportIntegrity.Fingerprint(input);
+        var preset = ExportPreset.Get(input.PresetId); var fingerprint = ExportIntegrity.Hash(System.Text.Encoding.UTF8.GetBytes(basketId.ToString("D") + "\n" + ExportIntegrity.Fingerprint(input)));
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         await using (var cmd = Command(db, "SELECT id,fingerprint FROM export_requests WHERE owner_id=$1 AND library_id=$2 AND idempotency_key=$3", owner, library, key))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
@@ -19,15 +19,14 @@ public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBask
         var basket = await baskets.GetAsync(db, owner, library, basketId, ct); if (basket.Revision != input.Revision) throw new ExportProblem("stale_basket");
         if (basket.Items.Count == 0) throw new ExportProblem("empty_basket");
         if ((basket.Items.Count >= 100 || basket.Items.Sum(i => i.Pin.Original.ByteLength) >= 1024L * 1024 * 1024) && !input.WarningAcknowledged) throw new ExportProblem("cost_warning_required");
-        if (Convert.ToInt64(await ScalarAsync(db, "SELECT count(*) FROM export_requests WHERE owner_id=$1 AND library_id=$2 AND basket_id=$3 AND state NOT IN ('expired','cancelled','unavailable')", ct, owner, library, basketId)) >= 10) throw new ExportProblem("quota_exceeded");
-        var requestId = Guid.NewGuid(); var snapshot = new ExportSnapshot(1, requestId, preset.Id, input.MetadataConfirmed, DateTimeOffset.UtcNow, basket.Items.Select(i => i.Pin).ToArray());
+        if (Convert.ToInt64(await ScalarAsync(db, "SELECT count(*) FROM export_requests WHERE owner_id=$1 AND library_id=$2 AND basket_id=$3 AND state NOT IN ('expired','cancelled','unavailable')", ct, owner, library, basketId)) >= ExportConfiguration.Limits(configuration).Requests) throw new ExportProblem("quota_exceeded");
+        var renderer = preset.Format == "original" ? null : await (rendering ?? throw new ExportProblem("incompatible_renderer")).ExportCompatibilityAsync(db, ct);
+        var requestId = Guid.NewGuid(); var snapshot = new ExportSnapshot(1, requestId, preset.Id, input.MetadataConfirmed, DateTimeOffset.UtcNow, basket.Items.Select(i => i.Pin).ToArray(), renderer, input.WarningAcknowledged);
         await ExecuteAsync(db, "INSERT INTO export_requests(id,owner_id,library_id,basket_id,idempotency_key,fingerprint,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)", ct, requestId, owner, library, basketId, key, fingerprint, ExportDatabase.Encode(snapshot));
-        foreach (var pin in snapshot.Items)
-        {
-            var reason = await selections.AvailabilityAsync(db, owner, library, pin, preset.Format == "original", ct);
-            await ExecuteAsync(db, "INSERT INTO export_results(request_id,item_id,outcome) VALUES($1,$2,$3::jsonb)", ct, requestId, pin.ItemId, ExportDatabase.Encode(new ExportOutcome(pin.ItemId, reason is null ? "pending" : "unavailable", reason, null, null, null)));
-        }
-        await AuditAsync(db, owner, "op_export", "exports.requested", requestId, "accepted", ct);
+        var availability = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, snapshot.Items, preset.Format == "original", ct);
+        var outcomes = snapshot.Items.Select(pin => new ExportOutcome(pin.ItemId, availability[pin.ItemId] is null ? "pending" : "unavailable", availability[pin.ItemId], null, null, null)).ToArray();
+        await ExecuteAsync(db, "INSERT INTO export_results(request_id,item_id,outcome) SELECT $1,(p->>'itemId')::uuid,p FROM jsonb_array_elements($2::jsonb) p", ct, requestId, ExportDatabase.Encode(outcomes));
+        await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.requested", requestId, "accepted", ct);
         var result = await GetAsync(db, owner, library, requestId, ct); await tx.CommitAsync(ct); return result;
     }
     public async Task<ExportRequestView> GetAsync(string owner, string library, Guid id, CancellationToken ct)
@@ -50,7 +49,7 @@ public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBask
         {
             await ExecuteAsync(db, "UPDATE export_requests SET state='cancelling',reason='cancelled',generation=generation+1 WHERE id=$1; UPDATE export_download_grants SET revoked_at=now() WHERE request_id=$1", ct, id);
             foreach (var item in current.Outcomes.Where(i => i.Status == "pending")) await ExecuteAsync(db, "UPDATE export_results SET outcome=$3::jsonb WHERE request_id=$1 AND item_id=$2", ct, id, item.ItemId, ExportDatabase.Encode(new ExportOutcome(item.ItemId, "cancelled", "cancelled", null, null, null)));
-            await AuditAsync(db, owner, "op_export", "exports.cancelled", id, "accepted", ct);
+            await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.cancelled", id, "accepted", ct);
         }
         var result = await GetAsync(db, owner, library, id, ct); await tx.CommitAsync(ct); return result;
     }
