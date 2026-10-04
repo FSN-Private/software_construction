@@ -153,6 +153,22 @@ public static class ExportIntegration
         await worker.MaintainAsync(default);
         Check((await preparation.GetAsync("owner", "library", retained[0], default)).State == "expired", "Maintenance expires failed requests without blocking preparation");
         Check((await preparation.GetAsync("owner", "library", retained[1], default)).State == "retryable", "Maintenance fences expired worker leases for retry");
+        configuration["Exports:OperationsUsername"] = "export-operator";
+        var operations = new ExportOperationsService(db, configuration);
+        var operatorUser = new ClaimsPrincipal(new ClaimsIdentity([new Claim("cognito:groups", "operator"), new Claim("cognito:username", "export-operator")], "fixture"));
+        await RejectAsync(async () => await operations.GetAsync(new ClaimsPrincipal(), default));
+        await RejectAsync(async () => await operations.GetAsync(mint.User, default));
+        Check((await operations.SetAsync(operatorUser, "pause", default)).Paused, "Operator pause is visible in aggregate state");
+        await RejectAsync(async () => await preparation.SubmitAsync("owner", "library", basket.Id, submit, "paused-request", default));
+        await worker.TickAsync(default);
+        Check((await operations.GetAsync(operatorUser, default)).Active == 0, "Paused worker claims no pending preparations");
+        Check((await operations.SetAsync(operatorUser, "drain", default)).Draining, "Operator drain retains readable aggregate state");
+        Check(!(await operations.SetAsync(operatorUser, "resume", default)).Paused, "Operator resume reopens intake");
+        await operations.SetAsync(operatorUser, "cancel-pending", default); await worker.MaintainAsync(default);
+        var cancelled = await preparation.GetAsync("owner", "library", retained[1], default);
+        Check(cancelled.State == "cancelled" && cancelled.Outcomes.All(o => o.Status != "pending"), "Operator cancellation drains pending jobs and their item outcomes");
+        Check((await preparation.GetAsync("owner", "library", ready.Id, default)).State == "completed", "Operator cancellation preserves completed package provenance");
+        await operations.SetAsync(operatorUser, "resume", default);
         await using (var connection = await db.OpenConnectionAsync())
             Check(Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM audit_events WHERE event_type IN ('exports.expired','exports.lease_recovered')", default)) == 2, "Expiry and lease recovery produce durable audit evidence");
         request = await preparation.SubmitAsync("owner", "library", basket.Id, submit, "purge-race", default);
@@ -164,6 +180,10 @@ public static class ExportIntegration
         var workspaceIntent = await invalidation.AdmitWorkspaceAsync("owner", "library", request.Id, 1, writer, workspaceRoot, default);
         var workspacePath = Path.Combine(workspaceRoot, workspaceIntent.ToString("N"));
         Directory.CreateDirectory(workspacePath); await File.WriteAllBytesAsync(Path.Combine(workspacePath, "input"), originalBytes);
+        var faultRoot = Path.Combine(workspaceRoot, "fault-" + Guid.NewGuid().ToString("N"));
+        var faultWorkspace = await invalidation.AdmitWorkspaceAsync("owner", "library", request.Id, 1, writer, faultRoot, default);
+        var faultPath = Path.Combine(faultRoot, faultWorkspace.ToString("N"));
+        Directory.CreateDirectory(faultPath); await File.WriteAllBytesAsync(Path.Combine(faultPath, "input"), originalBytes);
         var deadWorkspace = await invalidation.AdmitWorkspaceAsync("owner", "library", request.Id, 1, writer, workspaceRoot, default);
         var deadPath = Path.Combine(workspaceRoot, deadWorkspace.ToString("N"));
         Directory.CreateDirectory(deadPath); await File.WriteAllBytesAsync(Path.Combine(deadPath, "package.zip"), originalBytes);
@@ -206,12 +226,36 @@ public static class ExportIntegration
         await invalidation.SettleWriteAsync(intent, writer, late.VersionId, true, default);
         Check((await preparation.GetAsync("owner", "library", request.Id, default)).State == "unavailable", "Late upload cannot restore invalidated request");
         await s3.PutObjectAsync(new PutObjectRequest { BucketName = bucket, Key = "derivatives/shared/preview.jpg", InputStream = new MemoryStream(originalBytes) });
+        if (s3 is FixtureS3 faultStorage)
+        {
+            faultStorage.FailDeletes = true;
+            try { await cleanup.TickAsync(default); throw new InvalidOperationException("Expected provider delete denial"); }
+            catch (AmazonS3Exception) { }
+            finally { faultStorage.FailDeletes = false; }
+            await using var connection = await db.OpenConnectionAsync(); await using var tx = await connection.BeginTransactionAsync();
+            Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Provider deletion failure cannot acknowledge purge cleanup"); await tx.CommitAsync();
+        }
         await cleanup.TickAsync(default);
         Check(Directory.Exists(workspacePath), "Live local media writer remains inventoried and blocks cleanup");
         Check(!Directory.Exists(deadPath), "OS-proven terminated local writer workspace recovers without a callback");
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = callbackKey })).Versions?.Any() != true, "Lost settlement callback is recovered and its exact versions removed");
         await invalidation.StopWriterAsync(workspaceIntent, writer, default); await cleanup.TickAsync(default);
         Check(!Directory.Exists(workspacePath), "Stopped inventoried workspace is verified removed before acknowledgment");
+        await invalidation.StopWriterAsync(faultWorkspace, writer, default);
+        // Make this owned parent unavailable without deleting its media, exercising a real filesystem inspection error.
+        Directory.Move(faultRoot, faultRoot + ".unavailable"); await File.WriteAllTextAsync(faultRoot, "fixture blocked parent");
+        var faultConfiguration = new ConfigurationBuilder().AddConfiguration(configuration).AddInMemoryCollection(new Dictionary<string, string?> { ["Exports:WorkspaceRoot"] = faultRoot }).Build();
+        try { await new ExportCleanupService(db, s3, faultConfiguration).TickAsync(default); throw new InvalidOperationException("Expected workspace inspection failure"); }
+        catch (IOException) { }
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            Check(await ScalarAsync(connection, "SELECT 1 FROM export_write_intents WHERE id=$1 AND state<>'cleaned'", default, faultWorkspace) is not null, "Unavailable workspace remains draining");
+            await using var tx = await connection.BeginTransactionAsync(); Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Inaccessible inventoried media cannot acknowledge cleanup"); await tx.CommitAsync();
+        }
+        File.Delete(faultRoot); Directory.Move(faultRoot + ".unavailable", faultRoot);
+        await new ExportCleanupService(db, s3, faultConfiguration).TickAsync(default);
+        Check(!Directory.Exists(faultPath), "Restored accessible workspace removes media through production recovery");
+        Directory.Delete(faultRoot);
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = lateKey } )).Versions?.Any() != true, "Late settled object versions are deleted");
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = "derivatives/shared/" })).Versions.Count == 1, "Export cleanup preserves shared renderer objects");
         await using (var connection = await db.OpenConnectionAsync()) { await using var tx = await connection.BeginTransactionAsync(); Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Unknown storage outcomes remain draining after settled cleanup"); await tx.CommitAsync(); }
@@ -231,6 +275,8 @@ public static class ExportIntegration
 // MinIO fixture omits unsupported AWS KMS headers; production service still requires AWS KMS.
 public sealed class FixtureS3() : AmazonS3Client(new BasicAWSCredentials("ingest-test", "ingest-test-only"), new AmazonS3Config { ServiceURL = Environment.GetEnvironmentVariable("EXPORT_S3_ENDPOINT") ?? "http://127.0.0.1:9000", ForcePathStyle = true, MaxErrorRetry = 0 })
 {
+    public bool FailDeletes { get; set; }
+    public override Task<DeleteObjectResponse> DeleteObjectAsync(DeleteObjectRequest request, CancellationToken cancellationToken = default) => FailDeletes ? Task.FromException<DeleteObjectResponse>(new AmazonS3Exception("fixture deletion unavailable") { StatusCode = System.Net.HttpStatusCode.Forbidden }) : base.DeleteObjectAsync(request, cancellationToken);
     public override Task<InitiateMultipartUploadResponse> InitiateMultipartUploadAsync(InitiateMultipartUploadRequest request, CancellationToken cancellationToken = default)
     { request.ServerSideEncryptionMethod = null; request.ServerSideEncryptionKeyManagementServiceKeyId = null; return base.InitiateMultipartUploadAsync(request, cancellationToken); }
 }

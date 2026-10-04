@@ -113,7 +113,7 @@ public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Ext
         {
             // Every local operation has finished and its streams are disposed before removing this owned directory.
             await writes.StopWriterAsync(workspaceIntent, lease, CancellationToken.None);
-            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            ExportCleanupService.RemoveWorkspace(Path.GetFullPath(root), workspaceIntent);
             await using var db = await source.OpenConnectionAsync(CancellationToken.None);
             await ExecuteAsync(db, "UPDATE export_write_intents SET state='cleaned',settled_at=now() WHERE id=$1 AND writer_id=$2 AND category='workspace' AND writer_stopped", CancellationToken.None, workspaceIntent, lease);
         }
@@ -156,6 +156,8 @@ public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Ext
             await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.item_settled", item.ItemId, item.Status, ct, item.Reason);
         }
         await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.package_prepared", id, state, ct); await tx.CommitAsync(ct);
+        foreach (var item in manifest.Outcomes) Platform.Api.Telemetry.PlatformTelemetry.ExportItemOutcomes.Add(1, new KeyValuePair<string, object?>("status", item.Status), new KeyValuePair<string, object?>("reason", item.Reason));
+        if (length is { } bytes) Platform.Api.Telemetry.PlatformTelemetry.ExportPackageSize.Record(bytes);
     }
     private async Task CheckLeaseAsync(string owner, string library, Guid id, Guid lease, long generation, CancellationToken ct)
     {

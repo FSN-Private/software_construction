@@ -44,8 +44,8 @@ public static class ExportEndpoints
         group.MapGet("/requests/{id:guid}/manifest", async (string library, Guid id, HttpContext c, [FromServices] ExportPreparationService service, CancellationToken ct) => { var request = await service.GetAsync(Owner(c), library, id, ct); if (request.Outcomes.Any(o => o.Status == "pending")) throw new ExportProblem("export_not_ready"); return Results.Ok(ExportPublic.Manifest(new(1, request.Snapshot, request.Outcomes))); });
         app.MapPost("/v1/libraries/{library}/exports/requests/{id:guid}/download-session", async (string library, Guid id, HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => await service.ExchangeAsync(c, library, id, ct)).WithMetadata(new ExportNativeExchange()).RequireCors("exports-download").AddEndpointFilter<ExportDownloadGuard>();
         app.MapMethods("/v1/libraries/{library}/exports/requests/{id:guid}/download", ["GET", "HEAD"], async (string library, Guid id, HttpContext c, [FromServices] ExportDownloadService service, CancellationToken ct) => await service.StreamAsync(c, library, id, ct)).RequireCors("exports-download").AddEndpointFilter<ExportDownloadGuard>();
-        app.MapGet("/v1/exports/operations", async (HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.GetAsync(c.User, ct))).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
-        app.MapPost("/v1/exports/operations/{action}", async (string action, HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.SetAsync(c.User, action, ct))).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
+        app.MapGet("/v1/exports/operations", async (HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.GetAsync(c.User, ct))).WithMetadata(new ExportProtected()).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
+        app.MapPost("/v1/exports/operations/{action}", async (string action, HttpContext c, [FromServices] ExportOperationsService service, CancellationToken ct) => Results.Ok(await service.SetAsync(c.User, action, ct))).WithMetadata(new ExportProtected()).RequireAuthorization().AddEndpointFilter<ExportDownloadGuard>();
     }
     public static string Owner(HttpContext c) => OwnerAuthorization.TryGetOwner(c.User, out var owner) ? owner : throw new ExportProblem("unauthenticated", 401);
 }
@@ -58,7 +58,8 @@ public sealed class ExportDownloadGuard : IEndpointFilter
         catch (ExportProblem error) when (!invocation.HttpContext.Response.HasStarted)
         {
             var c = invocation.HttpContext;
-            var owner = c.Items["exports.audit_owner"]?.ToString() ?? (OwnerAuthorization.TryGetOwner(c.User, out var bearerOwner) ? bearerOwner : "anonymous");
+            var owner = c.Items["exports.audit_owner"]?.ToString() ?? (c.User.Identity?.IsAuthenticated == true ? c.User.FindFirst("sub")?.Value ?? c.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anonymous" : "anonymous");
+            Platform.Api.Telemetry.PlatformTelemetry.ExportPolicyDenials.Add(1);
             if (c.RequestServices.GetService<IAuditWriter>() is { } audit) await audit.WriteAsync(AuditEvent.Create(owner, ExportDatabase.OperationId, "exports.download_denied", "denied", error.Code), c.RequestAborted);
             return RequestContracts.Problem(c, error.Status, error.Code, "Download unavailable");
         }
@@ -77,6 +78,7 @@ public sealed class ExportGuard(IConfiguration config, ILogger<ExportGuard> logg
         }
         catch (Exception error) when (error is ExportProblem or Platform.Contracts.VersionControl.VersionControlProblem or Platform.Api.Features.Rendering.RenderingProblem)
         {
+            Platform.Api.Telemetry.PlatformTelemetry.ExportPolicyDenials.Add(1);
             var code = error is ExportProblem export ? export.Code : error is Platform.Api.Features.Rendering.RenderingProblem render ? render.Code : "selected_version_unavailable";
             var status = error is ExportProblem problem ? problem.Status : error is Platform.Api.Features.Rendering.RenderingProblem renderingProblem ? renderingProblem.Status : 404;
             var owner = c.User.Identity?.IsAuthenticated == true ? c.User.FindFirst("sub")?.Value ?? c.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anonymous" : "anonymous";

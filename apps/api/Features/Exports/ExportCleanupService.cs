@@ -58,14 +58,24 @@ public sealed class ExportCleanupService(NpgsqlDataSource source, IAmazonS3 stor
                 var root = Path.GetFullPath(config["Exports:WorkspaceRoot"] ?? Path.Combine(Path.GetTempPath(), "platform-exports"));
                 var expected = Path.Combine(root, value.Id.ToString("N"));
                 if (!string.Equals(Path.GetFullPath(value.Path!), expected, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) throw new ExportProblem("integrity_error");
-                if (Directory.Exists(expected)) Directory.Delete(expected, true);
-                if (Directory.Exists(expected)) continue;
+                RemoveWorkspace(root, value.Id);
             }
             await using var tx = await db.BeginTransactionAsync(ct);
             if (await ExecuteAsync(db, "UPDATE export_write_intents SET state=$2,writer_stopped=true,settled_at=now() WHERE id=$1 AND state IN ('admitted','unknown') AND (category='workspace' OR (NOT storage_pending AND provider_receipt IS NOT NULL AND multipart_id IS NOT NULL AND object_version IS NOT NULL AND storage_phase='complete'))", ct, value.Id, value.Category == "workspace" ? "cleaned" : "settled") != 0)
                 await AuditAsync(db, value.Owner, ExportDatabase.OperationId, "exports.writer_recovered", value.Id, "settled", ct);
             await tx.CommitAsync(ct);
         }
+    }
+    internal static void RemoveWorkspace(string root, Guid id)
+    {
+        var path = Path.Combine(root, id.ToString("N"));
+        // Enumerating the accessible parent preserves permission/volume errors; Directory.Exists would hide them.
+        if (Directory.GetFileSystemEntries(root, id.ToString("N")).Length != 0)
+        {
+            try { Directory.Delete(path, true); }
+            catch (DirectoryNotFoundException) { /* Another cleanup may have removed the child; verify through its parent below. */ }
+        }
+        if (Directory.GetFileSystemEntries(root, id.ToString("N")).Length != 0) throw new IOException("Export workspace removal is incomplete.");
     }
     private static bool LocalProcessExited(string host, int pid, long start)
     {

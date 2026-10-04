@@ -4,7 +4,7 @@ using System.Security.Claims;
 using static Platform.Storage.IngestDb;
 namespace Platform.Api.Features.Exports;
 
-public sealed record ExportOperationsView(bool Paused, bool Draining, long Pending, long Active, long CleanupPending, long UnknownWrites, long Failed);
+public sealed record ExportOperationsView(bool Paused, bool Draining, long Pending, long Active, long CleanupPending, long UnknownWrites, long Failed, long BasketItems, double OldestQueueAgeSeconds, long Expired, long Cancelled, IReadOnlyDictionary<string, long> ItemOutcomes);
 public sealed class ExportOperationsService(NpgsqlDataSource source, IConfiguration config)
 {
     private string Operator(ClaimsPrincipal user)
@@ -31,6 +31,9 @@ public sealed class ExportOperationsService(NpgsqlDataSource source, IConfigurat
     {
         var paused = (bool)(await ScalarAsync(db, "SELECT paused FROM export_operations WHERE singleton", ct))!; var draining = (bool)(await ScalarAsync(db, "SELECT draining FROM export_operations WHERE singleton", ct))!;
         async Task<long> Count(string sql) => Convert.ToInt64(await ScalarAsync(db, sql, ct));
-        return new(paused, draining, await Count("SELECT count(*) FROM export_requests WHERE state IN ('pending','retryable')"), await Count("SELECT count(*) FROM export_requests WHERE state='preparing'"), await Count("SELECT count(*) FROM export_requests WHERE state='cancelling'"), await Count("SELECT count(*) FROM export_write_intents WHERE state IN ('unknown','admitted')"), await Count("SELECT count(*) FROM export_requests WHERE state='failed'"));
+        var outcomes = new Dictionary<string, long>();
+        await using (var cmd = Command(db, "SELECT outcome->>'status',count(*) FROM export_results GROUP BY outcome->>'status'"))
+        await using (var r = await cmd.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) outcomes.Add(r.GetString(0), r.GetInt64(1));
+        return new(paused, draining, await Count("SELECT count(*) FROM export_requests WHERE state IN ('pending','retryable')"), await Count("SELECT count(*) FROM export_requests WHERE state='preparing'"), await Count("SELECT count(*) FROM export_requests WHERE state='cancelling'"), await Count("SELECT count(*) FROM export_write_intents WHERE state IN ('unknown','admitted')"), await Count("SELECT count(*) FROM export_requests WHERE state='failed'"), await Count("SELECT count(*) FROM export_basket_items"), Convert.ToDouble(await ScalarAsync(db, "SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0) FROM export_requests WHERE state IN ('pending','retryable')", ct)), await Count("SELECT count(*) FROM export_requests WHERE state='expired'"), await Count("SELECT count(*) FROM export_requests WHERE state IN ('cancelled','cancelling')"), outcomes);
     }
 }
