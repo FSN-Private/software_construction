@@ -46,6 +46,7 @@ public sealed class ExportPreparationWorker(NpgsqlDataSource source, ExportPacka
             await Platform.Storage.IngestDb.ExecuteAsync(db, "UPDATE export_requests SET state='preparing',lease_id=$2,lease_until=now()+interval '2 minutes' WHERE id=$1", ct, id, lease); await tx.CommitAsync(ct);
         }
         var created = (DateTime)(await ScalarAsync(db, "SELECT created_at FROM export_requests WHERE id=$1", ct, id))!;
+        Platform.Api.Telemetry.PlatformTelemetry.ExportQueueAge.Record(Math.Max(0, (DateTime.UtcNow - created).TotalSeconds));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, (created.AddSeconds(ExportConfiguration.Limits(configuration).PreparationSeconds) - DateTime.UtcNow).TotalMilliseconds)));
         using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);

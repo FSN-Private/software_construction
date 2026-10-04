@@ -63,6 +63,7 @@ public sealed class ExportBasketService(NpgsqlDataSource source, ExportSelection
         await using (var reader = await cmd.ExecuteReaderAsync(ct)) { while (await reader.ReadAsync(ct)) pins.Add(ExportDatabase.Decode<ExportPin>(reader.GetString(0))); }
         var availability = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, pins, false, ct);
         var items = new List<ExportItemView>(); foreach (var pin in pins) { var reason = availability[pin.ItemId]; items.Add(new(pin, reason is null ? "ready" : "unavailable", "not_requested", ExportNames.For(pin, ExportPreset.Get("jpeg-2048-private-v1")), reason)); }
+        Platform.Api.Telemetry.PlatformTelemetry.ExportBasketSize.Record(items.Count);
         return new(id, name, isDefault, revision, items);
     }
     private static void ValidateName(string name) { if (string.IsNullOrWhiteSpace(name) || name.Length > 120 || name.Any(char.IsControl)) throw new ExportProblem("invalid_name", 400); }

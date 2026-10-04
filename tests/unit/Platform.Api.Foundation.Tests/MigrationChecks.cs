@@ -36,6 +36,7 @@ internal static class MigrationChecks
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/018_lineage_merge_content.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/019_tag_audit_link.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/020_lineage_branch_reachability.sql"), default);
+            await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/021_export_baskets.sql"), default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after expansion");

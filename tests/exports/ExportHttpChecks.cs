@@ -37,6 +37,7 @@ internal static class ExportHttpChecks
         // The production route's auth/filter metadata executes through real JWT middleware. No media service is invoked on denial.
         foreach (var path in new[] { "/baskets", "/requests/{id:guid}/manifest", "/requests/{id:guid}/cancel" })
             app.MapMethods("/v1/libraries/{library}/exports" + path, ["GET", "POST"], () => Results.Ok()).WithMetadata(new ExportProtected()).RequireAuthorization().AddEndpointFilter<ExportGuard>();
+        app.MapGet("/v1/exports/operations", () => Results.Ok()).WithMetadata(new ExportProtected()).RequireAuthorization();
         await app.StartAsync();
         try
         {
@@ -55,6 +56,8 @@ internal static class ExportHttpChecks
                 using var response = await client.GetAsync("/v1/libraries/library/exports" + path);
                 if (response.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Anonymous export HTTP denial");
             }
+            using var anonymousOperator = await client.GetAsync("/v1/exports/operations");
+            if (anonymousOperator.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Anonymous operator HTTP denial");
             client.DefaultRequestHeaders.Authorization = new("Bearer", "invalid-token");
             using var invalid = await client.GetAsync("/v1/libraries/library/exports/baskets");
             if (invalid.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Invalid JWT export denial");
@@ -63,7 +66,7 @@ internal static class ExportHttpChecks
             using var nonOwner = await client.GetAsync("/v1/libraries/library/exports/baskets");
             if (nonOwner.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Non-owner role denied by export guard");
             await using var connection = await db.OpenConnectionAsync();
-            if (Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM audit_events WHERE operation_id=$1 AND event_type='exports.access_denied'", default, operation)) != 5 ||
+            if (Convert.ToInt64(await ScalarAsync(connection, "SELECT count(*) FROM audit_events WHERE operation_id=$1 AND event_type='exports.access_denied'", default, operation)) != 6 ||
                 await ScalarAsync(connection, "SELECT 1 FROM audit_events WHERE operation_id=$1 AND owner_id='operator-fixture' AND event_type='exports.access_denied'", default, operation) is null)
                 throw new InvalidOperationException("All JWT/role export denials must have attributable durable audits");
         }

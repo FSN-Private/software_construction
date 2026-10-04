@@ -56,6 +56,7 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
     }
     public async Task StreamAsync(HttpContext c, string library, Guid id, CancellationToken ct)
     {
+        Platform.Api.Telemetry.PlatformTelemetry.ExportDownloadAttempts.Add(1);
         RequireOrigin(c);
         await using var db = await source.OpenConnectionAsync(ct);
         string owner; Guid? session = null;

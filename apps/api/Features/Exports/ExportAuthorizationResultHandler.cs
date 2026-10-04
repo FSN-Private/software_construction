@@ -12,6 +12,7 @@ public sealed class ExportAuthorizationResultHandler : IAuthorizationMiddlewareR
     {
         if (!result.Succeeded && context.GetEndpoint()?.Metadata.GetMetadata<ExportProtected>() is not null)
         {
+            Platform.Api.Telemetry.PlatformTelemetry.ExportPolicyDenials.Add(1);
             var actor = context.User.Identity?.IsAuthenticated == true ? context.User.FindFirstValue("sub") ?? context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous" : "anonymous";
             if (context.RequestServices.GetService<IAuditWriter>() is { } audit)
                 await audit.WriteAsync(AuditEvent.Create(actor, ExportDatabase.OperationId, "exports.access_denied", "denied", result.Challenged ? "unauthenticated" : "forbidden"), context.RequestAborted);
