@@ -29,16 +29,17 @@ public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Ext
                     {
                         await using var retryDb = await source.OpenConnectionAsync(ct);
                         if (Convert.ToInt32(await ScalarAsync(retryDb, "SELECT count(*) FROM render_attempts WHERE request_id=$1", ct, status.RequestId)) < 3) { await rendering.RetryAsync(owner, library, status.RequestId, ct); return false; }
+                        Platform.Api.Telemetry.PlatformTelemetry.ExportRenderFailures.Add(1);
                         results[pin.ItemId] = Failed(pin, "failed", "renderer_timeout"); continue;
                     }
                     if (status.State is RenderState.Pending or RenderState.Running) return false;
-                    if (status.State != RenderState.Completed || status.Provenance is null) { results[pin.ItemId] = Failed(pin, "failed", SafeReason(status.FailureCode)); continue; }
+                    if (status.State != RenderState.Completed || status.Provenance is null) { Platform.Api.Telemetry.PlatformTelemetry.ExportRenderFailures.Add(1); results[pin.ItemId] = Failed(pin, "failed", SafeReason(status.FailureCode)); continue; }
                     await using var db = await source.OpenConnectionAsync(ct);
                     await using var cmd = Command(db, "SELECT d.object_key,d.object_version,d.output_sha256,d.byte_length FROM renditions d JOIN render_requests r ON r.id=d.request_id WHERE r.id=$1 AND r.owner_id=$2 AND r.library_id=$3 AND r.state='completed'", status.RequestId, owner, library);
                     await using var r = await cmd.ExecuteReaderAsync(ct); if (!await r.ReadAsync(ct)) throw new ExportProblem("output_invalid");
                     publications.Add(pin.ItemId, (new(r.GetString(0), r.GetString(1), r.GetString(2).Trim(), r.GetInt64(3)), status.Provenance));
                 }
-                catch (RenderingProblem error) { if (error.Code == "rendering_paused") return false; results[pin.ItemId] = Failed(pin, "failed", SafeReason(error.Code)); }
+                catch (RenderingProblem error) { if (error.Code == "rendering_paused") return false; Platform.Api.Telemetry.PlatformTelemetry.ExportRenderFailures.Add(1); results[pin.ItemId] = Failed(pin, "failed", SafeReason(error.Code)); }
                 catch (ExportProblem error) { results[pin.ItemId] = Failed(pin, "unavailable", SafeReason(error.Code)); }
             }
         }

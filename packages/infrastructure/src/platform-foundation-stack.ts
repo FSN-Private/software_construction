@@ -89,7 +89,12 @@ export class PlatformFoundationStack extends Stack {
       versioned: true,
       removalPolicy: RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
-      lifecycleRules: [{ prefix: 'derivatives/', expiration: Duration.days(30), noncurrentVersionExpiration: Duration.days(7) }],
+      lifecycleRules: [
+        { prefix: 'derivatives/', expiration: Duration.days(30), noncurrentVersionExpiration: Duration.days(7) },
+        // Availability starts at publication, after up to two hours of preparation.
+        // Lifecycle is a fallback only; purge acknowledgment still requires verified cleanup.
+        { prefix: 'exports/', expiration: Duration.days(3), noncurrentVersionExpiration: Duration.days(3), abortIncompleteMultipartUploadAfter: Duration.days(3) },
+      ],
     });
     const apiRepository = new Repository(this, 'ApiRepository', {
       repositoryName: `platform-${props.environmentName}-api`,
@@ -367,6 +372,14 @@ export class PlatformFoundationStack extends Stack {
     const exportFailureMetric = new MetricFilter(this, 'ExportFailureMetric', { logGroup: telemetry, filterPattern: FilterPattern.literal('{ ($.State.EventType = "exports.failed") || ($.State.EventType = "exports.worker_unavailable") || ($.State.EventType = "exports.cleanup_pending") }'), metricNamespace: 'Platform/Exports', metricName: 'Failures', metricValue: '1' }).metric({ statistic: 'Sum', period: Duration.minutes(5) });
     const exportFailureAlarm = new Alarm(this, 'ExportFailureAlarm', { metric: exportFailureMetric, threshold: 1, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: https://github.com/FSN-Private/software_construction/blob/master/docs/operations/export-basket.md` });
     exportFailureAlarm.addAlarmAction(new SnsAction(alerts));
+    const exportMeasurements = ([
+      ['Prepared', 'prepared'], ['PreparationFailures', 'failed'], ['RenderFailures', 'render.failures'], ['PreparationDurationMs', 'preparation.duration'],
+      ['BasketItems', 'basket.items'], ['QueueAgeSeconds', 'queue.age'], ['ItemOutcomes', 'item.outcomes'],
+      ['PackageBytes', 'package.bytes'], ['DownloadAttempts', 'download.attempts'], ['PolicyDenials', 'policy.denials'],
+    ] as const).map(([name, instrument]) => new MetricFilter(this, `Export${name}Metric`, {
+      logGroup: telemetry, filterPattern: FilterPattern.literal(`{ ($.State.EventType = "exports.metric") && ($.State.MetricName = "platform.exports.${instrument}") }`),
+      metricNamespace: 'Platform/Exports', metricName: name, metricValue: '$.State.MetricValue',
+    }).metric({ statistic: ['Prepared', 'PreparationFailures', 'RenderFailures', 'ItemOutcomes', 'DownloadAttempts', 'PolicyDenials'].includes(name) ? 'Sum' : 'Average', period: Duration.minutes(5) }));
     const rendererQueueAgeAlarm = new Alarm(this, 'RendererQueueAgeAlarm', { metric: rendererQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 300, evaluationPeriods: 3, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });
     rendererQueueAgeAlarm.addAlarmAction(new SnsAction(alerts));
     const rendererDlqAlarm = new Alarm(this, 'RendererDeadLetterAlarm', { metric: rendererDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 1, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.NOT_BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${renderingRunbook}` });
@@ -390,6 +403,7 @@ export class PlatformFoundationStack extends Stack {
       [new GraphWidget({ title: 'Lineage size and comparisons', left: [lineageGraphSize, lineageComparisons] })],
       [new GraphWidget({ title: 'Lineage merges and rewrites', left: [lineageMergePrepares, lineageMergeConflicts, lineageMergeConfirms, lineageRewriteAttempts] })],
       [new GraphWidget({ title: 'Renderer queue', left: [rendererQueue.metricApproximateAgeOfOldestMessage(), rendererDlq.metricApproximateNumberOfMessagesVisible()] })],
+      [new GraphWidget({ title: 'Export measurements', left: exportMeasurements })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
       [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],

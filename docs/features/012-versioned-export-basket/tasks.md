@@ -101,6 +101,8 @@ Ranges below include every ID in the inclusive range; each referenced task defin
 
 Requirements approved by maintainer on 2026-10-03. Design and tasks proposed after discovering that local/remote feature 012 had neither plan.md nor tasks.md. Design/tasks/ADRs approved by maintainer on 2026-10-04. T001 completed; implementation and validation proceed against the numbered plan. Full acceptance remains gated by T029.
 
+Round-3 implementation-review remediation under T016/T017/T023/T024: allowlisted export-meter collection through safe structured JSON logs and CloudWatch filters/dashboard; independent exports/ current/noncurrent/multipart lifecycle backstop preserving the publication availability window. Collection/privacy and infrastructure assertions are executable. UI milestone and acceptance validation continue; no full task completion or production approval is inferred.
+
 ## Phase 9: planning-review remediation and explicit integration gates
 
 - [ ] T027 Build the narrowly routed HTTPS CloudFront/private-ALB download path to existing API tasks in packages/infrastructure/src/platform-foundation-stack.ts per ADR-0014; disable caching/error caching, forward session cookies/range headers, constrain listener/security groups, configure idle/read timeouts without total completion cutoff, exact-origin CORS and safe logging, account for budget/lifecycle; validate actual >10 MB and multi-GiB downloads/ranges/revocation/timeout/memory via tests/integration/exports/run.mjs and browser matrix, document infrastructure evidence in validation.md (012-PLAN-001; FR-016, FR-020, FR-023; AC-015; NFR-003, NFR-005, NFR-008, NFR-015; prerequisite to T013/T020; M2 transport, M3 controls). - IN PROGRESS

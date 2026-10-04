@@ -86,6 +86,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportDownloadService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportCleanupService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportOperationsService>();
+    builder.Services.AddHostedService<ExportMetricLoggingService>();
     builder.Services.AddHostedService<Platform.Api.Features.Exports.ExportPreparationWorker>();
 }
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
