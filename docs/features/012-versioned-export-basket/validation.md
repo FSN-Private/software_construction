@@ -53,6 +53,8 @@ Evidence is incremental. Application transport, full render/preparation, browser
 
 ## Round-5 review remediation validation
 
+- Independent interim rounds 5–7 and dispositions are preserved in [implementation-review.md](reviews/implementation-review.md). Latest complete reviewed code checkpoint is `cae7671`; 007–010/012 are resolved, 001–006 remain resolved, 011 is non-blocking and 013 remains a genuine pending authority/contract blocker. T029 and deployed/manual/trusted-promotion evidence continue to prevent full acceptance/convergence/completion review.
+
 - Final isolated browser command: `BROWSER_TEST_DISABLE_FIREFOX_ACCESSIBILITY=1 BROWSER_TEST_PORT=4193 npm --prefix apps/web run test:browser -- exports.spec.ts`: **33 passed** across Chrome/Edge/Firefox (43.5 seconds). The new expired-JWT logout and history/poll-announcement/focus cases pass in all three. Firefox uses the previously documented diagnostic setting; this does not satisfy manual assistive-technology acceptance.
 - Round-6 follow-up found that ordinary base64 fixtures missed JWT base64url decoding. The shared expiry parser now normalizes URL-safe characters and treats only finite numeric exp as known. Build/typecheck passed; focused expired/live-revocation matrix passed six cases before adding the second URL-safe payload variant. Both `-` and `_` variants are now exercised; final focused result follows.
 - Final focused command on independent port 4195: `playwright test exports.spec.ts --grep 'expired bearer|submission retry'`, diagnostic Firefox setting unchanged: **9 passed** (14.9 seconds), covering both URL-safe payload variants and live/unknown-expiry revocation failure in all three browsers.
