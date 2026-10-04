@@ -62,7 +62,8 @@ public sealed class ExportBasketService(NpgsqlDataSource source, ExportSelection
         await using (var cmd = Command(db, "SELECT pin::text FROM export_basket_items WHERE basket_id=$1 ORDER BY id", id))
         await using (var reader = await cmd.ExecuteReaderAsync(ct)) { while (await reader.ReadAsync(ct)) pins.Add(ExportDatabase.Decode<ExportPin>(reader.GetString(0))); }
         var availability = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, pins, false, ct);
-        var items = new List<ExportItemView>(); foreach (var pin in pins) { var reason = availability[pin.ItemId]; items.Add(new(pin, reason is null ? "ready" : "unavailable", "not_requested", ExportNames.For(pin, ExportPreset.Get("jpeg-2048-private-v1")), reason)); }
+        var originalAvailability = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, pins, true, ct);
+        var items = new List<ExportItemView>(); foreach (var pin in pins) { var reason = availability[pin.ItemId]; var originalReason = originalAvailability[pin.ItemId]; items.Add(new(pin, reason is null ? "ready" : "unavailable", "not_requested", ExportNames.For(pin, ExportPreset.Get("jpeg-2048-private-v1")), reason, originalReason is null ? "ready" : "unavailable", ExportNames.For(pin, ExportPreset.Get("originals-v1")), originalReason)); }
         Platform.Api.Telemetry.PlatformTelemetry.ExportBasketSize.Record(items.Count);
         return new(id, name, isDefault, revision, items);
     }

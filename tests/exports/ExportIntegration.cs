@@ -108,6 +108,8 @@ public static class ExportIntegration
             Check(await selection.AvailabilityAsync(connection, "owner", "library", originalPin, false, default) == "selected_version_unavailable", "Expired historical selection cannot render");
             await ExecuteAsync(connection, "UPDATE assets SET state='active',deleted_until=NULL WHERE id=$1; UPDATE lifecycle_holds SET expires_at=NULL WHERE asset_id=$1; UPDATE content_objects SET integrity_state='integrity-error' WHERE sha256=$2", default, asset, xmpSha);
             Check(await selection.AvailabilityAsync(connection, "owner", "library", originalPin, false, default) == "selected_version_unavailable" && await selection.AvailabilityAsync(connection, "owner", "library", originalPin, true, default) is null, "Unavailable XMP prevents rendered export while original-only eligibility remains independent");
+            var originalView = (await service.GetAsync("owner", "library", basket.Id, default)).Items.Single(i => i.Pin.ItemId == originalPin.ItemId);
+            Check(originalView.Availability == "unavailable" && originalView.OriginalAvailability == "ready" && originalView.OriginalReason is null && originalView.OriginalOutputName == ExportNames.For(originalPin, ExportPreset.Get("originals-v1")) && originalView.OriginalOutputName.EndsWith(".cr2", StringComparison.OrdinalIgnoreCase), "Basket presentation preserves RAW original eligibility and exact original filename independently of missing XMP");
             await ExecuteAsync(connection, "UPDATE content_objects SET integrity_state='authoritative' WHERE sha256=$1", default, xmpSha);
         }
         await PinnedRenderChecksAsync(db, originalPin, s3, bucket);

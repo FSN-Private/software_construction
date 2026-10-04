@@ -24,6 +24,9 @@ export type Basket = {
     previewState: string;
     outputName: string;
     reason: string | null;
+    originalAvailability?: string;
+    originalOutputName?: string;
+    originalReason?: string | null;
   }[];
 };
 export type ExportRequest = {

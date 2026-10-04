@@ -21,7 +21,7 @@ public sealed record ExportPin(Guid ItemId, Guid AssetId, Guid EditId, string Co
     }
 }
 public sealed record ExportBasket(Guid Id, string Name, bool IsDefault, long Revision, IReadOnlyList<ExportItemView> Items);
-public sealed record ExportItemView(ExportPin Pin, string Availability, string PreviewState, string OutputName, string? Reason);
+public sealed record ExportItemView(ExportPin Pin, string Availability, string PreviewState, string OutputName, string? Reason, string? OriginalAvailability = null, string? OriginalOutputName = null, string? OriginalReason = null);
 public sealed record ExportSelection(Guid AssetId, Guid EditId, string SelectedVersion, bool AdvancedHistory = false);
 public sealed record ExportSubmit(string PresetId, long Revision, bool MetadataConfirmed = false, bool WarningAcknowledged = false);
 public sealed record ExportRenderer(string Profile, string Release, string Digest, string Matrix);

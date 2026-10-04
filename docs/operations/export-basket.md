@@ -4,6 +4,8 @@ Feature 012 capability defaults to disabled (`Exports:Enabled=false`). Schema 02
 
 Owner-scoped baskets support 20 saved baskets, 250 pinned selections, revisions, a default basket and explicit duplicates. Selection resolves current/main, branch/tag or exact committed history once; mutable working selections are rejected. Hidden selection requires explicit advanced history. Missing bytes are unavailable, never proof of permanent purge.
 
+Basket readiness and output names follow the selected originals/rendered preset. Missing or unavailable XMP can prevent rendering without preventing an eligible unchanged-original export; the original extension is retained in its safe output name. Rendered-preview readiness remains separate and does not become available merely by choosing originals.
+
 Feature 011 integration uses the trusted in-process durable tombstone consumer described in feature 012 contracts/purge-invalidation.md. There is no public tombstone publisher. Original versus XMP and logical asset/edit scope preserve other retained deduplicated images and original-only exports. Do not acknowledge export cleanup while admitted or unknown writes remain; lease expiry is not proof of writer quiescence. T029 gates complete acceptance and production enablement on real feature 011 purge evidence.
 
 Preparation/download/cleanup/operator controls are implemented locally; acceptance and production enablement remain gated by the evidence listed below.
