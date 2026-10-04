@@ -154,7 +154,21 @@ export function App() {
     window.location.assign(authorize.toString());
   }
   async function signOut() {
-    if (config?.exportsEnabled && config.galleryLibraryId && token) {
+    let bearerExpired = false;
+    try {
+      bearerExpired =
+        Date.now() >=
+        Number(JSON.parse(atob(token?.split('.')[1] ?? '')).exp) * 1000;
+    } catch {
+      /* Unknown expiry still requires server revocation. */
+    }
+    // Download grants never outlive the bearer that minted them.
+    if (
+      config?.exportsEnabled &&
+      config.galleryLibraryId &&
+      token &&
+      !bearerExpired
+    ) {
       try {
         await exportApi(config.apiBaseUrl, token, config.galleryLibraryId)(
           '/session/revoke',
@@ -171,6 +185,7 @@ export function App() {
       }
     }
     window.dispatchEvent(new Event('gallery-sign-out'));
+    setSignOutError('');
     setToken(undefined);
     setExpired(false);
     setStatus({ message: 'You have signed out.' });
@@ -294,6 +309,9 @@ export function App() {
           <button className="primary" disabled={!config} onClick={signIn}>
             Sign in as owner
           </button>
+          {expired && (
+            <button onClick={signOut}>{exportText('Sign out')}</button>
+          )}
           <p role="status">
             {expired
               ? 'Your session expired. Sign in again; unsaved edits are retained for review.'

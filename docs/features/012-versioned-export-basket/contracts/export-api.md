@@ -11,7 +11,7 @@ Owner base /v1/libraries/{library}/exports. Bearer owner authorization and owner
 | GET /presets and /limits | Versioned preset catalog/metadata behavior and configured capacity/duration/retention limits; manifest mandatory. |
 | POST /baskets/{basket}/items/{item}/preview | Request/inspect the exact stored pin using approved renderer compatibility; recheck current eligibility before returning a private preview locator. |
 | POST /baskets/{basket}/requests | Preset/revision/consent/warning acknowledgment; required idempotency key. 202 snapshot/request immediately; same fingerprint returns original, changed fingerprint conflicts. |
-| GET /requests or /requests/{request} | Owner history/snapshot/progress, safe errors, retry guidance, expiry, package length/hash. |
+| GET /requests or /requests/{request} | Owner history/snapshot/progress, safe errors, retry guidance, expiry, package length/hash. List includes every retained request plus the newest 200 expired/cancelled/unavailable records; `?before={requestId}` pages older terminal history in stable creation-time/ID order, scoped to the same owner/library. |
 | POST /requests/{request}/cancel | Immediate revocation; idempotent draining/terminal cancellation. |
 | GET /requests/{request}/manifest | Owner-only versioned manifest; safe summary survives media expiry/purge. |
 | POST /requests/{request}/download-grants | Owner bearer authorization; create request/session-scoped one-use bootstrap <=60 seconds, originating bearer-expiry limit and configured HTTPS download-origin exchange URL; denied when unavailable. Standard idempotency replay must reissue an exchange code after reauthorization, never return a consumed credential. |

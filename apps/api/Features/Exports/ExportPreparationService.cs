@@ -34,10 +34,14 @@ public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBask
     {
         await using var db = await source.OpenConnectionAsync(ct); return await GetAsync(db, owner, library, id, ct);
     }
-    public async Task<IReadOnlyList<ExportRequestView>> ListAsync(string owner, string library, CancellationToken ct)
+    public async Task<IReadOnlyList<ExportRequestView>> ListAsync(string owner, string library, CancellationToken ct, Guid? before = null)
     {
         await using var db = await source.OpenConnectionAsync(ct); var ids = new List<Guid>();
-        await using (var cmd = Command(db, "SELECT id FROM export_requests WHERE owner_id=$1 AND library_id=$2 ORDER BY created_at DESC LIMIT 200", owner, library))
+        const string history = "SELECT id,created_at FROM export_requests WHERE owner_id=$1 AND library_id=$2 AND state IN ('expired','cancelled','unavailable')";
+        var sql = before.HasValue
+            ? history + " AND (created_at,id)<(SELECT created_at,id FROM export_requests WHERE id=$3 AND owner_id=$1 AND library_id=$2) ORDER BY created_at DESC,id DESC LIMIT 200"
+            : "SELECT id FROM (SELECT id,created_at FROM export_requests WHERE owner_id=$1 AND library_id=$2 AND state NOT IN ('expired','cancelled','unavailable') UNION ALL (" + history + " ORDER BY created_at DESC,id DESC LIMIT 200)) r ORDER BY created_at DESC,id DESC";
+        await using (var cmd = before.HasValue ? Command(db, sql, owner, library, before.Value) : Command(db, sql, owner, library))
         await using (var r = await cmd.ExecuteReaderAsync(ct)) { while (await r.ReadAsync(ct)) ids.Add(r.GetGuid(0)); }
         var result = new List<ExportRequestView>(); foreach (var id in ids) result.Add(await GetAsync(db, owner, library, id, ct)); return result;
     }
