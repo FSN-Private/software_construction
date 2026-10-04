@@ -3,6 +3,11 @@ const file = process.argv[2] ?? 'packages/infrastructure/cdk.out-exports/Platfor
 const template = JSON.parse(readFileSync(file, 'utf8'));
 const all = Object.values(template.Resources);
 function require(condition, message) { if (!condition) throw new Error(message); }
+const exportLifecycle = all.filter(r => r.Type === 'AWS::S3::Bucket').flatMap(r => r.Properties.LifecycleConfiguration?.Rules ?? []).find(r => r.Prefix === 'exports/');
+require(exportLifecycle?.ExpirationInDays === 3 && exportLifecycle.NoncurrentVersionExpiration.NoncurrentDays === 3 && exportLifecycle.AbortIncompleteMultipartUpload.DaysAfterInitiation === 3, 'Export-owned current/noncurrent versions and multipart uploads need an independent backstop preserving 24-hour publication availability.');
+const metrics = all.filter(r => r.Type === 'AWS::Logs::MetricFilter' && r.Properties.MetricTransformations[0].MetricNamespace === 'Platform/Exports');
+for (const name of ['Prepared', 'PreparationFailures', 'RenderFailures', 'PreparationDurationMs', 'BasketItems', 'QueueAgeSeconds', 'ItemOutcomes', 'PackageBytes', 'DownloadAttempts', 'PolicyDenials'])
+  require(metrics.some(r => r.Properties.MetricTransformations[0].MetricName === name && r.Properties.MetricTransformations[0].MetricValue === '$.State.MetricValue' && r.Properties.FilterPattern.includes('exports.metric')), `Collect safe export measurement ${name}.`);
 const alb = all.find(r => r.Type === 'AWS::ElasticLoadBalancingV2::LoadBalancer');
 require(alb?.Properties.Scheme === 'internal', 'Download ALB must remain private.');
 const listener = all.find(r => r.Type === 'AWS::ElasticLoadBalancingV2::Listener');

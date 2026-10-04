@@ -1,6 +1,29 @@
 using Platform.Contracts.Exports;
 using Platform.Contracts.Rendering;
 using Platform.Api.Features.Exports;
+using Platform.Api.Telemetry;
+using Microsoft.Extensions.Logging;
+var metricLog = new ExportMetricTestLogger();
+using (var collector = new ExportMetricLoggingService(metricLog))
+{
+    await collector.StartAsync(CancellationToken.None);
+    PlatformTelemetry.ExportPreparationDuration.Record(123.5, new KeyValuePair<string, object?>("owner", "private-owner"));
+    PlatformTelemetry.ExportPackageSize.Record(456, new KeyValuePair<string, object?>("path", "private-original.raw"));
+    PlatformTelemetry.ExportDownloadAttempts.Add(1);
+    PlatformTelemetry.ExportPolicyDenials.Add(1);
+    PlatformTelemetry.Requests.Add(1);
+    PlatformTelemetry.Meter.CreateCounter<long>("platform.exports.unapproved").Add(1);
+    PlatformTelemetry.ExportPreparationDuration.Record(double.NaN);
+    Check(metricLog.Events.Count == 4, "Only finite allowlisted export measurements enter the log collector");
+    Check(metricLog.Events.All(e => e.Count == 4 && Equals(e["EventType"], "exports.metric") && e["MetricValue"] is double && !string.Join(" ", e.Values).Contains("private-")), "Metric logs contain numeric values and instrument names without owner, path or other private tags");
+    Check(Equals(metricLog.Events[0]["MetricValue"], 123.5d), "Histogram measurement reaches the operational collector");
+    PlatformTelemetry.ExportPrepared.Add(1); PlatformTelemetry.ExportFailed.Add(1); PlatformTelemetry.ExportRenderFailures.Add(1);
+    PlatformTelemetry.ExportBasketSize.Record(100); PlatformTelemetry.ExportQueueAge.Record(2.5); PlatformTelemetry.ExportItemOutcomes.Add(1);
+    Check(metricLog.Events.Count == 10 && metricLog.Events.Select(e => e["MetricName"]).Distinct().Count() == 10, "Every required instrument has a log collection path");
+    await collector.StopAsync(CancellationToken.None);
+    PlatformTelemetry.ExportDownloadAttempts.Add(1);
+    Check(metricLog.Events.Count == 10, "Stopped collector no longer emits measurements");
+}
 var sha = new string('a', 64);
 var pin = new ExportPin(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new string('b', 64), new RenderInputObject("originals/a", "v1", sha, 4), new RenderInputObject("xmp/a", "v1", new string('c', 64), 4), "CON. RAW", "historical", "main", false, DateTimeOffset.UnixEpoch);
 pin.Validate(); var original = ExportPreset.Get("originals-v1");
@@ -42,3 +65,12 @@ if (Environment.GetEnvironmentVariable("EXPORT_JPEG_CORPUS") is { } corpus)
 }
 static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 static void Reject(Action action) { try { action(); } catch (ExportProblem) { return; } throw new InvalidOperationException("Expected safe rejection"); }
+
+sealed class ExportMetricTestLogger : ILogger<ExportMetricLoggingService>
+{
+    public List<Dictionary<string, object?>> Events { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        => Events.Add(((IEnumerable<KeyValuePair<string, object?>>)(object)state!).ToDictionary(p => p.Key, p => p.Value));
+}

@@ -13,6 +13,7 @@ public static class PlatformTelemetry
     public static readonly Histogram<double> RequestDuration = Meter.CreateHistogram<double>("platform.api.request.duration", unit: "ms");
     public static readonly Counter<long> ExportPrepared = Meter.CreateCounter<long>("platform.exports.prepared");
     public static readonly Counter<long> ExportFailed = Meter.CreateCounter<long>("platform.exports.failed");
+    public static readonly Counter<long> ExportRenderFailures = Meter.CreateCounter<long>("platform.exports.render.failures");
     public static readonly Histogram<double> ExportPreparationDuration = Meter.CreateHistogram<double>("platform.exports.preparation.duration", unit: "ms");
     public static readonly Histogram<long> ExportBasketSize = Meter.CreateHistogram<long>("platform.exports.basket.items");
     public static readonly Histogram<double> ExportQueueAge = Meter.CreateHistogram<double>("platform.exports.queue.age", unit: "s");
