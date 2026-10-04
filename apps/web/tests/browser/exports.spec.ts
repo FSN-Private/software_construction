@@ -445,46 +445,58 @@ test('retained requests stay discoverable behind pageable history and polling an
   ).toBeVisible();
 });
 
-test('expired bearer signs out and clears drafts without an impossible authenticated revocation', async ({
-  page,
-}) => {
-  await exportsFixture(page);
-  const now = new Date('2026-10-04T12:00:00Z');
-  await page.clock.install({ time: now });
-  const token = `fixture.${Buffer.from(JSON.stringify({ exp: now.getTime() / 1000 - 10 })).toString('base64')}.signature`;
-  await page.route('**/v1/session', (route) =>
-    route.fulfill({ json: { operationId: 'expiry-signout' } }),
-  );
-  await page.route('**/v1/version', (route) =>
-    route.fulfill({ json: { releaseId: 'fixture' } }),
-  );
-  let revocations = 0;
-  await page.route('**/exports/session/revoke', (route) => {
-    revocations++;
-    return route.fulfill({ status: 401 });
-  });
-  await page.route('**/logout?**', (route) =>
-    route.fulfill({ contentType: 'text/html', body: '<p>Signed out</p>' }),
-  );
-  await page.goto(`/#id_token=${token}`);
-  await page.clock.runFor(1500);
-  await expect(page.getByText(/Your session expired/)).toBeVisible();
-  await page.evaluate(() => {
-    sessionStorage.setItem('gallery.draft.expired', 'private draft');
-    window.addEventListener('gallery-sign-out', () =>
-      sessionStorage.setItem('signout-observed', 'yes'),
+for (const jwtName of ['¾', 'a?']) {
+  test(`expired bearer ${jwtName} signs out and clears drafts without an impossible authenticated revocation`, async ({
+    page,
+  }) => {
+    await exportsFixture(page);
+    const now = new Date('2026-10-04T12:00:00Z');
+    await page.clock.install({ time: now });
+    const payload = Buffer.from(
+      JSON.stringify({
+        sub: 'owner',
+        exp: now.getTime() / 1000 - 10,
+        name: jwtName,
+      }),
+    ).toString('base64url');
+    expect(payload).toMatch(/[-_]/);
+    const token = `fixture.${payload}.signature`;
+    await page.route('**/v1/session', (route) =>
+      route.fulfill({ json: { operationId: 'expiry-signout' } }),
     );
+    await page.route('**/v1/version', (route) =>
+      route.fulfill({ json: { releaseId: 'fixture' } }),
+    );
+    let revocations = 0;
+    await page.route('**/exports/session/revoke', (route) => {
+      revocations++;
+      return route.fulfill({ status: 401 });
+    });
+    await page.route('**/logout?**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<p>Signed out</p>' }),
+    );
+    await page.goto(`/#id_token=${token}`);
+    await page.clock.runFor(1500);
+    await expect(page.getByText(/Your session expired/)).toBeVisible();
+    await page.evaluate(() => {
+      sessionStorage.setItem('gallery.draft.expired', 'private draft');
+      window.addEventListener('gallery-sign-out', () =>
+        sessionStorage.setItem('signout-observed', 'yes'),
+      );
+    });
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page).toHaveURL(/\/logout\?/);
+    expect(revocations).toBe(0);
+    expect(
+      await page.evaluate(() =>
+        sessionStorage.getItem('gallery.draft.expired'),
+      ),
+    ).toBeNull();
+    expect(
+      await page.evaluate(() => sessionStorage.getItem('signout-observed')),
+    ).toBe('yes');
   });
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await expect(page).toHaveURL(/\/logout\?/);
-  expect(revocations).toBe(0);
-  expect(
-    await page.evaluate(() => sessionStorage.getItem('gallery.draft.expired')),
-  ).toBeNull();
-  expect(
-    await page.evaluate(() => sessionStorage.getItem('signout-observed')),
-  ).toBe('yes');
-});
+}
 
 test('clearing and deleting saved selections preserve immutable request evidence', async ({
   page,
