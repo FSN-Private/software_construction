@@ -115,6 +115,8 @@ Delegate infrastructure/capture, API/restore/purge and validation/UI work to sep
 
 ## Implementation checkpoints
 
+2026-10-05: M2 capacity checkpoint `23ee40a` independently exercises signed health at 100,009 assets/1,000,010 content records. Two local service runs measured p95 28.7 ms and 10.5 ms; neither certifies deployed HTTP latency, real media throughput or regional recovery. An additional observation-worker slice handles AWS SDK empty polls and transient receive/delete failures without acknowledging unimported messages; the actual background-service cancellation regression and Foundation executable pass. T012/T015 remain open for their broader acceptance gates.
+
 2026-10-05: additional M1 contract slice adds compact signed catalog/observation/failure envelopes and signed release-qualification validation. Independent executable checks and scoped formatting passed; qualification derives RPO/RTO from signed timestamps and rejects insufficient workload. Capture/verification executors, API import integration and all external evidence remain pending. This checkpoint does not complete T011/T013/T025.
 
 2026-10-05: M2 API slice implements private signed health mirrors and recovery-only server identity transformation. Independent PostgreSQL/S3 integration, API build/format and advisory checks passed. Catalog-order races remain retryable; invalid/tampered evidence fails closed; preserved-owner gallery/asset reads and foreign-identity denial are exercised. Full worker capture/verification, health-capacity and additional HTTP/negative cases remain open under T011-T015/T022; this slice does not certify regional recovery.

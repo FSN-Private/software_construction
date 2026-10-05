@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Amazon.Runtime;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Microsoft.Extensions.Hosting;
@@ -476,14 +477,20 @@ public sealed class RecoveryObservationQueueWorker(
                 }, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (AmazonSQSException)
+            catch (AmazonClientException)
+            {
+                logger.LogWarning("Recovery observation queue unavailable {RecoveryCode}", "queue_unavailable");
+                await Delay(stoppingToken);
+                continue;
+            }
+            catch (TimeoutException)
             {
                 logger.LogWarning("Recovery observation queue unavailable {RecoveryCode}", "queue_unavailable");
                 await Delay(stoppingToken);
                 continue;
             }
 
-            foreach (var message in response.Messages)
+            foreach (var message in response.Messages ?? [])
             {
                 try
                 {
@@ -495,7 +502,7 @@ public sealed class RecoveryObservationQueueWorker(
                 {
                     logger.LogInformation("Recovery observation awaits signed point catalog {RecoveryCode}", "catalog_pending");
                 }
-                catch (Exception error) when (error is NpgsqlException or InvalidOperationException or AmazonSQSException or TimeoutException)
+                catch (Exception error) when (error is NpgsqlException or InvalidOperationException or AmazonClientException or TimeoutException)
                 {
                     logger.LogWarning("Recovery observation import deferred {RecoveryCode}", "import_deferred");
                 }
