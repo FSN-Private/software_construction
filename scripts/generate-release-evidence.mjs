@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createReleaseManifest } from '../packages/release-tools/release-manifest.mjs';
+import { attachRecoveryEvidence, recoveryVerificationConfiguration } from './recovery-release-evidence.mjs';
 
 const [sourceRevision, outputDirectory, ciRunId, releaseRunId, repository] = process.argv.slice(2);
 if (!/^[a-f0-9]{40}$/.test(sourceRevision) || !outputDirectory || !/^\d+$/.test(ciRunId) || !/^\d+$/.test(releaseRunId) || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
@@ -9,7 +10,11 @@ if (!/^[a-f0-9]{40}$/.test(sourceRevision) || !outputDirectory || !/^\d+$/.test(
 }
 mkdirSync(outputDirectory, { recursive: true });
 const artifacts = readdirSync(outputDirectory, { withFileTypes: true }).filter((entry) => entry.isFile() && /\.(tar|zip)$/.test(entry.name)).map((entry) => join(outputDirectory, entry.name));
-if (artifacts.length !== 6) throw new Error('Release evidence requires API, ingest worker, renderer, web, infrastructure, and Windows artifacts.');
+const expectedArtifacts = ['api.tar', 'ingest-worker.tar', 'render-worker.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip'];
+const names = artifacts.map((path) => basename(path)).sort();
+const recoveryArtifact = names.includes('recovery-worker.tar');
+if (JSON.stringify(names) !== JSON.stringify([...expectedArtifacts, ...(recoveryArtifact ? ['recovery-worker.tar'] : [])].sort()))
+  throw new Error('Release evidence requires the exact API, workers, web, infrastructure, and Windows artifact set.');
 const digest = (path) => `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
 const buildType = `https://github.com/${repository}/blob/master/docs/contracts/release-provenance-v1.md`;
 const sbom = join(outputDirectory, 'sbom.spdx.json');
@@ -34,4 +39,9 @@ writeFileSync(provenance, JSON.stringify({
 }, null, 2));
 writeFileSync(validation, JSON.stringify({ sourceRevision, ciWorkflow: 'Continuous integration', ciRunId, conclusion: 'success', requiredChecks: ['ci / backend', 'ci / web', 'ci / windows', 'ci / infrastructure', 'ci / security', 'ci / required'] }, null, 2));
 const manifest = createReleaseManifest({ releaseId: `vbuild-${sourceRevision}`, sourceRevision, artifacts, sbom, provenance, additionalEvidence: [validation], compatibility: { rollbackAllowed: true, schemaVersion: 'v1' } });
+if (recoveryArtifact) manifest.compatibility.recoveryRequired = true;
+const recovery = recoveryVerificationConfiguration();
+if (Object.values(recovery).some(Boolean) && !recoveryArtifact)
+  throw new Error('Recovery qualification requires the immutable recovery worker artifact.');
+if (Object.values(recovery).some(Boolean)) attachRecoveryEvidence(manifest, outputDirectory, recovery);
 writeFileSync(join(outputDirectory, 'release-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

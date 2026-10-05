@@ -33,6 +33,15 @@ RENDERER_IMAGE="$(publish_immutable "platform-render-worker:$SOURCE_REVISION" "$
 test -n "$API_IMAGE" && test -n "$WORKER_IMAGE" && test -n "$RENDERER_IMAGE"
 RENDERER_DIGEST="${RENDERER_IMAGE##*@}"
 
+# Production must pass this gate before task registration or persistent migration.
+# Non-production candidates can still run to generate qualification evidence.
+if test "${RECOVERY_REQUIRED:-false}" = true; then
+  API_IMAGE="$API_IMAGE" WORKER_IMAGE="$WORKER_IMAGE" RENDERER_IMAGE="$RENDERER_IMAGE" node scripts/verify-recovery-promotion.mjs
+elif test -n "${RELEASE_TAG:-}"; then
+  echo 'A tagged production release requires independently verified recovery qualification.'
+  exit 1
+fi
+
 MANIFEST="$RELEASE_DIR/release-manifest.json"
 MANIFEST_DIGEST="sha256:$(sha256sum "$MANIFEST" | awk '{print $1}')"
 API_TAR_DIGEST="$(jq -er '.artifacts[] | select(.name == "api.tar") | .digest' "$MANIFEST")"

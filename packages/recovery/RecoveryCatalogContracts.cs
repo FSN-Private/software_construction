@@ -16,6 +16,8 @@ public sealed record RecoveryCatalogCoverageV1(
 {
     public void Validate()
     {
+        if (SafeCodes is null || SafeCodes.Any(code => code is null))
+            throw new InvalidDataException("invalid_catalog_safe_codes");
         if (!RecoveryEvidenceCodec.ObservationClasses.Contains(DataClass, StringComparer.Ordinal))
             throw new InvalidDataException("invalid_catalog_class");
         if (!RecoveryEvidenceCodec.ObservationOutcomes.Contains(Outcome, StringComparer.Ordinal))
@@ -96,7 +98,7 @@ public sealed record RecoveryCatalogPayloadV1(
         RecoveryValidation.Hash(FullManifestSha256, nameof(FullManifestSha256));
         RecoveryValidation.Hash(CheckpointSha256, nameof(CheckpointSha256));
         RecoveryValidation.Text(VerifierBuild, nameof(VerifierBuild), 200);
-        if (Coverage is null || Coverage.Count != RecoveryEvidenceCodec.ObservationClasses.Length)
+        if (Coverage is null || Coverage.Count != RecoveryEvidenceCodec.ObservationClasses.Length || Coverage.Any(item => item is null))
             throw new InvalidDataException("catalog_coverage_incomplete");
         foreach (var item in Coverage) item.Validate();
         if (Coverage.Select(item => item.DataClass).Distinct(StringComparer.Ordinal).Count() != Coverage.Count ||
@@ -137,7 +139,7 @@ public sealed record RecoveryCatalogEnvelopeV1(
         RecoveryValidation.Hash(SigningPublicKeySha256, nameof(SigningPublicKeySha256));
         RecoveryValidation.Hash(SafeCatalogPayloadSha256, nameof(SafeCatalogPayloadSha256));
         try { _ = Convert.FromBase64String(CanonicalPayloadBase64); _ = Convert.FromBase64String(SignatureBase64); }
-        catch (FormatException exception) { throw new InvalidDataException("invalid_catalog_signature_encoding", exception); }
+        catch (Exception exception) when (exception is FormatException or ArgumentNullException) { throw new InvalidDataException("invalid_catalog_signature_encoding", exception); }
         if (string.IsNullOrWhiteSpace(SignatureBase64)) throw new InvalidDataException("catalog_signature_required");
     }
 }

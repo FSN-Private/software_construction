@@ -17,6 +17,7 @@ jobs:
   preflight:
     outputs:
       release_run_id: ${{ steps.evidence-runs.outputs.release_run_id }}
+      nonprod_run_id: ${{ steps.evidence-runs.outputs.nonprod_run_id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -95,6 +96,17 @@ jobs:
       COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_PRODUCTION_COGNITO_OWNER_PASSWORD }}
       RELEASE_DIR: artifacts/release
       DEPLOYMENT_RECORD: artifacts/release/production-promotion.json
+      RECOVERY_REQUIRED: 'true'
+      PRIMARY_ACCOUNT_ID: ${{ vars.AWS_PRIMARY_ACCOUNT_ID }}
+      RECOVERY_ACCOUNT_ID: ${{ vars.AWS_RECOVERY_ACCOUNT_ID }}
+      RECOVERY_TEMPLATE_DIGEST: ${{ vars.AWS_RECOVERY_TEMPLATE_DIGEST }}
+      RECOVERY_CONFIGURATION_DIGEST: ${{ vars.AWS_RECOVERY_CONFIGURATION_DIGEST }}
+      RECOVERY_OWNER_ACCESS_EVIDENCE_DIGEST: ${{ vars.AWS_RECOVERY_OWNER_ACCESS_EVIDENCE_DIGEST }}
+      RECOVERY_WORKER_IMAGE: ${{ vars.AWS_RECOVERY_WORKER_IMAGE }}
+      RECOVERY_QUALIFICATION_PATH: artifacts/recovery-qualification/recovery-qualification.json
+      RECOVERY_CHECKPOINT_PATH: artifacts/recovery-qualification/recovery-checkpoint.json
+      RECOVERY_TRUST_PATH: artifacts/recovery-trust.json
+      RECOVERY_OFFLINE_ANCHOR_PATH: artifacts/recovery-offline-anchor.json
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -110,8 +122,49 @@ jobs:
           case "$GITHUB_REF_NAME" in v*) ;; *) echo 'Production promotion requires a v* tag.'; exit 1 ;; esac
           git fetch --no-tags origin master
           git merge-base --is-ancestor "$GITHUB_SHA" origin/master
-          node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
           test "$(jq -r '.compatibility.rollbackAllowed' artifacts/release/release-manifest.json)" = true
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Publish the offline verifier from this exact release revision
+        run: |
+          dotnet restore apps/recovery-worker/Platform.Recovery.Worker.csproj --locked-mode
+          dotnet publish apps/recovery-worker/Platform.Recovery.Worker.csproj --configuration Release --no-restore --output artifacts/recovery-worker
+      - name: Validate independently selected qualification run
+        env:
+          QUALIFICATION_RUN_ID: ${{ vars.AWS_RECOVERY_QUALIFICATION_RUN_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_RUN_ID" =~ ^[0-9]+$ ]]
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.AWS_RECOVERY_QUALIFICATION_RUN_ID }}
+          name: recovery-qualification
+          path: artifacts/recovery-qualification
+      - name: Install separately provisioned signing trust and offline audit anchor
+        env:
+          RECOVERY_SIGNING_TRUST: ${{ secrets.AWS_RECOVERY_SIGNING_TRUST }}
+          RECOVERY_OFFLINE_AUDIT_ANCHOR: ${{ secrets.AWS_RECOVERY_OFFLINE_AUDIT_ANCHOR }}
+        run: |
+          set -euo pipefail
+          test -n "$RECOVERY_SIGNING_TRUST" && test -n "$RECOVERY_OFFLINE_AUDIT_ANCHOR"
+          umask 077
+          printf '%s' "$RECOVERY_SIGNING_TRUST" > "$RECOVERY_TRUST_PATH"
+          printf '%s' "$RECOVERY_OFFLINE_AUDIT_ANCHOR" > "$RECOVERY_OFFLINE_ANCHOR_PATH"
+      - name: Verify immutable release provenance with the offline verifier available
+        run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$GITHUB_SHA" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.preflight.outputs.nonprod_run_id }}
+          name: nonprod-deployment-evidence
+          path: artifacts/nonprod
+      - name: Verify recovery qualification before production credentials or writes
+        run: |
+          set -euo pipefail
+          node scripts/verify-promotion-evidence.mjs artifacts/release/release-manifest.json artifacts/nonprod/nonprod-deployment.json "$SOURCE_REVISION" "$RELEASE_RUN_ID"
+          node scripts/verify-recovery-promotion.mjs --from-nonprod artifacts/nonprod/nonprod-deployment.json
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
@@ -122,5 +175,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: production-promotion-evidence
-          path: artifacts/release
+          path: |
+            artifacts/release
+            artifacts/recovery-qualification
           retention-days: 90

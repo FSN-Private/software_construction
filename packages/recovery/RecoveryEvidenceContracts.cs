@@ -234,9 +234,36 @@ public static class RecoveryEvidenceCodec
         return signature;
     }
 
+    public static byte[] VerifyDetachedDigest(
+        string payloadSha256,
+        string signatureBase64,
+        string signingKeyId,
+        string signingPublicKeySha256,
+        RecoverySigningTrust trust)
+    {
+        ArgumentNullException.ThrowIfNull(trust);
+        RecoveryValidation.Hash(payloadSha256, nameof(payloadSha256));
+        var publicKey = trust.ValidateAndGetPublicKey();
+        if (signingKeyId != trust.KeyId || signingPublicKeySha256 != trust.PublicKeySha256)
+            throw new InvalidDataException("untrusted_evidence_signer");
+        byte[] signature;
+        try { signature = Convert.FromBase64String(signatureBase64); }
+        catch (Exception exception) when (exception is FormatException or ArgumentNullException)
+        {
+            throw new InvalidDataException("invalid_evidence_signature", exception);
+        }
+        using var rsa = RSA.Create();
+        rsa.ImportSubjectPublicKeyInfo(publicKey, out _);
+        if (!rsa.VerifyHash(Convert.FromHexString(payloadSha256), signature,
+                HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
+            throw new InvalidDataException("evidence_signature_invalid");
+        return signature;
+    }
+
     public static void ValidateSafeCodes(IReadOnlyList<string>? codes)
     {
-        if (codes is null || codes.Count > 100 || codes.Distinct(StringComparer.Ordinal).Count() != codes.Count)
+        if (codes is null || codes.Count > 100 || codes.Any(code => code is null) ||
+            codes.Distinct(StringComparer.Ordinal).Count() != codes.Count)
             throw new InvalidDataException("invalid_safe_codes");
         foreach (var code in codes)
         {
