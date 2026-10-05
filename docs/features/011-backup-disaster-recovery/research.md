@@ -42,6 +42,16 @@ The proposal relies on official AWS documentation:
 
 The 15-minute dump/copy interval is only a candidate. RPO evidence must compare declared loss time to the cutoff of the newest fully verified recovery point, prove all acknowledged mutations through that cutoff via the transactional ledger, and prove the exact payload closure exists. RTO must restore the complete approved byte envelope and owner access, not only a representative fixture. At present, no defensible dollar estimate or 24-hour guarantee exists because total bytes, size distribution, growth, and throughput are unknown.
 
+## Implementation constraint checks, 2026-10-05
+
+The approved safe-summary mirror must stay independent of inventory size. The primary queue carries signed point metadata, full-manifest/checkpoint digests and class totals; exact object locators and full closure manifests remain in recovery-owned storage. SQS currently limits an individual message to 1 MiB, and the importer deliberately applies a smaller bound. [AWS SQS message quotas](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html).
+
+Durable DynamoDB records must likewise remain bounded metadata or exact-version pointers to signed S3 artifacts, rather than one embedded full-library closure. DynamoDB limits an item to 400 KiB including attribute names and values. Per-object write intents remain individually bounded. [AWS DynamoDB constraints](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html).
+
+## Worker dependency assessment (2026-10-05)
+
+The recovery worker adds exact-version AWS SDK packages for DynamoDB durable catalog/write intents, KMS RSA-PSS signing, Secrets Manager database credentials, STS scoped source reads/account identity, and SQS safe result publication. Existing S3 and Npgsql dependencies are reused through project references. `apps/recovery-worker/packages.lock.json` records resolved versions and content hashes; the new services require AWS SDK Core 4.0.102.8 in the worker dependency graph. No new package feed or package installation script is introduced. The official [DynamoDB package](https://www.nuget.org/packages/AWSSDK.DynamoDBv2/4.0.107) and [STS package](https://www.nuget.org/packages/AWSSDK.SecurityToken/4.0.101.1) identify `awsdotnet` ownership and Apache-2.0 licensing. The live NuGet advisory check including transitive worker dependencies reported no known vulnerabilities; see [validation.md](validation.md). Recheck advisories and locked restore when these pins change, and remove any service package unused by the completed commands (NFR-004, NFR-009, NFR-015).
+
 ## External prerequisites and approvals
 
 T006 approval is required before code. Real release evidence additionally requires an owner-provisioned recovery account/region, recovery KMS key and MFA custodian, scoped primary read trust, destination storage/ECR, verified owner mailbox, alert recipients, agreed byte/growth envelope and monthly budget, and explicit authorization for provisioning, deployment, cold transition, and a complete AWS drill. Local contract tests cannot replace these external checks. Until the account is provisioned and a full drill succeeds, FR-007/FR-008 remain blocked for release.

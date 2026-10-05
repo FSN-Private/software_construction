@@ -115,4 +115,6 @@ Delegate infrastructure/capture, API/restore/purge and validation/UI work to sep
 
 ## Implementation checkpoints
 
+2026-10-05: additional M1 contract slice adds compact signed catalog/observation/failure envelopes and signed release-qualification validation. Independent executable checks and scoped formatting passed; qualification derives RPO/RTO from signed timestamps and rejects insufficient workload. Capture/verification executors, API import integration and all external evidence remain pending. This checkpoint does not complete T011/T013/T025.
+
 2026-10-05: M1 atomic foundation checkpoint `4fbf6ed` adds contracts, storage primitives and additive schema with independently passing recovery unit and PostgreSQL/S3 compatibility checks. T008/T009 remain open for direct capture/reconstruction and storage integration. M2 owner-view slice `00fbc9b` adds backup health with nine passing browser checks and six existing navigation/session regressions. Capture, signed observation import, restore/purge, infrastructure, qualification and final review remain in progress. Neither checkpoint declares full feature acceptance.
