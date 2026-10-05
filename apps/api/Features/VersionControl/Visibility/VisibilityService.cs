@@ -24,6 +24,9 @@ public sealed class VisibilityService(NpgsqlDataSource dataSource, TimeProvider?
             await HistoryRetention.ReconcileAsync(connection, graph, owner, library, hiddenHistory, (clock ?? TimeProvider.System).GetUtcNow(), cancellationToken);
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, request.Hidden ? "version-control.commit.hidden" : "version-control.commit.unhidden", RefService.StableResource(request.CommitId), "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            request.Hidden ? "version-control.commit.hidden" : "version-control.commit.unhidden", "commit-visibility",
+            request.CommitId, [request.CommitId], cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(operationId, request.CommitId);
     }

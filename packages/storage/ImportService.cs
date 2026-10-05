@@ -5,7 +5,7 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Storage;
 
-public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, long quotaBytes = 1024L * 1024 * 1024 * 1024)
+public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, long quotaBytes = 1024L * 1024 * 1024 * 1024, string libraryId = "main")
 {
     public async Task<BatchStatus> CreateAsync(string owner, string key, string operation, ImportRequest request, CancellationToken ct)
     {
@@ -29,7 +29,9 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
             )
             INSERT INTO import_batch_items(id,batch_id,upload_session_id,state) SELECT gen_random_uuid(),$1,id,'uploading' FROM sessions
             """, ct, id, owner, operation, JsonSerializer.Serialize(rows));
-        await AuditAsync(connection, owner, operation, "import.batch_created", id, "accepted", ct);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
+            "import.batch_created", id, "accepted", "import-batch", id.ToString("D"),
+            request.Items.Select(item => item.Sha256).Distinct(StringComparer.Ordinal).ToArray(), ct);
         await transaction.CommitAsync(ct);
         return await StatusAsync(owner, id, ct);
     }
@@ -72,7 +74,8 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
             var etag = await storage.UploadPartAsync(id, uploadId, number, stream, ct);
             parts.Add(new(number, etag, hash, requiredLength));
             await ExecuteAsync(connection, "UPDATE upload_sessions SET multipart_id=$2,received_parts=$3::jsonb WHERE id=$1", ct, id, uploadId, JsonSerializer.Serialize(parts));
-            await AuditAsync(connection, owner, operation, "upload.part_received", id, "accepted", ct);
+            await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
+                "upload.part_received", id, "accepted", "upload-session", id.ToString("D"), [], ct);
         }
         await transaction.CommitAsync(ct);
         return (await StatusAsync(owner, session.BatchId, ct)).Items.Single(i => i.Id == id);
@@ -88,7 +91,8 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
         if (session.MultipartId is null || session.Parts.Sum(p => p.Length) != session.Length) throw new IngestException("upload_incomplete");
         var storageVersion = await storage.CompleteUploadAsync(id, session.MultipartId, session.Parts, ct);
         await ExecuteAsync(connection, "UPDATE upload_sessions SET state='verifying',staging_version=$2,lifecycle_version=lifecycle_version+1,operation_id=$3 WHERE id=$1; UPDATE import_batch_items SET state='verifying' WHERE upload_session_id=$1; UPDATE import_batches SET state='processing' WHERE id=$4; INSERT INTO ingest_publications(batch_id) VALUES($4) ON CONFLICT DO NOTHING", ct, id, storageVersion, operation, session.BatchId);
-        await AuditAsync(connection, owner, operation, "upload.completed", id, "verifying", ct);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
+            "upload.completed", id, "verifying", "upload-session", id.ToString("D"), [], ct);
         await transaction.CommitAsync(ct);
         return (await StatusAsync(owner, session.BatchId, ct)).Items.Single(i => i.Id == id);
     }
@@ -102,7 +106,8 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
         if (session.Version != version || session.State != "uploading") throw new IngestException("lifecycle_conflict");
         if (session.MultipartId is not null) await storage.AbortUploadAsync(id, session.MultipartId, ct);
         await ExecuteAsync(connection, "UPDATE upload_sessions SET state='cancelled',outcome_code='cancelled',lifecycle_version=lifecycle_version+1 WHERE id=$1; UPDATE import_batch_items SET state='failed',outcome_code='cancelled' WHERE upload_session_id=$1; INSERT INTO ingest_publications(batch_id) VALUES($2) ON CONFLICT DO NOTHING", ct, id, session.BatchId);
-        await AuditAsync(connection, owner, operation, "upload.cancelled", id, "accepted", ct);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
+            "upload.cancelled", id, "accepted", "upload-session", id.ToString("D"), [], ct);
         await transaction.CommitAsync(ct);
     }
 

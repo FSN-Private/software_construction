@@ -49,8 +49,10 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
 {
     builder.Services.AddSingleton(NpgsqlDataSource.Create(ingestConnection));
     builder.Services.AddSingleton<TransferGrantIssuer>();
-    builder.Services.AddSingleton<ImportService>();
-    builder.Services.AddSingleton<AssetService>();
+    builder.Services.AddSingleton(sp => new ImportService(sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<S3ObjectStore>(), libraryId: builder.Configuration["Recovery:LibraryId"] ?? builder.Configuration["Gallery:LibraryId"] ?? "main"));
+    builder.Services.AddSingleton(sp => new AssetService(sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<S3ObjectStore>(), libraryId: builder.Configuration["Recovery:LibraryId"] ?? builder.Configuration["Gallery:LibraryId"] ?? "main"));
     builder.Services.AddSingleton<Platform.Storage.Reconstruction.ManifestService>();
     builder.Services.AddSingleton<IdempotencyStore>();
     builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();

@@ -45,20 +45,32 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
     {
         var branch = RefNames.Normalize(branchValue);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockOwnerAsync(connection, owner, cancellationToken);
         if (await ScalarAsync(connection, "SELECT 1 FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3 AND kind='branch'", cancellationToken, owner, library, branch) is null) throw new VersionControlProblem("ref_not_found", 404);
         await ExecuteAsync(connection, "INSERT INTO windows_sync_devices(owner_id,library_id,device_id,normalized_ref) VALUES($1,$2,$3,$4) ON CONFLICT(owner_id,library_id,device_id) DO UPDATE SET normalized_ref=excluded.normalized_ref,cursor=NULL,version=windows_sync_devices.version+1,revoked=false,updated_at=now()", cancellationToken, owner, library, device, branch);
         await ExecuteAsync(connection, "DELETE FROM windows_sync_device_content WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device);
-        await AuditAsync(connection, owner, operationId, "windows-sync.device.registered", StableId(device), "accepted", cancellationToken);
-        return await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
+        var stableId = StableId(device);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "windows-sync.device.registered", stableId, "accepted", "windows-sync-device", stableId.ToString("D"), [], cancellationToken);
+        var result = await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public async Task<WindowsSyncDeviceView> RevokeAsync(string owner, string library, string device, string operationId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockOwnerAsync(connection, owner, cancellationToken);
         if (await ExecuteAsync(connection, "UPDATE windows_sync_devices SET revoked=true,version=version+1,updated_at=now() WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device) != 1) throw new VersionControlProblem("device_not_found", 404);
         await ExecuteAsync(connection, "DELETE FROM windows_sync_device_content WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device);
-        await AuditAsync(connection, owner, operationId, "windows-sync.device.revoked", StableId(device), "accepted", cancellationToken);
-        return await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
+        var stableId = StableId(device);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "windows-sync.device.revoked", stableId, "accepted", "windows-sync-device", stableId.ToString("D"), [], cancellationToken);
+        var result = await DeviceAsync(connection, owner, library, device, operationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public async Task<WindowsSyncNamespacePage> NamespaceAsync(string owner, string library, string device, string branchValue, string? cursorValue, int limit, CancellationToken cancellationToken)
@@ -108,6 +120,8 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
     public async Task<WindowsSyncContentDownload> ContentAsync(string owner, string library, string device, Guid contentId, string operationId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockOwnerAsync(connection, owner, cancellationToken);
         var branch = (string?)await ScalarAsync(connection, "SELECT normalized_ref FROM windows_sync_devices WHERE owner_id=$1 AND library_id=$2 AND device_id=$3", cancellationToken, owner, library, device) ?? throw new VersionControlProblem("device_not_found", 404);
         await EnsureDeviceAsync(connection, owner, library, device, branch, cancellationToken);
         await using var command = Command(connection, SelectedNamespace + "SELECT c.sha256,c.byte_length,c.storage_version FROM windows_sync_device_content d JOIN windows_sync_content_ids i ON i.content_id=d.content_id JOIN content_objects c ON c.sha256=i.content_sha256 AND c.integrity_state='authoritative' WHERE d.owner_id=$1 AND d.library_id=$2 AND d.device_id=$4 AND d.content_id=$5 AND EXISTS(SELECT 1 FROM selected s WHERE s.content_sha256=c.sha256)", owner, library, branch, device, contentId);
@@ -117,8 +131,19 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         var version = reader.GetString(2);
         await reader.DisposeAsync();
         var bytes = await storage.ReadVerifiedAsync(address.AuthoritativeKey, version, address, cancellationToken);
-        await AuditAsync(connection, owner, operationId, "windows-sync.content.downloaded", contentId, "accepted", cancellationToken);
-        return new(bytes, address);
+        try
+        {
+            await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+                "windows-sync.content.downloaded", contentId, "accepted", "windows-sync-content", contentId.ToString("D"),
+                [address.Sha256], cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new(bytes, address);
+        }
+        catch
+        {
+            await bytes.DisposeAsync();
+            throw;
+        }
     }
 
     public async Task<WindowsSyncMutationView> UploadAsync(string owner, string library, string device, string branchValue, Guid asset, Guid? edit, string path, string? baseSha256, string expectedSha256, HttpRequest request, string operationId, CancellationToken cancellationToken)
@@ -163,20 +188,18 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         bytes.Position = 0;
         var storageVersion = await storage.PublishVerifiedAsync(address, bytes, cancellationToken);
 
-        await using (var provenance = await dataSource.OpenConnectionAsync(cancellationToken))
-        {
-            var batch = StableId("batch:" + idempotencyKey);
-            var session = StableId("session:" + idempotencyKey);
-            await ExecuteAsync(provenance, """
-                INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,$2,'xmp',$3,$4,'authoritative') ON CONFLICT(sha256) DO UPDATE SET storage_version=COALESCE(content_objects.storage_version,excluded.storage_version),integrity_state='authoritative';
-                INSERT INTO import_batches(id,owner_id,idempotency_key,atomic,state) VALUES($5,$6,$7,false,'completed') ON CONFLICT(owner_id,idempotency_key) DO NOTHING;
-                INSERT INTO upload_sessions(id,batch_id,owner_id,target_key,expected_sha256,expected_length,state,expires_at,lifecycle_version,logical_path,category,asset_id,edit_id,verified_at,operation_id)
-                VALUES($8,$5,$6,'windows-sync/'||$8,$1,$2,'completed',now()+interval '24 hours',1,$9,'xmp',$10,$11,now(),$12) ON CONFLICT(id) DO NOTHING;
-                INSERT INTO import_batch_items(id,batch_id,upload_session_id,state) VALUES(gen_random_uuid(),$5,$8,'completed') ON CONFLICT(upload_session_id) DO NOTHING;
-                """, cancellationToken, address.Sha256, address.Length, address.AuthoritativeKey, storageVersion, batch, owner, "windows-sync:" + idempotencyKey, session, path, asset, edit, operationId);
-        }
+        var batch = StableId("batch:" + idempotencyKey);
+        var session = StableId("session:" + idempotencyKey);
+        await ExecuteAsync(connection, """
+            INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,$2,'xmp',$3,$4,'authoritative') ON CONFLICT(sha256) DO UPDATE SET storage_version=COALESCE(content_objects.storage_version,excluded.storage_version),integrity_state='authoritative';
+            INSERT INTO import_batches(id,owner_id,idempotency_key,atomic,state) VALUES($5,$6,$7,false,'completed') ON CONFLICT(owner_id,idempotency_key) DO NOTHING;
+            INSERT INTO upload_sessions(id,batch_id,owner_id,target_key,expected_sha256,expected_length,state,expires_at,lifecycle_version,logical_path,category,asset_id,edit_id,verified_at,operation_id)
+            VALUES($8,$5,$6,'windows-sync/'||$8,$1,$2,'completed',now()+interval '24 hours',1,$9,'xmp',$10,$11,now(),$12) ON CONFLICT(id) DO NOTHING;
+            INSERT INTO import_batch_items(id,batch_id,upload_session_id,state) VALUES(gen_random_uuid(),$5,$8,'completed') ON CONFLICT(upload_session_id) DO NOTHING;
+            """, cancellationToken, address.Sha256, address.Length, address.AuthoritativeKey, storageVersion, batch, owner, "windows-sync:" + idempotencyKey, session, path, asset, edit, operationId);
         var version = Convert.ToInt64(await ScalarAsync(connection, "SELECT COALESCE((SELECT version FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6),0)", cancellationToken, owner, library, device, branch, asset, edit), System.Globalization.CultureInfo.InvariantCulture);
-        var changed = await working.PutAsync(owner, library, device, new(asset, edit, branch, "modified", baseSha256, address.Sha256, path, null, version), operationId, cancellationToken);
+        var changed = await working.PutInTransactionAsync(connection, transaction, owner, library, device,
+            new(asset, edit, branch, "modified", baseSha256, address.Sha256, path, null, version), operationId, cancellationToken);
         var result = new WindowsSyncMutationView(operationId, "working", changed.Version, changed.ContentSha256);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, null, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

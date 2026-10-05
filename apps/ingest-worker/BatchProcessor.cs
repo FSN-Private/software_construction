@@ -8,40 +8,66 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Ingest.Worker;
 
-public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, ILogger<BatchProcessor>? logger = null)
+public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, ILogger<BatchProcessor>? logger = null, string libraryId = "main")
 {
     public async Task<int> ExpireAsync(CancellationToken ct)
     {
         await using var connection = await db.OpenConnectionAsync(ct);
-        var cleanup = new List<(Guid Id, string Key, string Version, bool Quarantine)>();
+        var cleanup = new List<(Guid Id, string Key, string Version, bool Quarantine, string Owner, string Operation, string Sha256)>();
         var expiredUploads = new List<(Guid Id, string? UploadId)>();
         await using (var command = Command(connection, "SELECT id,multipart_id FROM upload_sessions WHERE state='uploading' AND expires_at<=now()"))
         await using (var reader = await command.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) expiredUploads.Add((reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetString(1)));
         foreach (var item in expiredUploads) await storage.DeleteStagingAsync(item.Id, item.UploadId, ct);
         await using (var command = Command(connection, """
-            SELECT id,target_key,staging_version,false FROM upload_sessions WHERE staging_version IS NOT NULL AND state IN ('completed','failed')
-            UNION ALL SELECT id,'quarantine/'||replace(id::text,'-',''),quarantine_version,true FROM upload_sessions WHERE quarantine_version IS NOT NULL AND quarantine_until<=now()
+            SELECT id,target_key,staging_version,false,owner_id,operation_id,expected_sha256
+              FROM upload_sessions WHERE staging_version IS NOT NULL AND state IN ('completed','failed')
+            UNION ALL
+            SELECT id,'quarantine/'||replace(id::text,'-',''),quarantine_version,true,owner_id,operation_id,expected_sha256
+              FROM upload_sessions WHERE quarantine_version IS NOT NULL AND quarantine_until<=now()
             """))
         await using (var reader = await command.ExecuteReaderAsync(ct))
-            while (await reader.ReadAsync(ct)) cleanup.Add((reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3)));
+            while (await reader.ReadAsync(ct)) cleanup.Add((reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3), reader.GetString(4), reader.GetString(5), reader.GetString(6).Trim()));
         foreach (var item in cleanup)
         {
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            await LockOwnerAsync(connection, item.Owner, ct);
             await storage.DeleteVersionAsync(item.Key, item.Version, ct);
-            await ExecuteAsync(connection, item.Quarantine ? "UPDATE upload_sessions SET quarantine_version=NULL WHERE id=$1 AND quarantine_version=$2" : "UPDATE upload_sessions SET staging_version=NULL WHERE id=$1 AND staging_version=$2", ct, item.Id, item.Version);
+            var removed = await ExecuteAsync(connection, item.Quarantine ? "UPDATE upload_sessions SET quarantine_version=NULL WHERE id=$1 AND quarantine_version=$2" : "UPDATE upload_sessions SET staging_version=NULL WHERE id=$1 AND staging_version=$2", ct, item.Id, item.Version);
+            if (removed == 1)
+                await AuditAndRecordRecoveryChangeAsync(connection, transaction, item.Owner, libraryId, item.Operation,
+                    item.Quarantine ? "ingest.quarantine_expired" : "ingest.staging_cleaned", item.Id,
+                    "completed", "upload-session", item.Id.ToString("D"), [item.Sha256], ct);
+            await transaction.CommitAsync(ct);
         }
-        return await ExecuteAsync(connection, """
+
+        await using var expireTransaction = await connection.BeginTransactionAsync(ct);
+        var owners = new List<string>();
+        await using (var ownerQuery = Command(connection, "SELECT DISTINCT owner_id FROM upload_sessions WHERE state='uploading' AND expires_at<=now() ORDER BY owner_id"))
+        await using (var reader = await ownerQuery.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) owners.Add(reader.GetString(0));
+        foreach (var owner in owners) await LockOwnerAsync(connection, owner, ct);
+
+        var expired = new List<(Guid Id, string Owner, string Operation, string Sha256)>();
+        await using (var expire = new NpgsqlCommand("""
             WITH expired AS (
                 UPDATE upload_sessions SET state='failed',outcome_code='upload_expired',lifecycle_version=lifecycle_version+1
-                WHERE state='uploading' AND expires_at<=now() RETURNING id,batch_id,owner_id,operation_id
+                WHERE state='uploading' AND expires_at<=now() RETURNING id,batch_id,owner_id,operation_id,expected_sha256
             ), items AS (
                 UPDATE import_batch_items SET state='failed',outcome_code='upload_expired' WHERE upload_session_id IN (SELECT id FROM expired)
             ), queued AS (
                 INSERT INTO ingest_publications(batch_id) SELECT DISTINCT batch_id FROM expired ON CONFLICT DO NOTHING
             )
-            INSERT INTO audit_events(id,owner_id,operation_id,event_type,resource_id,outcome,reason_code)
-            SELECT gen_random_uuid(),owner_id,operation_id,'upload.expired',id,'failed','upload_expired' FROM expired
-            """, ct);
+            SELECT id,owner_id,operation_id,expected_sha256 FROM expired ORDER BY owner_id,id
+            """, connection, expireTransaction))
+        await using (var reader = await expire.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) expired.Add((reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3).Trim()));
+        foreach (var item in expired)
+            await AuditAndRecordRecoveryChangeAsync(connection, expireTransaction, item.Owner, libraryId, item.Operation,
+                "upload.expired", item.Id, "failed", "upload-session", item.Id.ToString("D"), [item.Sha256], ct,
+                "upload_expired");
+        await expireTransaction.CommitAsync(ct);
+        return expired.Count;
     }
 
     public async Task<bool> ProcessNextAsync(CancellationToken ct)
@@ -80,7 +106,7 @@ public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, I
                 await transaction.SaveAsync("publication_item", ct);
                 try
                 {
-                    await PublishItemAsync(connection, owner, batchId, item, ct);
+                    await PublishItemAsync(connection, transaction, owner, batchId, item, ct);
                     IngestTelemetry.VerifiedBytes.Add(item.Address.Length);
                 }
                 catch (Exception e) when (e is InvalidDataException or IngestException || e is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
@@ -99,7 +125,9 @@ public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, I
             {
                 var quarantineVersion = item.Version is null ? null : await storage.QuarantineAsync(item.Id, item.Version, ct);
                 await ExecuteAsync(connection, "UPDATE upload_sessions SET state='failed',outcome_code=$2,quarantine_until=now()+interval '30 days',quarantine_version=$3,lifecycle_version=lifecycle_version+1 WHERE id=$1; UPDATE import_batch_items SET state='quarantined',outcome_code=$2 WHERE upload_session_id=$1", ct, item.Id, failures[item.Id], quarantineVersion);
-                await AuditAsync(connection, owner, item.Operation, "ingest.quarantined", item.Id, "quarantined", ct, failures[item.Id]);
+                await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, item.Operation,
+                    "ingest.quarantined", item.Id, "quarantined", "upload-session", item.Id.ToString("D"),
+                    [item.Address.Sha256], ct, failures[item.Id]);
                 IngestTelemetry.Quarantined.Add(1);
                 logger?.LogWarning("Ingest item quarantined {AuditEventType} {ReasonCode}", "ingest.quarantined", failures[item.Id]);
             }
@@ -122,13 +150,23 @@ public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, I
             if (batchId != default)
             {
                 await using var connection = await db.OpenConnectionAsync(ct);
-                await ExecuteAsync(connection, "UPDATE ingest_publications SET attempts=attempts+1,last_error='storage_retryable',updated_at=now() WHERE batch_id=$1; INSERT INTO audit_events(id,owner_id,operation_id,event_type,resource_id,outcome,reason_code) SELECT $2,owner_id,'op_repair','publication.retry',id,'failed','storage_retryable' FROM import_batches WHERE id=$1", ct, batchId, Guid.NewGuid());
+                await using var transaction = await connection.BeginTransactionAsync(ct);
+                var owner = (string?)await ScalarAsync(connection, "SELECT owner_id FROM import_batches WHERE id=$1", ct, batchId);
+                if (owner is not null)
+                {
+                    await LockOwnerAsync(connection, owner, ct);
+                    await ExecuteAsync(connection, "UPDATE ingest_publications SET attempts=attempts+1,last_error='storage_retryable',updated_at=now() WHERE batch_id=$1", ct, batchId);
+                    await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, libraryId, "op_repair",
+                        "publication.retry", batchId, "failed", "import-batch", batchId.ToString("D"), [], ct,
+                        "storage_retryable");
+                    await transaction.CommitAsync(ct);
+                }
             }
             throw;
         }
     }
 
-    private async Task PublishItemAsync(NpgsqlConnection connection, string owner, Guid batch, PendingItem item, CancellationToken ct)
+    private async Task PublishItemAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string owner, Guid batch, PendingItem item, CancellationToken ct)
     {
         if (item.Version is null) throw new IngestException("upload_incomplete");
         await using var bytes = await storage.ReadVerifiedAsync(storage.StagingKey(item.Id), item.Version, item.Address, ct);
@@ -166,6 +204,9 @@ public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, I
         await ExecuteAsync(connection, "UPDATE upload_sessions SET state='completed',category=$2,asset_id=$3,edit_id=$4,verified_at=now(),lifecycle_version=lifecycle_version+1 WHERE id=$1; UPDATE import_batch_items SET state='active',outcome_code=NULL WHERE upload_session_id=$1", ct, item.Id, category, asset, edit);
         await AuditAsync(connection, owner, item.Operation, "publication.completed", edit ?? asset, "active", ct);
         await AuditAsync(connection, owner, item.Operation, "upload.verified", item.Id, "active", ct);
+        await RecordRecoveryChangeAsync(connection, transaction, owner, libraryId, item.Operation,
+            "content.imported", edit is null ? "asset" : "edit", (edit ?? asset).ToString("D"), [item.Address.Sha256],
+            DateTimeOffset.UtcNow, ct);
     }
 }
 

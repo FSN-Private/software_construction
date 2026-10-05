@@ -74,4 +74,10 @@ public static class VersionControlAdapters
 
     public static Task AuditAsync(NpgsqlConnection connection, string owner, string operationId, string eventType, Guid resourceId, string outcome, CancellationToken cancellationToken, string? code = null) =>
         Platform.Storage.IngestDb.AuditAsync(connection, owner, operationId, eventType, resourceId, outcome, cancellationToken, code);
+
+    public static Task<long> RecordRecoveryChangeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        string owner, string library, string operationId, string eventType, string entityType, string entityId,
+        IReadOnlyCollection<string> contentDigests, CancellationToken cancellationToken) =>
+        Platform.Storage.IngestDb.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            eventType, entityType, entityId, contentDigests, DateTimeOffset.UtcNow, cancellationToken);
 }

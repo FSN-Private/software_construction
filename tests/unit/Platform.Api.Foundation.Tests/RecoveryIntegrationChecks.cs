@@ -113,10 +113,70 @@ internal static class RecoveryIntegrationChecks
         Check(recovered.Status == "healthy", "A later verified point resolves the earlier signed cycle failure.");
 
         await IdentityChecksAsync(db, storage, clock, now);
+        await RestoreSessionChecksAsync(db, trust, evidenceRsa, evidenceKeyId, evidenceFingerprint, now);
         await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint);
         if (Environment.GetEnvironmentVariable("RECOVERY_CAPACITY") == "1")
             await RecoveryHealthCapacityChecks.RunAsync(db, health, "test-owner");
         Console.WriteLine("Recovery integration checks passed: signed compact catalogs, queue ordering/replay, health, cycle failure and identity binding.");
+    }
+
+    private static async Task RestoreSessionChecksAsync(
+        NpgsqlDataSource db,
+        RecoverySigningTrust trust,
+        RSA evidenceRsa,
+        string evidenceKeyId,
+        string evidenceFingerprint,
+        DateTimeOffset now)
+    {
+        var point = Catalog("restore-store-owner", "main", now.AddMilliseconds(-500), Guid.NewGuid(), Guid.NewGuid());
+        var envelope = SignCatalog(point, evidenceRsa, evidenceKeyId, evidenceFingerprint);
+        var proposal = RecoveryRestoreProposalV1.Create(Guid.NewGuid(), point.OwnerId, point.LibraryId,
+            point.RecoveryPointId, new RecoveryRestoreScopeV1("full_library", null, null), now.AddHours(1));
+        var sha = RecoveryEvidenceCodec.Hash("isolated restored object"u8);
+        const long byteLength = 24;
+        await using var connection = await db.OpenConnectionAsync();
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await using var insertContent = new NpgsqlCommand("""
+                INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
+                VALUES ($1,$2,'original',$3,'source-exact-version','authoritative')
+                """, connection, transaction);
+            insertContent.Parameters.AddWithValue(sha);
+            insertContent.Parameters.AddWithValue(byteLength);
+            insertContent.Parameters.AddWithValue("sha256/" + sha);
+            await insertContent.ExecuteNonQueryAsync();
+
+            await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, envelope, trust);
+            await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, envelope, trust);
+            await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal);
+            await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
+                "requested", "restoring", DateTimeOffset.UtcNow);
+            await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
+                "restoring", "validating", DateTimeOffset.UtcNow);
+            var materialized = new RecoveryMaterializedObjectV1("source-library", "sha256/" + sha,
+                "source-exact-version", sha, byteLength, "isolated-target", "sha256/" + sha, "target-exact-version");
+            Check(await RestoreSessionStore.RebindMaterializedObjectsAsync(connection, transaction,
+                proposal.SessionId, [materialized]) == 1,
+                "Isolated restore rebinds the exact source version to a distinct target version.");
+            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                point.FullManifestSha256, new string('b', 64), "verified", [], DateTimeOffset.UtcNow) == 1,
+                "Validation revision binds the source manifest to the target namespace digest.");
+            await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
+                "validating", "ready", DateTimeOffset.UtcNow);
+            await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal);
+            await transaction.CommitAsync();
+        }
+
+        Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_point_attestations WHERE point_id=$1", point.RecoveryPointId))! == 1,
+            "A recovery-only restore hydrates exactly one signed compact point before the session FK is written.");
+        Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_sessions WHERE session_id=$1 AND state='ready' AND validation_digest IS NOT NULL", proposal.SessionId))! == 1,
+            "The restored database owns the durable ready session and bound validation digest.");
+        Check((string)(await ScalarAsync(db, "SELECT storage_version FROM content_objects WHERE sha256=$1", sha))! == "target-exact-version",
+            "Only the isolated content locator is rebound to the materialized target object version.");
+        Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_materialization_receipts WHERE session_id=$1 AND source_version_id='source-exact-version' AND destination_version_id='target-exact-version'", proposal.SessionId))! == 1,
+            "The exact source-to-target mapping remains as immutable recovery-local evidence.");
+        Check((string)(await ScalarAsync(db, "SELECT target_digest FROM recovery_validation_revisions WHERE session_id=$1 AND revision=1", proposal.SessionId))! == new string('b', 64),
+            "An immutable validation revision records the target digest explicitly.");
     }
 
     private static async Task IdentityChecksAsync(NpgsqlDataSource db, S3ObjectStore storage, FixedTimeProvider clock, DateTimeOffset now)

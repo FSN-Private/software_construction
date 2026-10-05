@@ -160,6 +160,7 @@ internal static class IngestChecks
         await GalleryEditChecks.RunAsync(db, storage);
         if (Environment.GetEnvironmentVariable("GALLERY_CAPACITY") == "1") await GalleryCapacityChecks.RunAsync(db, s3, bucket);
         await RecoveryIntegrationChecks.RunAsync(db, storage);
+        await RecoveryChangeLedgerChecks.RunAsync(db, storage, connectionString + ";Search Path=" + schema);
         Console.WriteLine($"Ingest PostgreSQL/S3 checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
     }
 
@@ -191,6 +192,10 @@ internal static class IngestChecks
         await processor.ProcessNextAsync(default);
         var status = await imports.StatusAsync(owner, failed.Id, default);
         Check(status.State == "failed" && status.Items.All(i => i.State == "quarantined"), "Atomic failure publishes no selected item");
+        await using (var connection = await db.OpenConnectionAsync())
+            foreach (var item in status.Items)
+                Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM recovery_change_ledger WHERE owner_id=$1 AND library_id='main' AND event_type='ingest.quarantined' AND entity_type='upload-session' AND entity_id=$2", default, owner, item.Id.ToString("D")))! == 1,
+                    "Every quarantined upload and its audit event advance the recovery watermark in the failure transaction");
         var mixed = await Upload(false, ("copy.png", png, null), ("bad2.xmp", invalid, null), ("wrong.png", png, new string('0', 64)));
         await processor.ProcessNextAsync(default);
         status = await imports.StatusAsync(owner, mixed.Id, default);
@@ -203,6 +208,9 @@ internal static class IngestChecks
         await using (var bytes = new MemoryStream(png)) await storage.PublishVerifiedAsync(address, bytes, default);
         await RejectAsync<AmazonS3Exception>(() => new BatchProcessor(db, new S3ObjectStore(s3, "missing-" + Guid.NewGuid().ToString("N"), "ingest-test-key")).ProcessNextAsync(default));
         Check((await imports.StatusAsync(owner, orphan.Id, default)).Items[0].State == "verifying", "Unavailable storage does not acknowledge content");
+        await using (var connection = await db.OpenConnectionAsync())
+            Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM recovery_change_ledger WHERE owner_id=$1 AND library_id='main' AND event_type='publication.retry' AND entity_type='import-batch' AND entity_id=$2", default, owner, orphan.Id.ToString("D")))! == 1,
+                "A publication retry records its durable status and audit event in the recovery ledger.");
         await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "UPDATE ingest_publications SET updated_at=now()-interval '10 seconds' WHERE batch_id=$1", default, orphan.Id);
         await processor.ProcessNextAsync(default);
         Check((await imports.StatusAsync(owner, orphan.Id, default)).State == "completed", "Restart repairs object/metadata interruption");

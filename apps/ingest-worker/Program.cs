@@ -28,6 +28,8 @@ var connectionString = IngestDatabaseConfiguration.ResolveConnectionString(build
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
-builder.Services.AddSingleton<BatchProcessor>();
+var recoveryLibrary = builder.Configuration["Recovery:LibraryId"] ?? builder.Configuration["Gallery:LibraryId"] ?? "main";
+builder.Services.AddSingleton(sp => new BatchProcessor(sp.GetRequiredService<NpgsqlDataSource>(),
+    sp.GetRequiredService<S3ObjectStore>(), sp.GetRequiredService<ILogger<BatchProcessor>>(), recoveryLibrary));
 builder.Services.AddHostedService<PublicationRepairWorker>();
 await builder.Build().RunAsync();

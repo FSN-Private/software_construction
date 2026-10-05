@@ -138,8 +138,14 @@ internal static class WindowsSyncChecks
             using var text = new StreamReader(downloaded.Bytes);
             IngestChecks.Check((await text.ReadToEndAsync()).Contains("Shared web title", StringComparison.Ordinal), "Both devices can download the verified web sidecar.");
         }
+        var downloadsBeforeDenied = await RecoveryEventCountAsync("windows-sync.content.downloaded");
         await service.RevokeAsync(owner, library, "reader-device-b", "op_windows_sync_revoke_b", default);
         await ExpectProblemAsync(() => service.ContentAsync(owner, library, "reader-device-b", webB.ContentId, "op_windows_sync_denied", default), "device_revoked");
+        IngestChecks.Check(downloadsBeforeDenied == 1 && await RecoveryEventCountAsync("windows-sync.content.downloaded") == downloadsBeforeDenied,
+            "Successful device content access is ledgered once; revoked-device denial adds no access event.");
+        IngestChecks.Check(await RecoveryEventCountAsync("windows-sync.device.registered") == 2 &&
+            await RecoveryEventCountAsync("windows-sync.device.revoked") == 1,
+            "Device registration and revocation commit with their protected recovery ledger events.");
         string head;
         await using (var connection = await db.OpenConnectionAsync())
             head = ((string?)await ScalarAsync(connection, "SELECT head_commit_id FROM vc_refs WHERE owner_id=$1 AND library_id=$2 AND normalized_name=$3", default, owner, library, branch))?.Trim() ?? throw new InvalidOperationException("Branch head missing");
@@ -153,6 +159,16 @@ internal static class WindowsSyncChecks
         IngestChecks.Check(committed.Items.Single(item => item.EditId == edit) is { WebWorking: false } item && item.Sha256 == edited.XmpSha256,
             "Explicit commit promotes the web XMP to committed branch state.");
         await ExecuteBranchSwitchAsync(db, service, owner, library, branch, "reader-device-a", webA.ContentId);
+        IngestChecks.Check(await RecoveryEventCountAsync("windows-sync.device.registered") == 3,
+            "Changing the registered branch also advances the recovery watermark.");
+
+        async Task<long> RecoveryEventCountAsync(string eventType)
+        {
+            await using var connection = await db.OpenConnectionAsync();
+            return Convert.ToInt64(await ScalarAsync(connection,
+                "SELECT count(*) FROM recovery_change_ledger WHERE owner_id=$1 AND library_id=$2 AND event_type=$3", default,
+                owner, library, eventType));
+        }
     }
 
     private static async Task ExecuteBranchSwitchAsync(NpgsqlDataSource db, WindowsSyncService service, string owner, string library, string branch, string device, Guid oldContentId)
