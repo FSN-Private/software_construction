@@ -13,12 +13,12 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var result = await PutInTransactionAsync(connection, owner, library, client, request, operationId, cancellationToken);
+        var result = await PutInTransactionAsync(connection, transaction, owner, library, client, request, operationId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
     }
 
-    public async Task<WorkingChangeView> PutInTransactionAsync(NpgsqlConnection connection, string owner, string library, string client,
+    public async Task<WorkingChangeView> PutInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string owner, string library, string client,
         WorkingChangeRequest request, string operationId, CancellationToken cancellationToken)
     {
         var branch = RefNames.Normalize(request.Branch);
@@ -52,6 +52,9 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
             id = (Guid)(await ScalarAsync(connection, "SELECT id FROM vc_working_changes WHERE owner_id=$1 AND library_id=$2 AND client_id=$3 AND branch_name=$4 AND asset_id=$5 AND edit_id IS NOT DISTINCT FROM $6", cancellationToken, owner, library, client, branch, request.AssetId, request.EditId) ?? throw new VersionControlProblem("working_state_conflict"));
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.working-change", id, "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.working-change", "working-change", id.ToString("D"),
+            new[] { request.BaseContentSha256, request.ContentSha256 }.OfType<string>().Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
         return new(id, request.AssetId, request.EditId, branch, request.Change, request.BaseContentSha256, request.ContentSha256, request.Path, request.Lifecycle, request.ExpectedVersion + 1, false);
     }
 
@@ -91,6 +94,8 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
             await ExecuteAsync(connection, "INSERT INTO vc_staged_entries(staging_set_id,ordinal,working_change_id,working_version) VALUES($1,$2,$3,$4)", cancellationToken, id, ordinal, workingId, workingVersion);
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.staged", id, "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.staged", "staging-set", id.ToString("D"), [], cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return id;
     }
@@ -105,6 +110,8 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
         if (deleted != 1) throw new VersionControlProblem("staging_conflict");
         await ExecuteAsync(connection, "UPDATE vc_staging_sets SET version=version+1 WHERE id=$1", cancellationToken, setId);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.unstaged", setId, "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.unstaged", "staging-set", setId.ToString("D"), [], cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 

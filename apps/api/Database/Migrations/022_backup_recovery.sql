@@ -215,6 +215,42 @@ CREATE TABLE IF NOT EXISTS recovery_change_watermarks (
     latest_changed_at_utc timestamptz,
     PRIMARY KEY (owner_id, library_id)
 );
+-- Existing state predates the transactional ledger. Seed every known library
+-- scope at sequence zero so an empty-but-established library is still
+-- represented in its first recovery snapshot. Owner-only authorities belong
+-- to the deployment's canonical `main` library until scoped writes introduce
+-- their explicit library ID.
+INSERT INTO recovery_change_watermarks(owner_id,library_id)
+SELECT DISTINCT owner_id,library_id FROM (
+    SELECT owner_id,'main'::text AS library_id FROM assets
+    UNION ALL SELECT owner_id,'main' FROM import_batches
+    UNION ALL SELECT owner_id,'main' FROM audit_events
+    UNION ALL SELECT owner_id,'main' FROM gallery_preferences
+    UNION ALL SELECT owner_id,library_id FROM vc_commits
+    UNION ALL SELECT owner_id,library_id FROM vc_refs
+    UNION ALL SELECT owner_id,library_id FROM vc_reflog
+    UNION ALL SELECT owner_id,library_id FROM vc_visibility
+    UNION ALL SELECT owner_id,library_id FROM vc_working_changes
+    UNION ALL SELECT owner_id,library_id FROM vc_staging_sets
+    UNION ALL SELECT owner_id,library_id FROM vc_materialized_state
+    UNION ALL SELECT owner_id,library_id FROM vc_divergence
+    UNION ALL SELECT owner_id,library_id FROM vc_checkouts
+    UNION ALL SELECT owner_id,library_id FROM vc_stashes
+    UNION ALL SELECT owner_id,library_id FROM vc_ref_quarantine
+    UNION ALL SELECT owner_id,library_id FROM gallery_generations
+    UNION ALL SELECT owner_id,library_id FROM gallery_projection
+    UNION ALL SELECT owner_id,library_id FROM gallery_refresh
+    UNION ALL SELECT owner_id,library_id FROM gallery_web_overlay_revisions
+    UNION ALL SELECT owner_id,library_id FROM gallery_web_content
+    UNION ALL SELECT owner_id,library_id FROM lineage_merge_content
+    UNION ALL SELECT owner_id,library_id FROM windows_sync_devices
+    UNION ALL SELECT owner_id,library_id FROM render_requests
+    UNION ALL SELECT owner_id,library_id FROM render_events
+    UNION ALL SELECT owner_id,library_id FROM export_baskets
+    UNION ALL SELECT owner_id,library_id FROM export_requests
+) AS known_scopes
+WHERE owner_id IS NOT NULL AND owner_id <> '' AND library_id IS NOT NULL AND library_id <> ''
+ON CONFLICT (owner_id,library_id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS recovery_change_ledger (
     owner_id text NOT NULL,
     library_id text NOT NULL,
@@ -225,9 +261,32 @@ CREATE TABLE IF NOT EXISTS recovery_change_ledger (
     entity_id text NOT NULL,
     object_references jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(object_references) = 'array'),
     changed_at_utc timestamptz NOT NULL,
-    PRIMARY KEY (owner_id, library_id, sequence),
-    UNIQUE (owner_id, library_id, operation_id, event_type, entity_type, entity_id)
+    PRIMARY KEY (owner_id, library_id, sequence)
 );
+-- One operation/correlation ID may cover multiple acknowledged changes. The
+-- sequence, not the caller's correlation ID, identifies each committed event.
+DO $migration$
+DECLARE existing_constraint record;
+BEGIN
+    -- PostgreSQL truncates generated constraint identifiers, so discover the
+    -- legacy UNIQUE by its exact constrained columns instead of guessing its name.
+    FOR existing_constraint IN
+        SELECT constraint_row.conname
+        FROM pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid = 'recovery_change_ledger'::regclass
+          AND constraint_row.contype = 'u'
+          AND (
+              SELECT array_agg(attribute_row.attname::text ORDER BY attribute_row.attnum)
+              FROM unnest(constraint_row.conkey) AS constrained_column(attnum)
+              JOIN pg_attribute AS attribute_row
+                ON attribute_row.attrelid = constraint_row.conrelid
+               AND attribute_row.attnum = constrained_column.attnum
+          ) = ARRAY['owner_id','library_id','operation_id','event_type','entity_type','entity_id']::text[]
+    LOOP
+        EXECUTE format('ALTER TABLE recovery_change_ledger DROP CONSTRAINT %I', existing_constraint.conname);
+    END LOOP;
+END
+$migration$;
 
 CREATE TABLE IF NOT EXISTS recovery_sessions (
     session_id uuid PRIMARY KEY,
@@ -253,12 +312,48 @@ CREATE TABLE IF NOT EXISTS recovery_validation_revisions (
     session_id uuid NOT NULL REFERENCES recovery_sessions(session_id),
     revision bigint NOT NULL CHECK (revision > 0),
     source_manifest_sha256 char(64) NOT NULL CHECK (source_manifest_sha256 ~ '^[0-9a-f]{64}$'),
+    target_digest char(64) NOT NULL CHECK (target_digest ~ '^[0-9a-f]{64}$'),
     validation_digest char(64) NOT NULL CHECK (validation_digest ~ '^[0-9a-f]{64}$'),
     state text NOT NULL CHECK (state IN ('verified','failed')),
     findings jsonb NOT NULL CHECK (jsonb_typeof(findings) = 'array'),
     validated_at_utc timestamptz NOT NULL,
     PRIMARY KEY (session_id, revision),
     UNIQUE (session_id, validation_digest)
+);
+ALTER TABLE recovery_validation_revisions ADD COLUMN IF NOT EXISTS target_digest char(64);
+DO $migration$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid='recovery_validation_revisions'::regclass
+          AND conname='recovery_validation_revisions_target_digest_check'
+    ) THEN
+        ALTER TABLE recovery_validation_revisions ADD CONSTRAINT recovery_validation_revisions_target_digest_check
+            CHECK (target_digest IS NULL OR target_digest ~ '^[0-9a-f]{64}$');
+    END IF;
+END
+$migration$;
+
+-- Exact source-to-isolated-target versions are retained beside the recovery
+-- session. The primary API never writes this table; it is recovery-DB evidence.
+CREATE TABLE IF NOT EXISTS recovery_materialization_receipts (
+    session_id uuid NOT NULL REFERENCES recovery_sessions(session_id),
+    ordinal integer NOT NULL CHECK (ordinal >= 0),
+    source_bucket text NOT NULL,
+    source_key text NOT NULL,
+    source_version_id text NOT NULL,
+    sha256 char(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    byte_length bigint NOT NULL CHECK (byte_length >= 0),
+    destination_bucket text NOT NULL,
+    destination_key text NOT NULL,
+    destination_version_id text NOT NULL,
+    receipt_sha256 char(64) NOT NULL CHECK (receipt_sha256 ~ '^[0-9a-f]{64}$'),
+    materialized_at_utc timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (session_id,ordinal),
+    UNIQUE (session_id,source_bucket,source_key,source_version_id),
+    UNIQUE (session_id,destination_bucket,destination_key,destination_version_id),
+    CHECK (destination_key='sha256/'||sha256),
+    CHECK (source_version_id <> 'null' AND destination_version_id <> 'null')
 );
 
 CREATE TABLE IF NOT EXISTS recovery_holds (
@@ -427,6 +522,8 @@ DROP TRIGGER IF EXISTS recovery_audit_checkpoints_immutable ON recovery_audit_ch
 CREATE TRIGGER recovery_audit_checkpoints_immutable BEFORE UPDATE OR DELETE ON recovery_audit_checkpoints FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_validation_revisions_immutable ON recovery_validation_revisions;
 CREATE TRIGGER recovery_validation_revisions_immutable BEFORE UPDATE OR DELETE ON recovery_validation_revisions FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+DROP TRIGGER IF EXISTS recovery_materialization_receipts_immutable ON recovery_materialization_receipts;
+CREATE TRIGGER recovery_materialization_receipts_immutable BEFORE UPDATE OR DELETE ON recovery_materialization_receipts FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_observations_immutable ON recovery_observations;
 CREATE TRIGGER recovery_observations_immutable BEFORE UPDATE OR DELETE ON recovery_observations FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_attestations_immutable ON recovery_point_attestations;
@@ -439,3 +536,13 @@ DROP TRIGGER IF EXISTS recovery_point_components_immutable ON recovery_point_com
 CREATE TRIGGER recovery_point_components_immutable BEFORE UPDATE OR DELETE ON recovery_point_components FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_objects_immutable ON recovery_point_objects;
 CREATE TRIGGER recovery_point_objects_immutable BEFORE UPDATE OR DELETE ON recovery_point_objects FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+
+INSERT INTO recovery_change_watermarks(owner_id,library_id)
+SELECT DISTINCT owner_id,library_id FROM (
+    SELECT owner_id,library_id FROM recovery_points
+    UNION ALL SELECT owner_id,library_id FROM recovery_holds
+    UNION ALL SELECT owner_id,library_id FROM media_purge_tombstones
+    UNION ALL SELECT owner_id,library_id FROM recovery_purge_journals
+) AS recovery_scopes
+WHERE owner_id IS NOT NULL AND owner_id <> '' AND library_id IS NOT NULL AND library_id <> ''
+ON CONFLICT (owner_id,library_id) DO NOTHING;

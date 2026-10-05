@@ -37,11 +37,56 @@ internal static class MigrationChecks
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/019_tag_audit_link.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/020_lineage_branch_reachability.sql"), default);
             await ExecuteAsync(connection, await File.ReadAllTextAsync("apps/api/Database/Migrations/021_export_baskets.sql"), default);
+            // Rehearse an installation that applied the original 022 definition
+            // with its operation/event UNIQUE before upgrading this migration.
+            await ExecuteAsync(connection, """
+                CREATE TABLE recovery_change_watermarks (
+                    owner_id text NOT NULL,
+                    library_id text NOT NULL,
+                    last_sequence bigint NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
+                    latest_changed_at_utc timestamptz,
+                    PRIMARY KEY (owner_id,library_id)
+                )
+                """, default);
+            await ExecuteAsync(connection, """
+                CREATE TABLE recovery_change_ledger (
+                    owner_id text NOT NULL,
+                    library_id text NOT NULL,
+                    sequence bigint NOT NULL CHECK (sequence > 0),
+                    operation_id text NOT NULL,
+                    event_type text NOT NULL,
+                    entity_type text NOT NULL,
+                    entity_id text NOT NULL,
+                    object_references jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(object_references) = 'array'),
+                    changed_at_utc timestamptz NOT NULL,
+                    PRIMARY KEY (owner_id,library_id,sequence),
+                    UNIQUE (owner_id,library_id,operation_id,event_type,entity_type,entity_id)
+                )
+                """, default);
             var recovery = await File.ReadAllTextAsync("apps/api/Database/Migrations/022_backup_recovery.sql");
             await ExecuteAsync(connection, recovery, default);
             await ExecuteAsync(connection, recovery, default);
             await migrate.CommitAsync();
         }
+        Check(await ScalarAsync(connection, """
+            SELECT NOT EXISTS (
+                SELECT 1 FROM pg_constraint c
+                WHERE c.conrelid='recovery_change_ledger'::regclass AND c.contype='u'
+                  AND (SELECT array_agg(a.attname::text ORDER BY a.attnum)
+                       FROM unnest(c.conkey) AS k(attnum)
+                       JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)
+                      = ARRAY['owner_id','library_id','operation_id','event_type','entity_type','entity_id']::text[])
+            """, default) is true, "022 upgrade removes the prior operation/event uniqueness by constrained columns despite PostgreSQL identifier truncation");
+        await ExecuteAsync(connection, """
+            INSERT INTO recovery_change_ledger(owner_id,library_id,sequence,operation_id,event_type,entity_type,entity_id,changed_at_utc)
+            VALUES('migration-fixture','main',1,'op_replayed','asset.move','asset','same-entity',now())
+            """, default);
+        await ExecuteAsync(connection, """
+            INSERT INTO recovery_change_ledger(owner_id,library_id,sequence,operation_id,event_type,entity_type,entity_id,changed_at_utc)
+            VALUES('migration-fixture','main',2,'op_replayed','asset.move','asset','same-entity',now())
+            """, default);
+        Check(await ScalarAsync(connection, "SELECT count(*) FROM recovery_change_ledger WHERE owner_id='migration-fixture' AND library_id='main' AND operation_id='op_replayed'", default) is long count && count == 2,
+            "Distinct acknowledged commits may share an operation/event/entity correlation identity");
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after expansion");
         Check(await ScalarAsync(connection, "SELECT handoff_id IS NOT NULL FROM assets WHERE id=$1", default, id) is true, "New recovery metadata is added without replacing identity");
         Check(await ScalarAsync(connection, "SELECT to_regclass('render_requests') IS NOT NULL AND to_regclass('render_provenance') IS NOT NULL AND to_regclass('render_intake_control') IS NOT NULL", default) is true, "Rendering schema is an additive migration beside source identity tables");

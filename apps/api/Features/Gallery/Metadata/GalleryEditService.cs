@@ -78,7 +78,7 @@ public sealed class GalleryEditService(NpgsqlDataSource db, S3ObjectStore storag
             WorkingChangeView changed;
             try
             {
-                changed = await working.PutInTransactionAsync(connection, owner, library, "__gallery_web__", new WorkingChangeRequest(asset, source.EditId, branch,
+                changed = await working.PutInTransactionAsync(connection, transaction, owner, library, "__gallery_web__", new WorkingChangeRequest(asset, source.EditId, branch,
                     source.SelectedSha is null ? "added" : "modified", source.BaseSha, digest, source.Path, "active", request.ExpectedWorkingVersion), operation, ct);
             }
             catch (VersionControlProblem error) when (error.Code is "working_state_conflict" or "stale_head")

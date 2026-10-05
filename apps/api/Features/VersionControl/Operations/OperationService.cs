@@ -105,6 +105,8 @@ public sealed class OperationService
         else
             await ExecuteAsync(connection, "UPDATE vc_checkouts SET normalized_ref=$4,version=version+1 WHERE owner_id=$1 AND library_id=$2 AND client_id=$3", cancellationToken, owner, library, client, branch);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.checkout", RefService.StableResource(client), "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.checkout", "checkout", client, [], cancellationToken);
         var result = new VersionControlResult(operationId, RefName: branch, Version: currentVersion + 1, StashId: stashId);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, null, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -146,6 +148,8 @@ public sealed class OperationService
             DELETE FROM vc_stashes WHERE id=$5;
             """, cancellationToken, snapshot, owner, library, client, stashId, clients);
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.stash.restored", stashId, "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.stash.restored", "stash", stashId.ToString("D"), [], cancellationToken);
         var result = new VersionControlResult(operationId, StashId: stashId);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, null, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

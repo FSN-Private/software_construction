@@ -39,6 +39,8 @@ public sealed class GalleryPreferenceService(NpgsqlDataSource db, IConfiguration
         if (changed != 1) throw new GalleryProblem("preference_conflict", 409);
         await ExecuteAsync(connection, "INSERT INTO gallery_preference_idempotency(owner_id,library_id,idempotency_key,hide_geolocation,expected_version,result_version) VALUES($1,$2,$3,$4,$5,$6)", ct,
             owner, library, idempotencyKey, request.HideGeolocation, request.ExpectedVersion, request.ExpectedVersion + 1);
+        await RecordRecoveryChangeAsync(connection, transaction, owner, library, idempotencyKey,
+            "gallery.preference.updated", "gallery-preference", owner, [], DateTimeOffset.UtcNow, ct);
         await transaction.CommitAsync(ct);
         return new(request.HideGeolocation, request.ExpectedVersion + 1);
     }
@@ -47,6 +49,8 @@ public sealed class GalleryPreferenceService(NpgsqlDataSource db, IConfiguration
     {
         CheckLibrary(library);
         await using var connection = await db.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await LockOwnerAsync(connection, owner, ct);
         decimal latitude, longitude;
         await using (var command = Command(connection, """
             SELECT g.latitude,g.longitude FROM gallery_projection g
@@ -59,7 +63,9 @@ public sealed class GalleryPreferenceService(NpgsqlDataSource db, IConfiguration
             if (!await reader.ReadAsync(ct)) throw new GalleryProblem("location_unavailable", 404);
             latitude = reader.GetDecimal(0); longitude = reader.GetDecimal(1);
         }
-        await AuditAsync(connection, owner, operation, "gallery.location_revealed", asset, "accepted", ct);
+        await AuditAndRecordRecoveryChangeAsync(connection, transaction, owner, library, operation,
+            "gallery.location_revealed", asset, "accepted", "gallery-location", asset.ToString("D"), [], ct);
+        await transaction.CommitAsync(ct);
         return new(latitude, longitude);
     }
 

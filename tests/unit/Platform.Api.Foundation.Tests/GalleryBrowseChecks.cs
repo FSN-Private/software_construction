@@ -73,16 +73,32 @@ internal static class GalleryBrowseChecks
             locationFixture.Parameters.AddWithValue(first.Cards[0].AssetId);
             await locationFixture.ExecuteNonQueryAsync();
         }
+        var beforeLocationReveal = await RecoverySequenceAsync("test-owner");
         var revealed = await preferences.RevealAsync("test-owner", "main", "main", first.Cards[0].AssetId, "op_gallery_test", default);
         Check(revealed.Latitude == 40.5m && revealed.Longitude == -74.25m, "Explicit reveal returns retained coordinates");
+        Check(await RecoverySequenceAsync("test-owner") == beforeLocationReveal + 1,
+            "An authorized coordinate reveal commits its access audit and recovery watermark together.");
         await RejectAsync(() => preferences.RevealAsync("another-owner", "main", "main", first.Cards[0].AssetId, "op_gallery_test", default), "location_unavailable");
+        Check(await RecoverySequenceAsync("test-owner") == beforeLocationReveal + 1,
+            "A foreign coordinate denial creates no successful access watermark.");
+        async Task<long> RecoverySequenceAsync(string scopeOwner)
+        {
+            await using var connection = await db.OpenConnectionAsync();
+            return Convert.ToInt64(await ScalarAsync(connection,
+                "SELECT last_sequence FROM recovery_change_watermarks WHERE owner_id=$1 AND library_id='main'", default, scopeOwner));
+        }
+        var watermarkBeforePreference = await RecoverySequenceAsync("test-owner");
         var visible = await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show");
         Check(!visible.HideGeolocation && visible.Version == 2, "Owner preference updates with CAS");
+        Check(await RecoverySequenceAsync("test-owner") == watermarkBeforePreference + 1,
+            "An accepted gallery preference mutation commits with one recovery change sequence.");
         Check((await browse.FilterValuesAsync("test-owner", "main", "main", "latitude", null, default)).Values.Any(value => decimal.TryParse(value.Value, System.Globalization.CultureInfo.InvariantCulture, out var latitude) && latitude == 40.5m),
             "Visible owner location exposes existing numeric choices");
         Check((await browse.FilterValuesAsync("test-owner", "main", "main", "longitude", null, default)).Values.Any(value => decimal.TryParse(value.Value, System.Globalization.CultureInfo.InvariantCulture, out var longitude) && longitude == -74.25m),
             "Visible owner longitude exposes existing numeric choices");
         Check(await preferences.SetAsync("test-owner", "main", new(false, 1), default, "gallery-preference-show") == visible, "Preference idempotent replay");
+        Check(await RecoverySequenceAsync("test-owner") == watermarkBeforePreference + 1,
+            "An idempotent preference replay does not create another recovery ledger entry.");
         await RejectAsync(() => preferences.SetAsync("test-owner", "main", new(true, 1), default, "gallery-preference-stale"), "preference_conflict");
         var locationMatches = await browse.BrowseAsync("test-owner", "main", Query(("locationPresent", "true")), default);
         Check(locationMatches.Count >= 1 && locationMatches.Cards.Any(card => card.AssetId == first.Cards[0].AssetId) && locationMatches.Cards.All(card => card.AssetId != Guid.Empty), "Visible location filter includes retained asset");

@@ -199,6 +199,10 @@ public sealed class CommitService
         var result = new VersionControlResult(operationId, commitId, branch, refState.Value.Version + 1);
         await ExecuteAsync(connection, "INSERT INTO vc_idempotency(owner_id,library_id,idempotency_key,request_fingerprint,fingerprint,commit_id,result) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)", cancellationToken, owner, library, idempotencyKey, requestFingerprint, fingerprint, commitId, JsonSerializer.Serialize(result));
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.commit", preparedEntries is null ? request.StagingSetId : RefService.StableResource(idempotencyKey), "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.commit", "commit", commitId,
+            staged.Entries.SelectMany(entry => new[] { entry.BaseContentSha256, entry.ContentSha256 })
+                .OfType<string>().Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
         checkpoint("audit-recorded");
         await transaction.CommitAsync(cancellationToken);
         VersionControlTelemetry.Commits.Add(1);

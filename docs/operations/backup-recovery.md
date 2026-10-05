@@ -20,7 +20,21 @@ The recovery copy task is the only process that writes protected recovery copies
 
 ## Capture and health contract
 
-The primary capture task runs every 15 minutes in the source VPC. It uses one PostgreSQL exported MVCC snapshot for the recovery inventory and PostgreSQL 18 `pg_dump`; the same transaction records cutoff, LSN, migration digest, and a maximum acknowledged-change sequence visible in that snapshot. Every acknowledged mutation must write to the ledger in its own transaction. Capture uploads a hashed database dump and canonical dependency manifest to the primary capture bucket. It does not copy media into that bucket.
+The primary capture task runs every 15 minutes in the source VPC. It uses one PostgreSQL exported MVCC snapshot for the recovery inventory and PostgreSQL 18 `pg_dump`; the same transaction records cutoff, LSN, migration digest, and the scoped committed-change watermark visible in that snapshot. Protected mutations append their ledger entry and serialize the owner/library watermark in their own transaction, so an allocated sequence from an uncommitted transaction cannot advance recovery coverage. Capture uploads a hashed database dump and canonical dependency manifest to the primary capture bucket. It does not copy media into that bucket.
+
+Migration 022 backfills `recovery_change_watermarks` for owner/library scopes visible in existing protected tables. A completely empty canonical library has no database row from which that migration can infer its identity. Before enabling capture for such a scope, the separately authorized database provisioning administrator must register the exact deployment-configured owner and library once:
+
+```sql
+INSERT INTO recovery_change_watermarks(owner_id, library_id, last_sequence, latest_changed_at_utc)
+VALUES ('<canonical-owner-id>', '<configured-library-id>', 0, NULL)
+ON CONFLICT (owner_id, library_id) DO NOTHING;
+
+SELECT owner_id, library_id, last_sequence, latest_changed_at_utc
+FROM recovery_change_watermarks
+WHERE owner_id = '<canonical-owner-id>' AND library_id = '<configured-library-id>';
+```
+
+Replace both placeholders with the exact provisioned values and execute through the authorized provisioning session, never through the capture login. If the configured scope has no durable watermark row, capture fails closed with `change_watermark_missing`; do not synthesize sequence zero or create the row from a read-only capture process. Confirm the row exists before scheduling the first capture.
 
 The recovery copy task polls on the same 15-minute interval. It follows the manifest's exact S3 version IDs, computes SHA-256 from the actual source and destination bytes, records destination version IDs and fresh access/retention checks, and commits the recovery point only after full closure verification and recovery-key signing. A receipt can be reused only for an identical immutable source key/version/digest/length mapped to the same destination version after fresh existence, access and policy checks. A first seed and every full drill rehash all bytes. The worker must reject an unresolved/unknown write outcome or pending purge fence.
 

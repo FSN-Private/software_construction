@@ -72,6 +72,9 @@ public sealed class RewriteService(NpgsqlDataSource dataSource, IntegrityService
             await HistoryRetention.ReconcileAsync(connection, graph, owner, library, displaced, Now, cancellationToken);
         }
         await VersionControlAdapters.AuditAsync(connection, owner, operationId, "version-control.rewrite", RefService.StableResource(branch), "accepted", cancellationToken);
+        await VersionControlAdapters.RecordRecoveryChangeAsync(connection, transaction, owner, library, operationId,
+            "version-control.rewrite", "ref", branch,
+            new[] { current.Head, request.NewHead }.OfType<string>().Distinct(StringComparer.Ordinal).ToArray(), cancellationToken);
         var result = new VersionControlResult(operationId, request.NewHead, branch, current.Version + 1, RecoveryId: reflogId);
         await VersionControlIdempotency.SaveAsync(connection, owner, library, idempotencyKey, fingerprint, request.NewHead, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
