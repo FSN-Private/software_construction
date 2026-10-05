@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 
 const expected = {
   dotnet: '10.0.400',
@@ -35,11 +36,25 @@ function assertToolchain() {
 
 if (category === 'toolchain') {
   assertToolchain();
+} else if (category === 'recovery') {
+  assertToolchain();
+  execFileSync('dotnet', ['run', '--project', 'tests/recovery/Platform.Recovery.Tests.csproj'], { stdio: 'inherit' });
+  execFileSync('dotnet', ['publish', 'apps/recovery-worker/Platform.Recovery.Worker.csproj', '--configuration', 'Release',
+    '--no-restore', '--output', 'artifacts/recovery-worker'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/infrastructure/release/recovery-qualification-cli.mjs'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/integration/recovery/run.mjs'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/infrastructure/release/recovery-release-evidence.mjs'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/infrastructure/release/recovery-drill.mjs'], { stdio: 'inherit' });
+  const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
+  const npmArguments = process.platform === 'win32'
+    ? [process.env.npm_execpath ?? join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+    : [];
+  execFileSync(npmCommand, [...npmArguments, 'run', 'test:recovery-infrastructure'], { stdio: 'inherit' });
 } else if (category === 'all') {
   assertToolchain();
   throw new Error('The complete suite is not registered yet. Run individual commands only after their owning feature task is complete.');
 } else if (categories.has(category)) {
   throw new Error(`The ${category} validation category is not registered yet. Its owning task must add a local equivalent before CI uses it.`);
 } else {
-  throw new Error('Usage: node scripts/validate.mjs <toolchain|all|format|lint|typecheck|test|integration|build|contract|infrastructure|security>.');
+  throw new Error('Usage: node scripts/validate.mjs <toolchain|recovery|all|format|lint|typecheck|test|integration|build|contract|infrastructure|security>.');
 }

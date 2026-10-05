@@ -1,0 +1,112 @@
+name: Export verified recovery qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      launch_run_id:
+        description: Successful protected recovery-drill workflow run for this master revision.
+        required: true
+        type: string
+      drill_run_id:
+        description: Exact recovery drill UUID from that workflow's launch record.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: recovery-qualification-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    if: ${{ github.repository == 'FSN-Private/software_construction' && github.ref == 'refs/heads/master' && vars.RECOVERY_DRILL_ENABLED == 'true' }}
+    environment: recovery-drill
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SOURCE_REVISION: ${{ github.sha }}
+      AWS_REGION: ap-southeast-2
+      PRIMARY_ACCOUNT_ID: ${{ vars.RECOVERY_PRIMARY_ACCOUNT_ID }}
+      RECOVERY_ACCOUNT_ID: ${{ vars.RECOVERY_ACCOUNT_ID }}
+      RECOVERY_ROLE_ARN: ${{ vars.RECOVERY_DRILL_ROLE_ARN }}
+      RECOVERY_CLUSTER_ARN: ${{ vars.RECOVERY_CLUSTER_ARN }}
+      RECOVERY_TASK_DEFINITION_ARN: ${{ vars.RECOVERY_DRILL_TASK_DEFINITION_ARN }}
+      RECOVERY_CONTAINER_NAME: ${{ vars.RECOVERY_DRILL_CONTAINER_NAME }}
+      RECOVERY_WORKER_DIGEST: ${{ vars.RECOVERY_WORKER_DIGEST }}
+      RECOVERY_SUBNET_IDS: ${{ vars.RECOVERY_ISOLATED_SUBNET_IDS }}
+      RECOVERY_SECURITY_GROUP_IDS: ${{ vars.RECOVERY_DRILL_SECURITY_GROUP_IDS }}
+      RECOVERY_CONTROL_TABLE_ARN: ${{ vars.RECOVERY_CONTROL_TABLE_ARN }}
+      RECOVERY_EVIDENCE_BUCKET: ${{ vars.RECOVERY_EVIDENCE_BUCKET }}
+      RECOVERY_TEMPLATE_DIGEST: ${{ vars.RECOVERY_TEMPLATE_DIGEST }}
+      RECOVERY_CONFIGURATION_DIGEST: ${{ vars.RECOVERY_CONFIGURATION_DIGEST }}
+      RECOVERY_OWNER_ACCESS_EVIDENCE_DIGEST: ${{ vars.RECOVERY_OWNER_ACCESS_EVIDENCE_DIGEST }}
+      API_IMAGE: ${{ vars.RECOVERY_QUALIFIED_API_IMAGE }}
+      WORKER_IMAGE: ${{ vars.RECOVERY_QUALIFIED_INGEST_IMAGE }}
+      RENDERER_IMAGE: ${{ vars.RECOVERY_QUALIFIED_RENDERER_IMAGE }}
+      RECOVERY_WORKER_IMAGE: ${{ vars.RECOVERY_WORKER_IMAGE }}
+      RECOVERY_DRILL_RUN_ID: ${{ inputs.drill_run_id }}
+      RELEASE_DIR: artifacts/recovery-qualification
+      RECOVERY_TRUST_PATH: artifacts/recovery-trust.json
+      RECOVERY_OFFLINE_ANCHOR_PATH: artifacts/recovery-offline-anchor.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Validate protected launch attribution and release bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAUNCH_RUN_ID: ${{ inputs.launch_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$LAUNCH_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RECOVERY_DRILL_RUN_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LAUNCH_RUN_ID" | jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_REVISION" '.path == ".github/workflows/recovery-drill.yml" and .head_branch == "master" and .head_sha == $source and .head_repository.full_name == $repository and .conclusion == "success" and (.event == "schedule" or .event == "workflow_dispatch")' >/dev/null
+          node --input-type=module -e "import { drillConfiguration } from './scripts/run-recovery-drill.mjs'; import { promotionBinding } from './scripts/verify-recovery-promotion.mjs'; drillConfiguration(); promotionBinding();"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.launch_run_id }}
+          name: recovery-drill-launch
+          path: artifacts/recovery-launch
+      - name: Publish the offline verifier and install independently provisioned trust
+        env:
+          RECOVERY_SIGNING_TRUST: ${{ secrets.RECOVERY_SIGNING_TRUST }}
+          RECOVERY_OFFLINE_AUDIT_ANCHOR: ${{ secrets.RECOVERY_OFFLINE_AUDIT_ANCHOR }}
+        run: |
+          set -euo pipefail
+          dotnet restore apps/recovery-worker/Platform.Recovery.Worker.csproj --locked-mode
+          dotnet publish apps/recovery-worker/Platform.Recovery.Worker.csproj --configuration Release --no-restore --output artifacts/recovery-worker
+          test -n "$RECOVERY_SIGNING_TRUST" && test -n "$RECOVERY_OFFLINE_AUDIT_ANCHOR"
+          umask 077
+          printf '%s' "$RECOVERY_SIGNING_TRUST" > "$RECOVERY_TRUST_PATH"
+          printf '%s' "$RECOVERY_OFFLINE_AUDIT_ANCHOR" > "$RECOVERY_OFFLINE_ANCHOR_PATH"
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ vars.RECOVERY_DRILL_ROLE_ARN }}
+          aws-region: ap-southeast-2
+          allowed-account-ids: ${{ vars.RECOVERY_ACCOUNT_ID }}
+          role-session-name: recovery-qualification-${{ github.run_id }}
+      - name: Export and independently verify only exact signed payload-free artifacts
+        run: node scripts/collect-recovery-qualification.mjs artifacts/recovery-launch/recovery-drill-launch.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: recovery-qualification
+          path: |
+            artifacts/recovery-qualification/recovery-qualification.json
+            artifacts/recovery-qualification/recovery-checkpoint.json
+            artifacts/recovery-qualification/recovery-release-binding.json
+          if-no-files-found: error
+          retention-days: 90

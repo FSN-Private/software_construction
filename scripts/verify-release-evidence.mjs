@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { verifyReleaseManifest } from '../packages/release-tools/release-manifest.mjs';
+import { recoveryVerificationConfiguration, verifyRecoveryEvidence } from './recovery-release-evidence.mjs';
 
 const [manifestPath, expectedSourceRevision, mode, expectedRepository, expectedReleaseRunId] = process.argv.slice(2);
 if (!manifestPath || !/^[a-f0-9]{40}$/.test(expectedSourceRevision) || (expectedRepository && !/^[\w.-]+\/[\w.-]+$/.test(expectedRepository)) || (expectedReleaseRunId && !/^\d+$/.test(expectedReleaseRunId))) {
-  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker] [owner/repository] [release-run-id]');
+  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker|--require-recovery] [owner/repository] [release-run-id]');
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -14,10 +15,15 @@ if (manifest.sourceRevision !== expectedSourceRevision) {
 const names = manifest.artifacts.map(({ name }) => name).sort();
 const legacy = ['api.tar', 'infrastructure.tar', 'platform-api-win-x64.zip', 'web.tar'];
 const current = [...legacy, 'ingest-worker.tar', 'render-worker.tar'].sort();
+const recovery = [...current, 'recovery-worker.tar'].sort();
 const isLegacyArtifactSet = JSON.stringify(names) === JSON.stringify(legacy);
-if (JSON.stringify(names) !== JSON.stringify(current) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
+if (![JSON.stringify(current), JSON.stringify(recovery)].includes(JSON.stringify(names)) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
 if (mode === '--require-worker' && (!names.includes('ingest-worker.tar') || !names.includes('render-worker.tar'))) throw new Error('Release manifest does not contain the required ingest and renderer worker artifacts.');
+if (mode === '--require-recovery' && (!names.includes('recovery-worker.tar') || manifest.compatibility?.recoveryRequired !== true))
+  throw new Error('Release manifest does not contain the required recovery worker artifact and qualification contract.');
 verifyReleaseManifest(manifest, dirname(resolve(manifestPath)));
+if (mode === '--require-recovery' || manifest.evidence.some(({ kind }) => kind === 'recovery-qualification'))
+  verifyRecoveryEvidence(manifest, dirname(resolve(manifestPath)), recoveryVerificationConfiguration());
 const provenanceEntry = manifest.evidence.filter(({ kind }) => kind === 'provenance');
 if (provenanceEntry.length !== 1) throw new Error('Release manifest must contain one provenance statement.');
 const validationEntry = manifest.evidence.filter(({ kind }) => kind === 'validation');

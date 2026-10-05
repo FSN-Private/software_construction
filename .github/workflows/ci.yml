@@ -30,9 +30,14 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --ignore-scripts
       - run: dotnet restore tests/unit/Platform.Api.Foundation.Tests/Platform.Api.Foundation.Tests.csproj --locked-mode
+      - run: dotnet restore tests/recovery/Platform.Recovery.Tests.csproj --locked-mode
+      - run: dotnet restore apps/recovery-worker/Platform.Recovery.Worker.csproj --locked-mode
       - run: dotnet format apps/api/Platform.Api.csproj --verify-no-changes --no-restore
       - run: npm run lint
       - run: npm run test:backend
+      - run: npm run test:backup
+      - run: npm run package:recovery-worker
+      - run: npm run test:backup-cli
       - run: npm run test:exports
       - name: Start isolated ingest dependencies
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
@@ -51,6 +56,8 @@ jobs:
         run: npm run test:ingest
       - name: Run Feature 012 export database and private storage checks
         run: npm run test:exports-integration
+      - name: Run signed recovery, source-ledger and health-capacity checks
+        run: npm run test:backup-capacity
       - name: Stop isolated ingest dependencies
         if: always()
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 down
@@ -109,6 +116,7 @@ jobs:
       - run: npm run validate:infrastructure
       - run: npm --prefix packages/infrastructure run synth:exports
       - run: npm --prefix packages/infrastructure run assert:exports
+      - run: npm run test:recovery-infrastructure
       - run: npm run test:release-evidence
       - run: npm run test:reliability
 

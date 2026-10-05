@@ -132,6 +132,48 @@ public sealed class RecoveryObjectStore(
         return receipt;
     }
 
+    /// <summary>
+    /// Revalidates an already-settled durable writer intent without creating another
+    /// S3 version. Both the exact primary version and the recorded recovery version
+    /// are streamed and hashed again before the caller may reuse the receipt.
+    /// </summary>
+    public async Task<RecoveryCopyReceipt> VerifyExistingAsync(
+        RecoveryObjectReference source,
+        string destinationKey,
+        string destinationVersionId,
+        DateTimeOffset admittedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        source.Validate();
+        if (string.IsNullOrWhiteSpace(destinationKey) || string.IsNullOrWhiteSpace(destinationVersionId) ||
+            destinationVersionId == "null")
+            throw new InvalidDataException("recovery_existing_identity_invalid");
+        if (admittedAtUtc.Offset != TimeSpan.Zero)
+            throw new InvalidDataException("recovery_admission_time_not_utc");
+
+        await CheckReadyAsync(cancellationToken);
+        var expected = new ContentAddress(source.Sha256, source.ByteLength);
+        await using (var staged = await ReadToVerifiedTempFileAsync(source, expected, cancellationToken)) { }
+        await VerifyExactDestinationAsync(destinationKey, destinationVersionId, expected, cancellationToken);
+        await VerifyRetentionAtAsync(destinationKey, destinationVersionId, admittedAtUtc, cancellationToken);
+
+        var receipt = new RecoveryCopyReceipt(
+            source,
+            recoveryBucket,
+            destinationKey,
+            destinationVersionId,
+            recoveryAccountAlias,
+            recoveryRegion,
+            admittedAtUtc,
+            clock.GetUtcNow(),
+            verifierBuild,
+            RetentionPolicyVerified: true,
+            AccessPolicyVerified: true);
+        receipt.Validate();
+        return receipt;
+    }
+
     public async Task<Stream> ReadVerifiedAsync(
         RecoveryCopyReceipt receipt,
         CancellationToken cancellationToken = default)

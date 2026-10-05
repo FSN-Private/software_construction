@@ -4,9 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../packages/recovery/Platform.Recovery.csproj" />
+    <ProjectReference Include="../../apps/recovery-worker/Platform.Recovery.Worker.csproj" />
+    <PackageReference Include="AWSSDK.DynamoDBv2" Version="[4.0.107]" />
   </ItemGroup>
 </Project>

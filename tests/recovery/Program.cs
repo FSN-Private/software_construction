@@ -2,23 +2,165 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Platform.Recovery;
+using Platform.Recovery.Worker;
 using Platform.Storage;
 
 try
 {
+    if (args.Length == 2 && args[0] == "--write-qualification-fixture")
+    {
+        WriteQualificationFixture(args[1]);
+        Console.WriteLine("Recovery qualification test fixture written; it is not cloud evidence.");
+        return;
+    }
+    if (args.Length != 0) throw new InvalidOperationException("usage: recovery-tests [--write-qualification-fixture <directory>]");
     ContractChecks();
     EvidenceContractChecks();
+    OwnerAccessEvidenceChecks();
+    VerifierContractChecks();
     await ObjectStoreChecksAsync();
+    await FenceIntentChecksAsync();
     Console.WriteLine("Recovery contracts, signed evidence, and exact-version storage checks passed.");
 }
 catch (Exception exception)
 {
     Console.Error.WriteLine($"Recovery checks failed: {exception.GetType().Name} {exception.Message}");
     Environment.ExitCode = 1;
+}
+
+static void WriteQualificationFixture(string directory)
+{
+    using var rsa = RSA.Create(2048);
+    var publicKey = rsa.ExportSubjectPublicKeyInfo();
+    var keyId = "fixture-kms-key";
+    var fingerprint = RecoveryEvidenceCodec.Hash(publicKey);
+    var nowText = Environment.GetEnvironmentVariable("RECOVERY_FIXTURE_NOW_UTC");
+    var now = string.IsNullOrWhiteSpace(nowText)
+        ? DateTimeOffset.UtcNow
+        : DateTimeOffset.Parse(nowText, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal);
+    var qualification = Qualification(now) with { SourceRevision = ReadSourceRevision() };
+    var pointBytes = RecoveryEvidenceCodec.SerializeCanonical(new
+    {
+        schemaVersion = 1,
+        qualification.Point.PointId,
+        qualification.Point.CaptureId,
+        qualification.Point.ManifestSha256
+    });
+    var pointSignature = Sign(rsa, pointBytes, keyId, fingerprint);
+    qualification = qualification with
+    {
+        Point = qualification.Point with
+        {
+            CheckpointSha256 = RecoveryEvidenceCodec.Hash(pointBytes),
+            CheckpointKeyId = keyId,
+            CheckpointSignatureBase64 = Convert.ToBase64String(pointSignature.Signature)
+        }
+    };
+    var qualificationSignature = Sign(rsa, RecoveryQualificationCodec.SerializePayload(qualification), keyId, fingerprint);
+    var envelope = RecoveryQualificationCodec.CreateEnvelope(qualification, qualificationSignature);
+    var envelopeBytes = RecoveryQualificationCodec.SerializeEnvelope(envelope);
+    var trust = new RecoverySigningTrust(keyId, Convert.ToBase64String(publicKey), fingerprint);
+    var binding = new RecoveryQualificationBindingV1(qualification.SourceRevision,
+        qualification.RecoveryTemplateDigest, qualification.ApiBuildDigest, qualification.RecoveryWorkerBuildDigest,
+        qualification.IngestWorkerBuildDigest, qualification.RendererBuildDigest, qualification.MigrationDigest,
+        qualification.ConfigurationDigest, qualification.OwnerAccessEvidenceSha256);
+
+    var previous = new string('0', 64);
+    var checkpointPayload = new RecoveryAuditCheckpointPayloadV1(1, 1, Guid.NewGuid(), previous, now,
+        qualification.QualificationId, qualification.RunId, RecoveryEvidenceCodec.Hash(envelopeBytes),
+        envelope.PayloadSha256, qualification.Point.PointId, qualification.Point.ManifestSha256,
+        qualification.Point.CheckpointSha256);
+    var auditSignature = Sign(rsa, RecoveryAuditCheckpointCodec.SerializePayload(checkpointPayload), keyId, fingerprint);
+    var auditEnvelope = RecoveryAuditCheckpointCodec.CreateEnvelope(checkpointPayload, auditSignature);
+    var auditBytes = RecoveryAuditCheckpointCodec.SerializeArtifact(auditEnvelope);
+    var anchor = new RecoveryOfflineAuditAnchorV1(1, keyId, Convert.ToBase64String(publicKey), fingerprint,
+        0, previous, 1, RecoveryEvidenceCodec.Hash(auditBytes), now);
+
+    Directory.CreateDirectory(directory);
+    File.WriteAllBytes(Path.Combine(directory, "recovery-qualification.v1.json"), envelopeBytes);
+    File.WriteAllBytes(Path.Combine(directory, "recovery-trust.json"), RecoveryEvidenceCodec.SerializeCanonical(trust));
+    File.WriteAllBytes(Path.Combine(directory, "release-binding.json"), RecoveryEvidenceCodec.SerializeCanonical(binding));
+    File.WriteAllBytes(Path.Combine(directory, "recovery-audit-checkpoint.v1.json"), auditBytes);
+    File.WriteAllBytes(Path.Combine(directory, "recovery-offline-anchor.json"), RecoveryAuditCheckpointCodec.SerializeAnchor(anchor));
+}
+
+static string ReadSourceRevision()
+{
+    var configured = Environment.GetEnvironmentVariable("RECOVERY_FIXTURE_SOURCE_REVISION");
+    if (configured is { Length: 40 } && configured.All(Uri.IsHexDigit)) return configured.ToLowerInvariant();
+    using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", "rev-parse HEAD")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    }) ?? throw new InvalidOperationException("fixture_source_revision_unavailable");
+    var output = process.StandardOutput.ReadToEnd().Trim();
+    process.WaitForExit();
+    if (process.ExitCode != 0 || output.Length != 40 || output.Any(character => !Uri.IsHexDigit(character)))
+        throw new InvalidOperationException("fixture_source_revision_unavailable");
+    return output.ToLowerInvariant();
+}
+
+static void OwnerAccessEvidenceChecks()
+{
+    using var ownerKey = RSA.Create(2048);
+    var ownerSpki = ownerKey.ExportSubjectPublicKeyInfo();
+    var ownerKeyId = "arn:aws:kms:ap-southeast-2:222222222222:key/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    var ownerFingerprint = RecoveryEvidenceCodec.Hash(ownerSpki);
+    var trust = new RecoverySigningTrust(ownerKeyId, Convert.ToBase64String(ownerSpki), ownerFingerprint);
+    var now = DateTimeOffset.Parse("2026-10-05T10:20:30Z");
+    var digest = new string('a', 64);
+    var transcript = new RecoveryOwnerAccessTranscriptV1(1, Guid.NewGuid(), now.AddMinutes(-3),
+        now.AddMinutes(-2), digest, 200, RecoveryEvidenceCodec.Hash("owner-a"u8), digest,
+        now.AddMinutes(-1), new string('b', 64), 403, new string('c', 64));
+    var payload = new RecoveryOwnerAccessEvidenceV1(1, "owner-a", "library-a", digest, digest, "source-revision", digest, digest, digest,
+        "ap-southeast-2_abc", "client-123", "https://cognito-idp.ap-southeast-2.amazonaws.com/ap-southeast-2_abc",
+        now, now.AddMonths(3), RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(transcript)), transcript);
+    var payloadBytes = RecoveryOwnerAccessCodec.SerializePayload(payload);
+    var signature = new RecoveryEvidenceSignature(ownerKeyId, ownerFingerprint,
+        ownerKey.SignHash(SHA256.HashData(payloadBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss));
+    var envelope = RecoveryOwnerAccessCodec.CreateEnvelope(payload, signature);
+    var parsed = RecoveryOwnerAccessCodec.ParseEnvelope(RecoveryOwnerAccessCodec.SerializeEnvelope(envelope));
+    var expected = new RecoveryOwnerAccessExpectationV1(payload.OwnerId, payload.LibraryId, payload.ConfigurationDigest,
+        payload.ApiBuildDigest, payload.SourceRevision, payload.MigrationDigest, payload.RecoveryWorkerBuildDigest, payload.RecoveryTemplateDigest,
+        payload.UserPoolId, payload.UserPoolClientId, payload.Issuer);
+    var verified = RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now);
+    Check(verified.Payload.Transcript.OwnerHttpStatus == 200 && verified.Payload.Transcript.ForeignHttpStatus == 403,
+        "Pinned owner approval attestation binds the actual owner success and foreign denial transcript.");
+
+    RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddMonths(3).AddTicks(1)));
+    RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust,
+        expected with { RecoveryTemplateDigest = new string('f', 64) }, now));
+    RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed with { SigningKeyId = "untrusted" }, trust, expected, now));
+    RejectInvalid(() => RecoveryOwnerAccessCodec.SerializePayload(payload with { ExpiresAtUtc = now.AddMonths(3).AddTicks(1) }));
+    RejectInvalid(() => RecoveryOwnerAccessCodec.SerializePayload(payload with
+    {
+        Transcript = transcript with { ForeignHttpStatus = 200 }
+    }));
+}
+
+static void VerifierContractChecks()
+{
+    var now = DateTimeOffset.UtcNow;
+    var sha = new string('a', 64);
+    var receipts = Enumerable.Range(0, 100_000).Select(index => new PrivateCopyReceiptV1(
+        "primary-content", $"objects/{index:D6}", "source-v1", sha, 1,
+        "recovery-payload", $"payload/sha256/{sha}/{index:D6}", "destination-v1",
+        RecoveryDataClass.OriginalImage.ToString(), now)).ToArray();
+    var expected = receipts.Select(receipt => receipt with { DestinationVersionId = "" }).ToArray();
+    RecoveryVerifierRunner.ValidateReceiptSet(receipts, expected);
+    Check(true, "Verifier receipt matching handles a 100,000-item exact closure with bounded linear lookups.");
+    var duplicate = (PrivateCopyReceiptV1[])receipts.Clone();
+    duplicate[^1] = duplicate[^1] with { SourceKey = duplicate[0].SourceKey };
+    RejectInvalidData(() => RecoveryVerifierRunner.ValidateReceiptSet(duplicate, expected));
 }
 
 static void ContractChecks()
@@ -43,6 +185,14 @@ static void ContractChecks()
     Check(intent.CanTransitionTo(RecoveryWriteState.Unknown), "Admitted write may become unknown after a provider timeout.");
     Check(!intent.CanTransitionTo(RecoveryWriteState.Cleaned), "A write cannot skip provider settlement evidence.");
     Check(intent with { OwnerId = "foreign" } is var foreign && ThrowsInvalid(foreign.Validate), "Write intent must reject a source from another owner.");
+    var expectedSnapshotScope = "SNAPSHOT#" + RecoveryEvidenceCodec.Hash(System.Text.Encoding.UTF8.GetBytes("owner\0library"));
+    Check(RecoveryFenceScope.SnapshotScopeId("owner", "library") == expectedSnapshotScope,
+        "Snapshot admission and purge use the same exact owner/library fence partition.");
+    var logical = new RecoveryLogicalReference("owner", "library", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+    var expectedMediaScope = "MEDIA#" + RecoveryEvidenceCodec.Hash(System.Text.Encoding.UTF8.GetBytes(
+        "owner\0library\0" + logical.AssetId!.Value.ToString("D") + "\0original\0original\0" + new string('a', 64)));
+    Check(RecoveryFenceScope.MediaScopeId(logical, "original", new string('a', 64)) == expectedMediaScope,
+        "Media admission and purge use the same exact logical reference plus content digest.");
 
     var shuffled = manifest with { Coverage = manifest.Coverage.Reverse().ToArray() };
     Check(shuffled.Digest() == manifest.Digest(), "Manifest order must not alter canonical recovery-point identity.");
@@ -103,17 +253,60 @@ static void EvidenceContractChecks()
     RejectInvalid(() => RecoveryCycleCodec.SerializePayload(cycle with { SafeCode = "private/path" }));
 
     var qualification = Qualification(now);
+    var checkpointPayloadBytes = RecoveryEvidenceCodec.SerializeCanonical(new
+    {
+        schemaVersion = 1,
+        qualification.Point.PointId,
+        qualification.Point.CaptureId,
+        qualification.Point.ManifestSha256
+    });
+    var checkpointSignature = Sign(rsa, checkpointPayloadBytes, keyId, fingerprint);
+    qualification = qualification with
+    {
+        Point = qualification.Point with
+        {
+            CheckpointSha256 = RecoveryEvidenceCodec.Hash(checkpointPayloadBytes),
+            CheckpointKeyId = keyId,
+            CheckpointSignatureBase64 = Convert.ToBase64String(checkpointSignature.Signature)
+        }
+    };
     var qualificationBytes = RecoveryQualificationCodec.SerializePayload(qualification);
     var qualificationEnvelope = RecoveryQualificationCodec.CreateEnvelope(qualification,
         Sign(rsa, qualificationBytes, keyId, fingerprint));
     var verifiedQualification = RecoveryQualificationCodec.Verify(qualificationEnvelope, trust);
     var binding = new RecoveryQualificationBindingV1(qualification.SourceRevision,
         qualification.RecoveryTemplateDigest, qualification.ApiBuildDigest, qualification.RecoveryWorkerBuildDigest,
-        qualification.IngestWorkerBuildDigest, qualification.RendererBuildDigest, qualification.MigrationDigest);
+        qualification.IngestWorkerBuildDigest, qualification.RendererBuildDigest, qualification.MigrationDigest,
+        qualification.ConfigurationDigest, qualification.OwnerAccessEvidenceSha256);
     RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust, binding, now);
+    var previousCheckpointHash = new string('0', 64);
+    var checkpointPayload = new RecoveryAuditCheckpointPayloadV1(1, 1, Guid.NewGuid(), previousCheckpointHash,
+        now, qualification.QualificationId, qualification.RunId, RecoveryEvidenceCodec.Hash(RecoveryQualificationCodec.SerializeEnvelope(qualificationEnvelope)),
+        verifiedQualification.PayloadSha256, qualification.Point.PointId, qualification.Point.ManifestSha256,
+        qualification.Point.CheckpointSha256);
+    var checkpointBytes = RecoveryAuditCheckpointCodec.SerializePayload(checkpointPayload);
+    var auditEnvelope = RecoveryAuditCheckpointCodec.CreateEnvelope(checkpointPayload, Sign(rsa, checkpointBytes, keyId, fingerprint));
+    var auditArtifactBytes = RecoveryAuditCheckpointCodec.SerializeArtifact(auditEnvelope);
+    var auditAnchor = new RecoveryOfflineAuditAnchorV1(1, keyId, Convert.ToBase64String(publicKey), fingerprint,
+        0, previousCheckpointHash, 1, RecoveryEvidenceCodec.Hash(auditArtifactBytes), now);
+    var verifiedAudit = RecoveryAuditCheckpointCodec.Verify(
+        RecoveryAuditCheckpointCodec.ParseArtifact(auditArtifactBytes).Checkpoint, trust);
+    RecoveryAuditCheckpointCodec.RequireQualificationBinding(verifiedAudit, auditAnchor, verifiedQualification,
+        RecoveryEvidenceCodec.Hash(RecoveryQualificationCodec.SerializeEnvelope(qualificationEnvelope)), now);
+    RejectInvalid(() => RecoveryAuditCheckpointCodec.RequireQualificationBinding(verifiedAudit,
+        auditAnchor with { HeadCheckpointSha256 = new string('f', 64) }, verifiedQualification,
+        RecoveryEvidenceCodec.Hash(RecoveryQualificationCodec.SerializeEnvelope(qualificationEnvelope)), now));
+    RejectInvalid(() => RecoveryAuditCheckpointCodec.ParseAnchor(RecoveryAuditCheckpointCodec.SerializeAnchor(auditAnchor)
+        .Concat(" "u8.ToArray()).ToArray()));
     RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust,
         binding with { ApiBuildDigest = new string('f', 64) }, now));
     RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust, binding, now.AddMonths(4)));
+    var wrongRegion = qualification with { Recovery = qualification.Recovery with { Region = "us-east-1" } };
+    var wrongRegionBytes = RecoveryEvidenceCodec.SerializeCanonical(wrongRegion);
+    var wrongRegionSignature = Sign(rsa, wrongRegionBytes, keyId, fingerprint);
+    var signedWrongRegion = new VerifiedRecoveryQualification(wrongRegion, wrongRegionBytes,
+        RecoveryEvidenceCodec.Hash(wrongRegionBytes), keyId, fingerprint, wrongRegionSignature.Signature);
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(signedWrongRegion, trust, binding, now));
     var falseRpo = qualification with { Restore = qualification.Restore with { RpoSeconds = 1 } };
     var falseRpoEnvelope = RecoveryQualificationCodec.CreateEnvelope(falseRpo,
         Sign(rsa, RecoveryQualificationCodec.SerializePayload(falseRpo), keyId, fingerprint));
@@ -155,7 +348,7 @@ static RecoveryQualificationV1 Qualification(DateTimeOffset now)
     var digest = new string('a', 64);
     var threshold = now.AddMinutes(-20);
     return new RecoveryQualificationV1(1, Guid.NewGuid(), Guid.NewGuid(), now, "f".PadLeft(40, '0'),
-        digest, digest, digest, digest, digest, digest,
+        digest, digest, digest, digest, digest, digest, digest, digest,
         new("111111111111", "primary-alias", "ap-southeast-1"),
         new("222222222222", "recovery-alias", "ap-southeast-2"),
         new(Guid.NewGuid(), Guid.NewGuid(), digest, digest, "checkpoint-key", Convert.ToBase64String([1, 2, 3]),
@@ -165,7 +358,7 @@ static RecoveryQualificationV1 Qualification(DateTimeOffset now)
         new(now.AddMinutes(-30), now.AddMinutes(-29), now.AddMinutes(-10), 600, 1200, digest),
         new(true, true, true, true, true, true, true, true, true, true, true),
         [new(Guid.NewGuid(), threshold, threshold.AddSeconds(10), threshold.AddMinutes(10), "delivered", digest)],
-        new(90, "GLACIER_IR", now.AddDays(-90), true),
+        new(90, "GLACIER_IR", now.AddMinutes(-8), true),
         new(true, true, true), [], []);
 }
 
@@ -179,6 +372,22 @@ static async Task ObjectStoreChecksAsync()
     var objectRef = ObjectReference(address, "source-key", "source-v1");
     var intent = Intent(objectRef, Guid.NewGuid(), "recovery/point/objects/test");
     var store = Store(source, destination);
+
+    byte[] artifact = [3, 1, 4, 1, 5, 9];
+    var artifactHash = Address(artifact).Sha256;
+    source.Add("evidence", "points/point/source-manifest", "manifest-v1", artifact);
+    var exactArtifact = await RecoveryVerifierRunner.ReadExactBytesAsync(source, "evidence",
+        "points/point/source-manifest", "manifest-v1", artifactHash, artifact.LongLength, 1024,
+        CancellationToken.None);
+    Check(exactArtifact.SequenceEqual(artifact), "Verifier reads and hashes the requested exact S3 version successfully.");
+    source.ReturnedVersionId = "manifest-v2";
+    await RejectAsync<RecoveryWorkerException>(() => RecoveryVerifierRunner.ReadExactBytesAsync(source, "evidence",
+        "points/point/source-manifest", "manifest-v1", artifactHash, artifact.LongLength, 1024,
+        CancellationToken.None));
+    source.ReturnedVersionId = null;
+    await RejectAsync<RecoveryWorkerException>(() => RecoveryVerifierRunner.ReadExactBytesAsync(source, "evidence",
+        "points/point/source-manifest", "manifest-v1", new string('0', 64), artifact.LongLength, 1024,
+        CancellationToken.None));
 
     var receipt = await store.CopyVerifiedAsync(intent);
     Check(receipt.Source == objectRef && receipt.DestinationVersionId.Length > 0, "Copy receipt binds exact source and recovery versions.");
@@ -262,6 +471,43 @@ static async Task ObjectStoreChecksAsync()
     await RejectAsync<InvalidOperationException>(() => Store(source, publicBucket).CopyVerifiedAsync(intent with { IntentId = Guid.NewGuid() }));
 }
 
+static async Task FenceIntentChecksAsync()
+{
+    var source = new RecoveryObjectReference(RecoveryDataClass.DatabaseSnapshot, "owner", "library",
+        "capture/snapshot.dump", "source-v1", new string('a', 64), 123, []);
+    var pointId = Guid.NewGuid();
+    var scopeId = RecoveryFenceScope.SnapshotScopeId("owner", "library");
+
+    var admittedStore = new TestDynamo();
+    var admitted = await new DynamoFenceIntentStore(admittedStore, "fences", "intents").AdmitComponentAsync(
+        pointId, source, "capture", "payload", "snapshots/point.dump", "worker",
+        DateTimeOffset.UtcNow, CancellationToken.None);
+    var transaction = admittedStore.LastTransaction?.TransactItems
+        ?? throw new InvalidOperationException("Expected snapshot fence transaction.");
+    Check(admitted.ScopeId == scopeId && transaction?.Count == 2 &&
+        transaction.Count(item => item.ConditionCheck is not null) == 1 &&
+        transaction.Count(item => item.Put is not null) == 1 &&
+        transaction.Single(item => item.ConditionCheck is not null).ConditionCheck!.TableName == "fences" &&
+        transaction.Single(item => item.ConditionCheck is not null).ConditionCheck!.Key["scopeId"].S == scopeId &&
+        transaction.Single(item => item.ConditionCheck is not null).ConditionCheck!.ConditionExpression == "attribute_not_exists(recordId)",
+        "Database snapshot admission atomically checks the library fence while persisting the write intent.");
+
+    var preexistingFence = new TestDynamo();
+    preexistingFence.Fences.Add(scopeId);
+    await RejectAsync<RecoveryWorkerException>(() => new DynamoFenceIntentStore(preexistingFence, "fences", "intents")
+        .AdmitComponentAsync(pointId, source, "capture", "payload", "snapshots/point.dump", "worker",
+            DateTimeOffset.UtcNow, CancellationToken.None));
+    Check(preexistingFence.TransactionCount == 0,
+        "A library purge fence blocks new snapshot writes before the provider transaction.");
+
+    var racingFence = new TestDynamo { AddFenceDuringNextTransaction = scopeId };
+    await RejectAsync<RecoveryWorkerException>(() => new DynamoFenceIntentStore(racingFence, "fences", "intents")
+        .AdmitComponentAsync(pointId, source, "capture", "payload", "snapshots/point.dump", "worker",
+            DateTimeOffset.UtcNow, CancellationToken.None));
+    Check(racingFence.TransactionCount == 1 && racingFence.Fences.Contains(scopeId),
+        "The transaction condition rejects a purge fence added after the preliminary read.");
+}
+
 static RecoveryObjectStore Store(TestS3 source, TestS3 destination, TimeProvider? timeProvider = null) => new(
     source, destination, "primary", "recovery", "recovery-fixture", "ap-southeast-2", "kms-fixture", "unit-test", timeProvider);
 
@@ -305,6 +551,13 @@ static bool ThrowsInvalid(Action action)
     catch (InvalidDataException) { return true; }
 }
 
+static void RejectInvalidData(Action action)
+{
+    try { action(); }
+    catch (RecoveryWorkerException) { return; }
+    throw new InvalidOperationException("Expected invalid recovery worker input.");
+}
+
 static void RejectInvalid(Action action, [CallerLineNumber] int line = 0)
 {
     if (!ThrowsInvalid(action)) throw new InvalidOperationException($"Expected InvalidDataException at test line {line}.");
@@ -337,7 +590,10 @@ sealed class TestS3 : AmazonS3Client
     public bool DenyReads { get; set; }
     public PublicAccessBlockConfiguration? PublicAccessBlock { get; init; } = new()
     {
-        BlockPublicAcls = true, IgnorePublicAcls = true, BlockPublicPolicy = true, RestrictPublicBuckets = true
+        BlockPublicAcls = true,
+        IgnorePublicAcls = true,
+        BlockPublicPolicy = true,
+        RestrictPublicBuckets = true
     };
 
     public void Add(string bucket, string key, string version, byte[] content) => objects[(bucket, key, version)] = content;
@@ -391,6 +647,46 @@ sealed class TestS3 : AmazonS3Client
         if (exact == default) throw new AmazonS3Exception("fixture exact version missing") { StatusCode = HttpStatusCode.NotFound };
         var bytes = objects[exact];
         return Task.FromResult(new GetObjectMetadataResponse { VersionId = exact.Version, ContentLength = bytes.LongLength });
+    }
+}
+
+sealed class TestDynamo : AmazonDynamoDBClient
+{
+    public TestDynamo() : base(new AnonymousAWSCredentials(), new AmazonDynamoDBConfig { ServiceURL = "http://127.0.0.1:1" }) { }
+
+    public HashSet<string> Fences { get; } = new(StringComparer.Ordinal);
+    public string? AddFenceDuringNextTransaction { get; set; }
+    public int TransactionCount { get; private set; }
+    public TransactWriteItemsRequest? LastTransaction { get; private set; }
+
+    public override Task<GetItemResponse> GetItemAsync(GetItemRequest request, CancellationToken cancellationToken = default)
+    {
+        var scopeId = request.Key.TryGetValue("scopeId", out var scope) ? scope.S : null;
+        var recordId = request.Key.TryGetValue("recordId", out var record) ? record.S : null;
+        var item = request.TableName == "fences" && recordId == "FENCE" && scopeId is not null && Fences.Contains(scopeId)
+            ? new Dictionary<string, AttributeValue> { ["scopeId"] = new() { S = scopeId }, ["recordId"] = new() { S = "FENCE" } }
+            : new Dictionary<string, AttributeValue>();
+        return Task.FromResult(new GetItemResponse { Item = item });
+    }
+
+    public override Task<TransactWriteItemsResponse> TransactWriteItemsAsync(
+        TransactWriteItemsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        TransactionCount++;
+        LastTransaction = request;
+        if (AddFenceDuringNextTransaction is { } scopeId)
+        {
+            Fences.Add(scopeId);
+            AddFenceDuringNextTransaction = null;
+        }
+        foreach (var item in request.TransactItems)
+        {
+            if (item.ConditionCheck is { TableName: "fences" } condition &&
+                condition.Key.TryGetValue("scopeId", out var scope) && scope.S is { } value && Fences.Contains(value))
+                throw new TransactionCanceledException("fixture fence condition failed");
+        }
+        return Task.FromResult(new TransactWriteItemsResponse());
     }
 }
 

@@ -1,26 +1,33 @@
 # Feature 011 validation quickstart
 
-This is the planned validation procedure. It records no passing result. Local tests can validate contracts, integrity handling, and failure behavior; only a separately authorized AWS drill can demonstrate cross-account recovery, alert delivery, and the binding RPO/RTO.
+Local implementation is in progress. Recorded command results are in [validation.md](validation.md). Local tests validate contracts, integrity handling, and failure behavior; only a separately authorized AWS drill can demonstrate cross-account recovery, alert delivery, and the binding RPO/RTO.
 
 ## Local validation
 
 Local validation requires Node.js 24.20.0 with npm 11.19.0, the .NET SDK pinned in `global.json` (10.0.400 with latest-patch roll-forward), and Docker Compose for database/object-store integration tests. No AWS credentials are required or should be supplied to these test commands.
 
-After implementation adds the feature-specific commands, run from the repository root:
+The feature branch includes the following validation commands. Run from the repository root with the pinned toolchain:
 
 ```powershell
 npm ci --ignore-scripts
 npm --prefix packages/infrastructure ci --ignore-scripts
 npm run test:backup
+npm run package:recovery-worker
+npm run test:backup-cli
 npm run test:backup-integration
+npm run test:backup-capacity
 npm run test:ingest
 npm run test:version-control
 npm run validate:infrastructure
 npm run test:reliability
-node tests/infrastructure/recovery/recovery-contract.mjs
+npm run test:recovery-infrastructure
 ```
 
-`test:backup`, `test:backup-integration`, and `tests/infrastructure/recovery/recovery-contract.mjs` are planned and do not exist in the current repository yet. The implementation tasks must add the commands around `tests/recovery/Platform.Recovery.Tests.csproj`, `tests/integration/recovery/run.mjs`, and synthesized recovery-template/workflow checks, then put deterministic local checks in CI. The tests must cover data-class coverage and immutable identity checks; a read-only exported PostgreSQL snapshot/LSN paired with the transactional acknowledged-change watermark; complete enumeration of exact S3 key/version/hash/length dependencies from that same snapshot; partial-dump/copy/signature failure withholding the verified watermark; new-version streamed hash/length checks; reuse of prior destination receipts only when exact identity, retention, and access policy still match; periodic full rehash; stale, missing, corrupt, and inaccessible points; rejection of promotion from an isolated restore before owner approval; protection of the last verified copy; owner and authorization validation; audited purge of eligible primary and recovery copies with later recovery denied; and alert fault timing. Alert tests should verify a warning no later than 45 minutes of recovery-point age and delivery within 15 minutes. A local object-store emulator or mocks can exercise application behavior, but cannot prove AWS replication, KMS policy separation, archive policy, or notification delivery.
+`test:backup` runs `tests/recovery/Platform.Recovery.Tests.csproj`. `test:backup-integration` runs `tests/integration/recovery/run.mjs` against local PostgreSQL/S3 services. `test:recovery-infrastructure` synthesizes fresh opt-in recovery templates before checking their contracts. These commands are still being extended to cover the full numbered plan; an alias existing does not mean its acceptance checks have passed.
+
+`test:backup-capacity` additionally seeds a disposable database with 100,000 owner assets and one million XMP/edit records, then measures 25 signed health queries after five warmups and requires p95 <=5 seconds. These are database-only capacity rows, not an uploaded media corpus or cloud restore qualification. The local service measurement passed at 28.7 ms; see [the attributed evidence](validation.md).
+
+Required coverage includes data-class coverage and immutable identity checks; a read-only exported PostgreSQL snapshot/LSN paired with the transactional acknowledged-change watermark; complete enumeration of exact S3 key/version/hash/length dependencies from that same snapshot; partial-dump/copy/signature failure withholding the verified watermark; new-version streamed hash/length checks; reuse of prior destination receipts only when exact identity, retention, and access policy still match; periodic full rehash; stale, missing, corrupt, and inaccessible points; rejection of promotion from an isolated restore before owner approval; protection of the last verified copy; owner and authorization validation; audited purge of eligible primary and recovery copies with later recovery denied; and alert fault timing. Alert tests must verify a warning no later than 45 minutes of recovery-point age and delivery within 15 minutes. A local object-store emulator or mocks can exercise application behavior, but cannot prove AWS replication, KMS policy separation, archive policy, or notification delivery.
 
 The existing reconstruction-manifest verifier is also useful against two independently obtained manifests and recovered object bytes:
 
@@ -32,11 +39,21 @@ The recovered object directory must contain only the authoritative objects under
 
 The existing `npm run test:ingest` and `npm run test:version-control` commands protect the source data and commit-graph behavior that recovery depends on. Their success, infrastructure synthesis, and the committed `tests/infrastructure/protection-evidence.json` do not constitute backup or disaster-recovery evidence; that JSON describes GitHub repository protection only.
 
+## Release qualification tooling
+
+Run `npm run test:release-evidence` for local release/drill boundary checks. After `test:backup` builds the test executable and `package:recovery-worker` publishes the verifier, `test:backup-cli` exercises signed qualification through the actual .NET CLI and Node release attachment, including tampered binding/trust/checkpoint rejection. These generated test fixtures are never cloud qualification. Legacy six-artifact manifests remain valid. A seven-artifact candidate includes `recovery-worker.tar`, but packaging it does not qualify recovery. `verify-release-evidence.mjs --require-recovery` additionally requires signed qualification, its signed checkpoint, release binding, separately provisioned signing trust and an offline audit anchor. The CLI runs `verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>` without AWS credentials or runtime configuration; all files use the canonical shared codec, including compact JSON without trailing whitespace.
+
+The production workflow retains the existing renderer block. Its recovery gate selects a protected `AWS_RECOVERY_QUALIFICATION_RUN_ID` artifact named `recovery-qualification`, containing `recovery-qualification.json` and `recovery-checkpoint.json`. Provision `AWS_RECOVERY_SIGNING_TRUST` and `AWS_RECOVERY_OFFLINE_AUDIT_ANCHOR` separately in the protected environment; the artifact cannot select its own trust or audit head. Protected account IDs, recovery template digest and the immutable recovery worker image identify the expected environment. Before obtaining production credentials, the workflow verifies qualification against the exact candidate image digests from attributable non-production deployment evidence and the checked-out migration bytes. The deployment script then repeats verification against the actually resolved production images before task registration or migration. Missing, expired, mismatched or failed qualification must stop promotion. No actual qualifying artifact or live recovery proof exists in this local session.
+
+The protected quarterly/manual workflow launches only the fixed `drill` command with a generated run ID in recovery-owned private subnets. The launcher validates the exact task image, roles, pinned subnet/security-group IDs and actual local/gateway-only route tables. Encode `RECOVERY_ISOLATED_SUBNET_IDS` and `RECOVERY_DRILL_SECURITY_GROUP_IDS` as JSON arrays (for example `["subnet-abc123","subnet-def456"]` and `["sg-abc123"]`); CloudFormation's subnet CSV and scalar security-group outputs require this explicit conversion. Its launch record is operational status, not qualification.
+
+After a completed drill, the independent operator anchors the new signed audit head outside the artifact and provisions `RECOVERY_SIGNING_TRUST` and `RECOVERY_OFFLINE_AUDIT_ANCHOR` in the protected recovery environment. The manual `recovery-qualification.yml` workflow receives the exact successful launch workflow run ID and drill UUID, checks protected-master/source attribution, then reads `RUN#<UUID>/QUALIFICATION` from the independently configured recovery control table. It exports only the exact versions of the signed qualification and audit checkpoint below `evidence/drills/<UUID>/`, checks current protected release/configuration/access bindings and external trust/anchor, and uploads the payload-free `recovery-qualification` artifact for production verification. Pending/failed runs and private manifests cannot be exported by this path. Required infrastructure grants, complete worker execution and actual cloud evidence remain open under T024/T025; do not enable or run either workflow until the independent environment is provisioned and the owner authorizes the action.
+
 ## Recovery scale and cold storage
 
 The parent program's capacity baseline is at least 100,000 images and 1,000,000 XMP/content records. Record the exact object count and byte total from the frozen recovery manifest for every measured restore. The specifications do not set a maximum library byte size, so these counts alone cannot prove the 24-hour RTO for an arbitrary library. The owner must confirm the workload and byte envelope the release claim covers; do not invent a cap or claim that a smaller fixture represents a larger library.
 
-The current planning proposal transitions old content object versions to S3 Glacier Instant Retrieval after 90 days, with recent database dumps, catalogs/manifests, configuration, release artifacts, signatures, and owner-access evidence kept warm. Instant Retrieval provides millisecond object access, but has a 90-day minimum storage duration and a 128-KB minimum billable object size; the cost estimate must account for small XMP objects, lifecycle timing, and retrieval charges ([AWS storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/glacier-storage-classes.html)). The recovery copy still needs an independently usable recent point and a measured full restore path. This is a proposal pending owner approval, not a binding decision.
+The owner-approved policy transitions protected original/XMP payload versions to S3 Glacier Instant Retrieval after 90 days, with database dumps, catalogs/manifests, configuration, release artifacts, signatures, and owner-access evidence kept warm. Instant Retrieval provides millisecond object access, but has a 90-day minimum storage duration and a 128-KB minimum billable object size; the cost estimate must account for small XMP objects, lifecycle timing, and retrieval charges ([AWS storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/glacier-storage-classes.html)). The recovery copy still needs an independently usable recent point and a measured full restore path. Approval of this policy does not authorize deployment or lifecycle transitions in a live account.
 
 ## AWS-only release evidence
 

@@ -15,6 +15,8 @@ public sealed record RecoveryQualificationV1(
     string IngestWorkerBuildDigest,
     string RendererBuildDigest,
     string MigrationDigest,
+    string ConfigurationDigest,
+    string OwnerAccessEvidenceSha256,
     RecoveryQualificationAccountV1 Primary,
     RecoveryQualificationAccountV1 Recovery,
     RecoveryQualifiedPointV1 Point,
@@ -34,6 +36,10 @@ public sealed record RecoveryQualificationV1(
     {
         if (SchemaVersion != CurrentSchemaVersion || QualificationId == Guid.Empty || RunId == Guid.Empty)
             throw new InvalidDataException("invalid_qualification_identity");
+        if (Primary is null || Recovery is null || Point is null || Workload is null ||
+            PrimaryAccessDenied is null || Restore is null || Checks is null || Alerts is null ||
+            Retention is null || Purge is null || CorrectiveActions is null || UnresolvedBlockingCorrections is null)
+            throw new InvalidDataException("qualification_results_required");
         RecoveryValidation.Utc(QualifiedAtUtc, nameof(QualifiedAtUtc));
         RecoveryValidation.Text(SourceRevision, nameof(SourceRevision), 200);
         RecoveryValidation.Hash(RecoveryTemplateDigest, nameof(RecoveryTemplateDigest));
@@ -42,16 +48,19 @@ public sealed record RecoveryQualificationV1(
         RecoveryValidation.Hash(IngestWorkerBuildDigest, nameof(IngestWorkerBuildDigest));
         RecoveryValidation.Hash(RendererBuildDigest, nameof(RendererBuildDigest));
         RecoveryValidation.Hash(MigrationDigest, nameof(MigrationDigest));
+        RecoveryValidation.Hash(ConfigurationDigest, nameof(ConfigurationDigest));
+        RecoveryValidation.Hash(OwnerAccessEvidenceSha256, nameof(OwnerAccessEvidenceSha256));
         Primary.Validate();
         Recovery.Validate();
         if (Primary.AccountId == Recovery.AccountId || Primary.Region == Recovery.Region)
             throw new InvalidDataException("recovery_environment_not_independent");
+        if (Primary.Region != "ap-southeast-1" || Recovery.Region != "ap-southeast-2")
+            throw new InvalidDataException("recovery_region_pair_invalid");
         Point.Validate();
         Workload.Validate();
         PrimaryAccessDenied.Validate();
         Restore.Validate();
-        if (Checks is null || Purge is null) throw new InvalidDataException("qualification_results_required");
-        if (Alerts is null) throw new InvalidDataException("qualification_alerts_required");
+        if (Alerts.Any(alert => alert is null)) throw new InvalidDataException("qualification_alert_invalid");
         foreach (var alert in Alerts) alert.Validate();
         Retention.Validate();
         RecoveryEvidenceCodec.ValidateSafeCodes(CorrectiveActions);
@@ -74,13 +83,13 @@ public sealed record RecoveryQualificationEnvelopeV1(
 
     public void Validate()
     {
-        if (EnvelopeSchemaVersion != CurrentSchemaVersion) throw new InvalidDataException("unsupported_qualification_envelope");
+        if (EnvelopeSchemaVersion != CurrentSchemaVersion || Payload is null) throw new InvalidDataException("unsupported_qualification_envelope");
         Payload.Validate();
         RecoveryValidation.Hash(PayloadSha256, nameof(PayloadSha256));
         RecoveryValidation.Text(SigningKeyId, nameof(SigningKeyId), 512);
         RecoveryValidation.Hash(SigningPublicKeySha256, nameof(SigningPublicKeySha256));
         try { _ = Convert.FromBase64String(CanonicalPayloadBase64); _ = Convert.FromBase64String(SignatureBase64); }
-        catch (FormatException exception) { throw new InvalidDataException("invalid_qualification_signature_encoding", exception); }
+        catch (Exception exception) when (exception is FormatException or ArgumentNullException) { throw new InvalidDataException("invalid_qualification_signature_encoding", exception); }
         if (string.IsNullOrWhiteSpace(SignatureBase64)) throw new InvalidDataException("qualification_signature_required");
     }
 }
@@ -117,6 +126,7 @@ public sealed record RecoveryQualifiedPointV1(
     Guid PointId,
     Guid CaptureId,
     string ManifestSha256,
+    /// <summary>SHA-256 of the canonical private copy-checkpoint payload bytes, not the envelope.</summary>
     string CheckpointSha256,
     string CheckpointKeyId,
     string CheckpointSignatureBase64,
@@ -134,7 +144,7 @@ public sealed record RecoveryQualifiedPointV1(
         RecoveryValidation.Text(CheckpointKeyId, nameof(CheckpointKeyId), 512);
         RecoveryValidation.Text(CheckpointSignatureBase64, nameof(CheckpointSignatureBase64), 4096);
         try { _ = Convert.FromBase64String(CheckpointSignatureBase64); }
-        catch (FormatException exception) { throw new InvalidDataException("invalid_checkpoint_signature", exception); }
+        catch (Exception exception) when (exception is FormatException or ArgumentNullException) { throw new InvalidDataException("invalid_checkpoint_signature", exception); }
         RecoveryValidation.Utc(SnapshotCutoffUtc, nameof(SnapshotCutoffUtc));
         if (!RecoveryValidation.IsLsn(SnapshotLsn) || ChangeSequence < 0) throw new InvalidDataException("invalid_qualification_watermark");
         if (LatestChangedAtUtc is { } latest)
@@ -143,7 +153,7 @@ public sealed record RecoveryQualifiedPointV1(
             if (latest > SnapshotCutoffUtc) throw new InvalidDataException("qualification_change_after_cutoff");
         }
         if ((ChangeSequence == 0) != (LatestChangedAtUtc is null)) throw new InvalidDataException("ambiguous_qualification_watermark");
-        if (Coverage is null || Coverage.Count != RecoveryEvidenceCodec.ObservationClasses.Length) throw new InvalidDataException("qualification_coverage_incomplete");
+        if (Coverage is null || Coverage.Count != RecoveryEvidenceCodec.ObservationClasses.Length || Coverage.Any(item => item is null)) throw new InvalidDataException("qualification_coverage_incomplete");
         foreach (var item in Coverage) item.Validate();
         if (Coverage.Select(item => item.DataClass).Distinct(StringComparer.Ordinal).Count() != Coverage.Count ||
             RecoveryEvidenceCodec.ObservationClasses.Except(Coverage.Select(item => item.DataClass), StringComparer.Ordinal).Any())
@@ -316,7 +326,23 @@ public sealed record RecoveryQualificationBindingV1(
     string RecoveryWorkerBuildDigest,
     string IngestWorkerBuildDigest,
     string RendererBuildDigest,
-    string MigrationDigest);
+    string MigrationDigest,
+    string ConfigurationDigest,
+    string OwnerAccessEvidenceSha256)
+{
+    public void Validate()
+    {
+        RecoveryValidation.Text(SourceRevision, nameof(SourceRevision), 200);
+        RecoveryValidation.Hash(RecoveryTemplateDigest, nameof(RecoveryTemplateDigest));
+        RecoveryValidation.Hash(ApiBuildDigest, nameof(ApiBuildDigest));
+        RecoveryValidation.Hash(RecoveryWorkerBuildDigest, nameof(RecoveryWorkerBuildDigest));
+        RecoveryValidation.Hash(IngestWorkerBuildDigest, nameof(IngestWorkerBuildDigest));
+        RecoveryValidation.Hash(RendererBuildDigest, nameof(RendererBuildDigest));
+        RecoveryValidation.Hash(MigrationDigest, nameof(MigrationDigest));
+        RecoveryValidation.Hash(ConfigurationDigest, nameof(ConfigurationDigest));
+        RecoveryValidation.Hash(OwnerAccessEvidenceSha256, nameof(OwnerAccessEvidenceSha256));
+    }
+}
 
 /// <summary>
 /// Applies the release criteria after an envelope has been parsed. Structural parsing
@@ -334,6 +360,7 @@ public static class RecoveryQualificationReleaseGate
         ArgumentNullException.ThrowIfNull(trust);
         ArgumentNullException.ThrowIfNull(release);
         RecoveryValidation.Utc(nowUtc, nameof(nowUtc));
+        release.Validate();
         var payload = qualification.Payload;
         var envelope = RecoveryQualificationCodec.CreateEnvelope(payload,
             new RecoveryEvidenceSignature(qualification.SigningKeyId, qualification.SigningPublicKeySha256, qualification.Signature));
@@ -350,10 +377,17 @@ public static class RecoveryQualificationReleaseGate
             payload.RecoveryWorkerBuildDigest != release.RecoveryWorkerBuildDigest ||
             payload.IngestWorkerBuildDigest != release.IngestWorkerBuildDigest ||
             payload.RendererBuildDigest != release.RendererBuildDigest ||
-            payload.MigrationDigest != release.MigrationDigest)
+            payload.MigrationDigest != release.MigrationDigest ||
+            payload.ConfigurationDigest != release.ConfigurationDigest ||
+            payload.OwnerAccessEvidenceSha256 != release.OwnerAccessEvidenceSha256)
             throw new InvalidDataException("qualification_release_binding_mismatch");
+        _ = RecoveryEvidenceCodec.VerifyDetachedDigest(payload.Point.CheckpointSha256,
+            payload.Point.CheckpointSignatureBase64, payload.Point.CheckpointKeyId,
+            qualification.SigningPublicKeySha256, trust);
         if (payload.Primary.AccountId == payload.Recovery.AccountId || payload.Primary.Region == payload.Recovery.Region)
             throw new InvalidDataException("recovery_environment_not_independent");
+        if (payload.Primary.Region != "ap-southeast-1" || payload.Recovery.Region != "ap-southeast-2")
+            throw new InvalidDataException("recovery_region_pair_invalid");
 
         if (!payload.PrimaryAccessDenied.Verified || payload.Restore.RpoSeconds is null or < 0 or > 3600 ||
             payload.Restore.RtoSeconds is null or < 0 or > 86400 || payload.Restore.IsolatedTargetDigest is null)
