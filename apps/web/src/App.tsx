@@ -8,6 +8,7 @@ import { ExportBasket } from './ExportBasket';
 import { exportApi } from './export-api';
 import { exportText } from './export-messages';
 import { Modal } from './Modal';
+import { RecoveryHealth, recoveryText } from './RecoveryHealth';
 import { reauthenticationReturnPath } from './recent-auth';
 import './workspace.css';
 
@@ -40,7 +41,7 @@ export function App() {
   const scrollPositions = useRef<Record<string, number>>({});
   function openView(next: string) {
     if (
-      next === 'exports' &&
+      (next === 'exports' || next === 'backups') &&
       next !== view &&
       !window.dispatchEvent(new Event('gallery-guard', { cancelable: true }))
     )
@@ -288,6 +289,9 @@ export function App() {
               <details className="owner-menu">
                 <summary aria-label="Owner controls">Owner</summary>
                 <div>
+                  <button onClick={() => openView('backups')}>
+                    {recoveryText('backups')}
+                  </button>
                   <button onClick={() => openView('diagnostics')}>
                     Service details
                   </button>
@@ -322,6 +326,9 @@ export function App() {
       )}
       {signedIn && (
         <div hidden={expired}>
+          {view === 'backups' && (
+            <RecoveryHealth baseUrl={config.apiBaseUrl} token={token} />
+          )}
           {config.exportsEnabled &&
             config.galleryLibraryId &&
             view === 'exports' && (
