@@ -31,5 +31,6 @@
     <EmbeddedResource Include="../api/Database/Migrations/019_tag_audit_link.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.019_tag_audit_link.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/021_export_baskets.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.021_export_baskets.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/020_lineage_branch_reachability.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.020_lineage_branch_reachability.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/022_backup_recovery.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.022_backup_recovery.sql" />
   </ItemGroup>
 </Project>
