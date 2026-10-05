@@ -1,6 +1,6 @@
 # ADR-0003: Cross-region library recovery in an independent AWS account
 
-**Status**: Proposed
+**Status**: Accepted (owner approval, 2026-10-05)
 **Date**: 2026-09-03
 **Decision owner**: Product owner
 **Related feature**: [011 Backup and Disaster Recovery](../../features/011-backup-disaster-recovery/spec.md)
@@ -22,3 +22,7 @@ Use a recovery copy in a separate AWS account and second AWS region. Keep long-r
 ## Consequences
 
 This choice improves isolation and makes recovery drills meaningful, but adds account governance, cross-boundary access management, retrieval planning, and recurring verification work. Exact storage tiers, replication mechanics, encryption-key ownership, and runbook procedures remain design decisions for feature 011 planning. The decision may be superseded if measured drills cannot meet the binding RPO/RTO.
+
+## Implementation qualification, 2026-10-05
+
+The owner approved feature 011 local implementation on its explicitly requested fresh branch. The approved plan selects coordinated 15-minute PostgreSQL exported snapshots, recovery-controlled exact-version copies with writer fencing, independently controlled encryption/signing and owner MFA, Glacier Instant Retrieval after 90 days for media copies, warm recovery evidence, and media-only purge retaining immutable history metadata. See the feature plan and T006 approval record. Real independent-account recovery, achieved RPO/RTO, notification delivery, workload/cost qualification and external actions remain gated; approval is not evidence of deployed recovery guarantees.
