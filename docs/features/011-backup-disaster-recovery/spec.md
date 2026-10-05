@@ -1,8 +1,8 @@
 # Feature Specification: Backup and Disaster Recovery
 
-**Feature Branch**: `feature/011-backup-disaster-recovery`
+**Feature Branch**: `feature/011-backup-disaster-recovery-fresh` (fresh branch explicitly requested by the owner on 2026-10-05; canonical artifact directory unchanged)
 **Created**: 2026-09-03
-**Status**: Draft — awaiting product-owner approval
+**Status**: Approved for local implementation on 2026-10-05; external qualification remains gated.
 **Parent program**: [003 Darktable Version Control](../003-darktable-version-control/spec.md)
 **Related decision**: [ADR-0003](../../architecture/decisions/0003-cross-region-library-recovery.md)
 
@@ -116,3 +116,17 @@ As the owner, I can restore the private library in the recovery region and conti
 - **SC-002**: Every quarterly drill restores core private-library access within 24 hours using recovery-account materials only.
 - **SC-003**: 100% of protected fixture classes pass coverage and integrity validation in a successful recovery cycle.
 - **SC-004**: No retention test removes the final verified recovery copy of a protected data class.
+
+## Implementation readiness — 2026-10-05
+
+The owner requested implementation to completion, delegated Luna agents, and an independent adversarial review, then explicitly requested replacing the stale branch with a fresh branch. This authorizes discovery and preparation of concrete implementation artifacts; it does not provide approval of newly proposed material storage, identity, or recovery design choices. The stale plan was still marked proposed and had no implementation evidence. The current [plan.md](plan.md), [tasks.md](tasks.md), [data model](data-model.md), [contracts](contracts/recovery.md), [research](research.md), and [validation guide](quickstart.md) replace its broad planning outline on the fresh branch, without importing unrelated stale history.
+
+The numbered plan preserves the original T001–T006 IDs. T006 is the prerequisite design-approval gate; no implementation task may start until that gate is satisfied. The prior specification-only adversarial review does not certify the new design or any future implementation.
+
+Material approval items and proposed choices are recorded in the plan. In particular, independent owner identity/access recovery, cold-storage tier and costs, backup consistency/capture mechanics, and the media-byte/change-volume envelope for the 100,000-image reference library need explicit design approval or approval of documented assumptions. Account IDs, key/role administrators, alert destinations and a protected rehearsal environment are external execution prerequisites; they must not be filled with invented production values.
+
+All requirements and acceptance criteria above remain binding. Fixture tests and synthesized infrastructure can establish local behavior; they cannot establish actual account independence, cold retrieval, owner/operator alert delivery or achieved AWS RPO/RTO. Full completion/release evidence remains blocked if those required checks are unavailable. Account creation, external deployment, persistent migration, live restore/promotion and irreversible purge require separate explicit authorization.
+
+## Approval record
+
+2026-10-05: the owner approved the complete implementation design and instructed proceeding according to the previous instructions. T006 is satisfied for local implementation. The approved purge scope erases service-controlled media payloads while retaining historical paths, descriptive metadata and immutable graph/audit evidence; owner-facing confirmation must disclose this. All binding release criteria remain unchanged and require actual independent AWS qualification.
