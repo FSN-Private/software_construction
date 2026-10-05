@@ -18,4 +18,40 @@ public static class ExportDatabase
         await LockOwnerAsync(db, owner, ct);
         await HistoryRetention.LockAsync(db, owner, library, ct);
     }
+
+    public static Task<Guid> RecordChangeAsync(
+        NpgsqlConnection db,
+        NpgsqlTransaction tx,
+        string owner,
+        string library,
+        string eventType,
+        string entityType,
+        string entityId,
+        IReadOnlyCollection<string> contentDigests,
+        CancellationToken ct,
+        string outcome = "accepted",
+        string? code = null)
+    {
+        var resourceId = Guid.TryParse(entityId, out var parsed) ? parsed : Guid.Empty;
+        return Platform.Storage.IngestDb.AuditAndRecordRecoveryChangeAsync(
+            db, tx, owner, library, OperationId, eventType, resourceId, outcome,
+            entityType, entityId, contentDigests, ct, code);
+    }
+
+    public static IReadOnlyList<string> ContentDigests(ExportSnapshot snapshot) =>
+        snapshot.Items.SelectMany(pin => new[] { pin.Original.Sha256, pin.Xmp.Sha256, pin.CommitId })
+            .Where(Platform.Contracts.Exports.ExportIntegrity.IsSha256)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+    public static async Task<IReadOnlyList<string>> RequestContentDigestsAsync(
+        NpgsqlConnection db,
+        Guid requestId,
+        CancellationToken ct)
+    {
+        var raw = await ScalarAsync(db, "SELECT snapshot::text FROM export_requests WHERE id=$1", ct, requestId) as string
+            ?? throw new ExportProblem("export_not_found", 404);
+        return ContentDigests(Decode<ExportSnapshot>(raw));
+    }
 }

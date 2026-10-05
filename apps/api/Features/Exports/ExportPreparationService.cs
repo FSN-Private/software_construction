@@ -27,7 +27,7 @@ public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBask
         var availability = await ExportSelectionService.AvailabilityBatchAsync(db, owner, library, snapshot.Items, preset.Format == "original", ct);
         var outcomes = snapshot.Items.Select(pin => new ExportOutcome(pin.ItemId, availability[pin.ItemId] is null ? "pending" : "unavailable", availability[pin.ItemId], null, null, null)).ToArray();
         await ExecuteAsync(db, "INSERT INTO export_results(request_id,item_id,outcome) SELECT $1,(p->>'itemId')::uuid,p FROM jsonb_array_elements($2::jsonb) p", ct, requestId, ExportDatabase.Encode(outcomes));
-        await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.requested", requestId, "accepted", ct);
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.requested", "export_request", requestId.ToString("D"), ExportDatabase.ContentDigests(snapshot), ct);
         var result = await GetAsync(db, owner, library, requestId, ct); await tx.CommitAsync(ct); return result;
     }
     public async Task<ExportRequestView> GetAsync(string owner, string library, Guid id, CancellationToken ct)
@@ -50,11 +50,12 @@ public sealed class ExportPreparationService(NpgsqlDataSource source, ExportBask
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         var current = await GetAsync(db, owner, library, id, ct);
         if (current.State is "completed" or "partial" or "failed") throw new ExportProblem("export_terminal");
-        if (current.State is "pending" or "preparing" or "retryable" or "cancelling")
+        if (current.State is "pending" or "preparing" or "retryable")
         {
-            await ExecuteAsync(db, "UPDATE export_requests SET state='cancelling',reason='cancelled',generation=generation+1 WHERE id=$1; UPDATE export_download_grants SET revoked_at=now() WHERE request_id=$1", ct, id);
+            await ExecuteAsync(db, "UPDATE export_requests SET state='cancelling',reason='cancelled',generation=generation+1 WHERE id=$1", ct, id);
+            await ExecuteAsync(db, "UPDATE export_download_grants SET revoked_at=now() WHERE request_id=$1 AND revoked_at IS NULL", ct, id);
             foreach (var item in current.Outcomes.Where(i => i.Status == "pending")) await ExecuteAsync(db, "UPDATE export_results SET outcome=$3::jsonb WHERE request_id=$1 AND item_id=$2", ct, id, item.ItemId, ExportDatabase.Encode(new ExportOutcome(item.ItemId, "cancelled", "cancelled", null, null, null)));
-            await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.cancelled", id, "accepted", ct);
+            await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.cancelled", "export_request", id.ToString("D"), ExportDatabase.ContentDigests(current.Snapshot), ct);
         }
         var result = await GetAsync(db, owner, library, id, ct); await tx.CommitAsync(ct); return result;
     }

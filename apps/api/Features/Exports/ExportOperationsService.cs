@@ -21,9 +21,22 @@ public sealed class ExportOperationsService(NpgsqlDataSource source, IConfigurat
     {
         var actor = Operator(user); if (action is not ("pause" or "resume" or "drain" or "cancel-pending")) throw new ExportProblem("invalid_export_operation", 400);
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct);
+        if (action == "cancel-pending")
+        {
+            var requests = new List<(Guid Id, string Owner, string Library)>();
+            await using (var cmd = Command(db, "SELECT id,owner_id,library_id FROM export_requests WHERE state IN ('pending','retryable','preparing') ORDER BY owner_id,library_id,id"))
+            await using (var r = await cmd.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) requests.Add((r.GetGuid(0), r.GetString(1), r.GetString(2)));
+            foreach (var request in requests)
+            {
+                await ExportDatabase.LockAsync(db, request.Owner, request.Library, ct);
+                if (await ExecuteAsync(db, "UPDATE export_requests SET state='cancelling',reason='cancelled',generation=generation+1 WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND state IN ('pending','retryable','preparing')", ct, request.Id, request.Owner, request.Library) == 0) continue;
+                await ExecuteAsync(db, "UPDATE export_download_grants SET revoked_at=now() WHERE request_id=$1 AND revoked_at IS NULL", ct, request.Id);
+                await ExecuteAsync(db, "UPDATE export_download_sessions SET revoked_at=now() WHERE id IN (SELECT session_id FROM export_download_grants WHERE request_id=$1) AND revoked_at IS NULL", ct, request.Id);
+                await ExportDatabase.RecordChangeAsync(db, tx, request.Owner, request.Library, "exports.cancelled_by_operator", "export_request", request.Id.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, request.Id, ct), ct, outcome: "cancelling");
+            }
+        }
         await ExecuteAsync(db, "SELECT singleton FROM export_operations WHERE singleton FOR UPDATE", ct);
         await ExecuteAsync(db, "UPDATE export_operations SET paused=$1,draining=$2 WHERE singleton", ct, action != "resume", action == "drain");
-        if (action == "cancel-pending") await ExecuteAsync(db, "UPDATE export_requests SET state='cancelling',reason='cancelled',generation=generation+1 WHERE state IN ('pending','retryable','preparing'); UPDATE export_download_grants g SET revoked_at=now() FROM export_requests r WHERE g.request_id=r.id AND r.state='cancelling'", ct);
         await AuditAsync(db, actor, ExportDatabase.OperationId, "exports.operation_" + action.Replace('-', '_'), Guid.Empty, "accepted", ct);
         var result = await ReadAsync(db, ct); await tx.CommitAsync(ct); return result;
     }

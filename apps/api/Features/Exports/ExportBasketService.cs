@@ -9,7 +9,11 @@ public sealed class ExportBasketService(NpgsqlDataSource source, ExportSelection
     {
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         if (await ScalarAsync(db, "SELECT 1 FROM export_baskets WHERE owner_id=$1 AND library_id=$2 LIMIT 1", ct, owner, library) is null)
-            await ExecuteAsync(db, "INSERT INTO export_baskets(id,owner_id,library_id,name,is_default) VALUES($1,$2,$3,'Export basket',true)", ct, Guid.NewGuid(), owner, library);
+        {
+            var id = Guid.NewGuid();
+            await ExecuteAsync(db, "INSERT INTO export_baskets(id,owner_id,library_id,name,is_default) VALUES($1,$2,$3,'Export basket',true)", ct, id, owner, library);
+            await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.basket_created", "export_basket", id.ToString("D"), [], ct);
+        }
         var ids = new List<Guid>();
         await using (var cmd = Command(db, "SELECT id FROM export_baskets WHERE owner_id=$1 AND library_id=$2 ORDER BY is_default DESC,created_at,id", owner, library))
         await using (var reader = await cmd.ExecuteReaderAsync(ct)) { while (await reader.ReadAsync(ct)) ids.Add(reader.GetGuid(0)); }
@@ -21,7 +25,7 @@ public sealed class ExportBasketService(NpgsqlDataSource source, ExportSelection
         ValidateName(name); await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         var count = Convert.ToInt64(await ScalarAsync(db, "SELECT count(*) FROM export_baskets WHERE owner_id=$1 AND library_id=$2", ct, owner, library)); if (count >= ExportConfiguration.Limits(configuration).Baskets) throw new ExportProblem("quota_exceeded");
         var id = Guid.NewGuid(); await ExecuteAsync(db, "INSERT INTO export_baskets(id,owner_id,library_id,name,is_default) VALUES($1,$2,$3,$4,$5)", ct, id, owner, library, name.Trim(), count == 0);
-        await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.basket_created", id, "accepted", ct);
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.basket_created", "export_basket", id.ToString("D"), [], ct);
         var result = await GetAsync(db, owner, library, id, ct); await tx.CommitAsync(ct); return result;
     }
     public async Task<ExportBasket> GetAsync(string owner, string library, Guid id, CancellationToken ct)
@@ -50,7 +54,8 @@ public sealed class ExportBasketService(NpgsqlDataSource source, ExportSelection
             default: throw new ExportProblem("invalid_request", 400);
         }
         if (action != "delete") await ExecuteAsync(db, "UPDATE export_baskets SET revision=revision+1,updated_at=now() WHERE id=$1", ct, id);
-        await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.basket_" + action, id, "accepted", ct);
+        var digests = current.Items.SelectMany(value => new[] { value.Pin.Original.Sha256, value.Pin.Xmp.Sha256, value.Pin.CommitId }).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.basket_" + action, "export_basket", id.ToString("D"), digests, ct);
         var result = action == "delete" ? null : await GetAsync(db, owner, library, id, ct); await tx.CommitAsync(ct); return result;
     }
     public async Task<ExportBasket> GetAsync(NpgsqlConnection db, string owner, string library, Guid id, CancellationToken ct)

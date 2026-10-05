@@ -116,7 +116,11 @@ public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Ext
             await writes.StopWriterAsync(workspaceIntent, lease, CancellationToken.None);
             ExportCleanupService.RemoveWorkspace(Path.GetFullPath(root), workspaceIntent);
             await using var db = await source.OpenConnectionAsync(CancellationToken.None);
-            await ExecuteAsync(db, "UPDATE export_write_intents SET state='cleaned',settled_at=now() WHERE id=$1 AND writer_id=$2 AND category='workspace' AND writer_stopped", CancellationToken.None, workspaceIntent, lease);
+            await using var cleanupTx = await db.BeginTransactionAsync(CancellationToken.None);
+            await ExportDatabase.LockAsync(db, owner, library, CancellationToken.None);
+            if (await ExecuteAsync(db, "UPDATE export_write_intents SET state='cleaned',settled_at=now() WHERE id=$1 AND writer_id=$2 AND category='workspace' AND writer_stopped AND state<>'cleaned'", CancellationToken.None, workspaceIntent, lease) != 0)
+                await ExportDatabase.RecordChangeAsync(db, cleanupTx, owner, library, "exports.workspace_cleaned", "export_write_intent", workspaceIntent.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, id, CancellationToken.None), CancellationToken.None);
+            await cleanupTx.CommitAsync(CancellationToken.None);
         }
     }
     private async Task<string> UploadAsync(Guid intent, Guid writer, string key, Stream bytes, CancellationToken ct)
@@ -154,16 +158,21 @@ public sealed class ExportPackageService(NpgsqlDataSource source, [Microsoft.Ext
         foreach (var item in manifest.Outcomes)
         {
             await ExecuteAsync(db, "UPDATE export_results SET outcome=$3::jsonb WHERE request_id=$1 AND item_id=$2", ct, id, item.ItemId, ExportDatabase.Encode(item));
-            await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.item_settled", item.ItemId, item.Status, ct, item.Reason);
+            var itemDigests = ExportDatabase.ContentDigests(manifest.Snapshot).Concat(item.Sha256 is null ? [] : [item.Sha256]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.item_settled", "export_item", item.ItemId.ToString("D"), itemDigests, ct, outcome: item.Status, code: item.Reason);
         }
-        await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.package_prepared", id, state, ct); await tx.CommitAsync(ct);
+        var packageDigests = ExportDatabase.ContentDigests(manifest.Snapshot).Concat(sha is null ? [] : [sha]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.package_prepared", "export_request", id.ToString("D"), packageDigests, ct, outcome: state);
+        await tx.CommitAsync(ct);
         foreach (var item in manifest.Outcomes) Platform.Api.Telemetry.PlatformTelemetry.ExportItemOutcomes.Add(1, new KeyValuePair<string, object?>("status", item.Status), new KeyValuePair<string, object?>("reason", item.Reason));
         if (length is { } bytes) Platform.Api.Telemetry.PlatformTelemetry.ExportPackageSize.Record(bytes);
     }
     private async Task CheckLeaseAsync(string owner, string library, Guid id, Guid lease, long generation, CancellationToken ct)
     {
-        await using var db = await source.OpenConnectionAsync(ct);
+        await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await ExportDatabase.LockAsync(db, owner, library, ct);
         if (await ExecuteAsync(db, "UPDATE export_requests SET lease_until=now()+interval '2 minutes' WHERE id=$1 AND owner_id=$2 AND library_id=$3 AND lease_id=$4 AND generation=$5 AND state='preparing' AND lease_until>now()", ct, id, owner, library, lease, generation) == 0) throw new ExportProblem("cancelled");
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.writer_lease_renewed", "export_request", id.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, id, ct), ct);
+        await tx.CommitAsync(ct);
     }
     private async Task DownloadVerifiedAsync(string bucket, RenderInputObject input, string file, long limit, CancellationToken ct)
     {
