@@ -20,6 +20,8 @@ These checks use local fixtures and services. They do not establish AWS account 
 
 The orchestrator repeated the M1 migration rehearsal successfully: transactional migration rollback, apply-twice/old-reader compatibility, association correction, exact-byte retrieval/provenance, lifecycle day-90/holds/shared-byte cases, full reconstruction relationships, owner-isolated HTTP behavior and the existing six-object ingest retry/quarantine/atomic/fault matrix all passed.
 
+M1 follow-up: the source adapter now checks the provider's returned version ID before copying. A same-byte/wrong-version fixture is rejected before any destination write. SDK access-denial fixtures reject both copying and recovery reads. The recovery executable checks passed again after this change; these denial fixtures do not certify actual KMS policy.
+
 ## External completion and release gates
 
 The following evidence is unavailable in this local implementation session and remains BLOCKED, not passed:

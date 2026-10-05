@@ -186,6 +186,7 @@ public sealed class RecoveryObjectStore(
         }, cancellationToken);
         using (response)
         {
+            if (response.VersionId != source.SourceVersionId) throw new InvalidDataException("recovery_source_identity_mismatch");
             if (response.ContentLength != expected.Length) throw new InvalidDataException("recovery_source_length_mismatch");
             var file = CreateTempFile("recovery-copy");
             try
