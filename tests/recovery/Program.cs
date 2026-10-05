@@ -1,5 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -9,8 +11,9 @@ using Platform.Storage;
 try
 {
     ContractChecks();
+    EvidenceContractChecks();
     await ObjectStoreChecksAsync();
-    Console.WriteLine("Recovery contracts and exact-version storage checks passed.");
+    Console.WriteLine("Recovery contracts, signed evidence, and exact-version storage checks passed.");
 }
 catch (Exception exception)
 {
@@ -45,6 +48,125 @@ static void ContractChecks()
     Check(shuffled.Digest() == manifest.Digest(), "Manifest order must not alter canonical recovery-point identity.");
     var noncanonical = bytes.Concat(" "u8.ToArray()).ToArray();
     RejectInvalid(() => RecoveryPointManifestV1.ParseCanonical(noncanonical));
+}
+
+static void EvidenceContractChecks()
+{
+    using var rsa = RSA.Create(2048);
+    var publicKey = rsa.ExportSubjectPublicKeyInfo();
+    var keyId = "arn:aws:kms:ap-southeast-2:222222222222:key/11111111-1111-1111-1111-111111111111";
+    var fingerprint = RecoveryEvidenceCodec.Hash(publicKey);
+    var trust = new RecoverySigningTrust(keyId, Convert.ToBase64String(publicKey), fingerprint);
+    var now = DateTimeOffset.Parse("2026-10-05T10:20:30Z");
+
+    var catalog = Catalog(now);
+    var catalogBytes = RecoveryCatalogCodec.SerializePayload(catalog);
+    var catalogSignature = Sign(rsa, catalogBytes, keyId, fingerprint);
+    var catalogEnvelope = RecoveryCatalogCodec.CreateEnvelope(catalog, "recovery-copy", catalogSignature);
+    var catalogEnvelopeBytes = RecoveryCatalogCodec.SerializeEnvelope(catalogEnvelope);
+    Check(catalogEnvelopeBytes.Length < 16 * 1024, "Safe point catalog stays bounded independently of object inventory size.");
+    var parsedCatalogEnvelope = RecoveryCatalogCodec.ParseEnvelope(catalogEnvelopeBytes);
+    var verifiedCatalog = RecoveryCatalogCodec.Verify(parsedCatalogEnvelope, trust);
+    Check(verifiedCatalog.Payload.FullManifestSha256 != verifiedCatalog.PayloadSha256,
+        "Safe catalog digest and full private manifest digest are separate signed identities.");
+    using (var catalogDocument = JsonDocument.Parse(verifiedCatalog.CanonicalPayloadBytes))
+    {
+        var root = catalogDocument.RootElement;
+        Check(!root.TryGetProperty("objects", out _) && !root.TryGetProperty("sourceKey", out _) &&
+            !root.TryGetProperty("destinationKey", out _), "Mirrored catalog contains no per-object locators or closure.");
+        Check(root.GetProperty("coverage").GetArrayLength() == RecoveryEvidenceCodec.ObservationClasses.Length,
+            "Mirrored catalog includes only fixed-size per-class coverage.");
+    }
+    RejectInvalid(() => RecoveryCatalogCodec.Verify(parsedCatalogEnvelope with { SafeCatalogPayloadSha256 = new string('0', 64) }, trust));
+    RejectInvalid(() => RecoveryCatalogCodec.Verify(parsedCatalogEnvelope with { SigningKeyId = "untrusted" }, trust));
+    RejectInvalid(() => RecoveryCatalogCodec.SerializePayload(catalog with { Coverage = catalog.Coverage.Reverse().ToArray() }));
+    RejectInvalid(() => RecoveryCatalogCodec.ParseEnvelope(catalogEnvelopeBytes.Concat(" "u8.ToArray()).ToArray()));
+
+    var observation = new RecoveryObservationPayloadV1(1, Guid.NewGuid(), catalog.RecoveryPointId, catalog.OwnerId,
+        catalog.LibraryId, "originals", "healthy", now, 1, 1, 16, 16, catalog.FullManifestSha256, [], null);
+    var observationBytes = observation.SerializeCanonical();
+    var observationEnvelope = RecoveryEvidenceCodec.CreateObservationEnvelope(
+        observation, "recovery-copy", Sign(rsa, observationBytes, keyId, fingerprint));
+    Check(RecoveryEvidenceCodec.ParseObservationEnvelope(RecoveryEvidenceCodec.SerializeObservationEnvelope(observationEnvelope)).MessageType == "observation",
+        "Observation queue envelope is explicitly discriminated.");
+    Check(RecoveryEvidenceCodec.VerifyObservation(observationEnvelope, trust).Payload.ObservedItemCount == 1,
+        "Signed per-class observations verify against the pinned SPKI key.");
+    RejectInvalid(() => RecoveryEvidenceCodec.VerifyObservation(observationEnvelope with { SigningPublicKeySha256 = new string('0', 64) }, trust));
+
+    var cycle = new RecoveryCycleEventV1(1, Guid.NewGuid(), catalog.CaptureId, catalog.RecoveryPointId,
+        catalog.OwnerId, catalog.LibraryId, now, "verification", "xmp", "corrupt", "checksum_mismatch",
+        catalog.RecoveryWorkerBuildDigest);
+    var cycleBytes = RecoveryCycleCodec.SerializePayload(cycle);
+    var cycleEnvelope = RecoveryCycleCodec.CreateEnvelope(cycle, "recovery-copy", Sign(rsa, cycleBytes, keyId, fingerprint));
+    Check(RecoveryCycleCodec.Verify(RecoveryCycleCodec.ParseEnvelope(RecoveryCycleCodec.SerializeEnvelope(cycleEnvelope)), trust).Payload.SafeCode == "checksum_mismatch",
+        "Signed failure summaries are verifiable without a preceding successful recovery point.");
+    RejectInvalid(() => RecoveryCycleCodec.SerializePayload(cycle with { SafeCode = "private/path" }));
+
+    var qualification = Qualification(now);
+    var qualificationBytes = RecoveryQualificationCodec.SerializePayload(qualification);
+    var qualificationEnvelope = RecoveryQualificationCodec.CreateEnvelope(qualification,
+        Sign(rsa, qualificationBytes, keyId, fingerprint));
+    var verifiedQualification = RecoveryQualificationCodec.Verify(qualificationEnvelope, trust);
+    var binding = new RecoveryQualificationBindingV1(qualification.SourceRevision,
+        qualification.RecoveryTemplateDigest, qualification.ApiBuildDigest, qualification.RecoveryWorkerBuildDigest,
+        qualification.IngestWorkerBuildDigest, qualification.RendererBuildDigest, qualification.MigrationDigest);
+    RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust, binding, now);
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust,
+        binding with { ApiBuildDigest = new string('f', 64) }, now));
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(verifiedQualification, trust, binding, now.AddMonths(4)));
+    var falseRpo = qualification with { Restore = qualification.Restore with { RpoSeconds = 1 } };
+    var falseRpoEnvelope = RecoveryQualificationCodec.CreateEnvelope(falseRpo,
+        Sign(rsa, RecoveryQualificationCodec.SerializePayload(falseRpo), keyId, fingerprint));
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(
+        RecoveryQualificationCodec.Verify(falseRpoEnvelope, trust), trust, binding, now));
+    var undersized = qualification with { Workload = qualification.Workload with { ImageCount = 1 } };
+    var undersizedEnvelope = RecoveryQualificationCodec.CreateEnvelope(undersized,
+        Sign(rsa, RecoveryQualificationCodec.SerializePayload(undersized), keyId, fingerprint));
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(
+        RecoveryQualificationCodec.Verify(undersizedEnvelope, trust), trust, binding, now));
+    var unresolved = qualification with { UnresolvedBlockingCorrections = ["restore_auth_unproven"] };
+    var unresolvedEnvelope = RecoveryQualificationCodec.CreateEnvelope(unresolved,
+        Sign(rsa, RecoveryQualificationCodec.SerializePayload(unresolved), keyId, fingerprint));
+    RejectInvalid(() => RecoveryQualificationReleaseGate.RequireReady(
+        RecoveryQualificationCodec.Verify(unresolvedEnvelope, trust), trust, binding, now));
+}
+
+static RecoveryEvidenceSignature Sign(RSA rsa, byte[] bytes, string keyId, string fingerprint) => new(
+    keyId, fingerprint, rsa.SignHash(SHA256.HashData(bytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss));
+
+static RecoveryCatalogPayloadV1 Catalog(DateTimeOffset now)
+{
+    var coverage = RecoveryEvidenceCodec.ObservationClasses.Select(dataClass => new RecoveryCatalogCoverageV1(
+        dataClass, dataClass == "originals" ? 1 : 0, dataClass == "originals" ? 1 : 0,
+        dataClass == "originals" ? 16 : 0, dataClass == "originals" ? 16 : 0, "healthy", [])).ToArray();
+    return new RecoveryCatalogPayloadV1(1, Guid.NewGuid(), Guid.NewGuid(), "owner-a", "library-a",
+        "111111111111", "ap-southeast-1", "222222222222", "ap-southeast-2",
+        now, now.AddMinutes(-1), "00000003-0000001B-1", "16/B374D848", 3, now.AddMinutes(-2),
+        new string('a', 64), new string('b', 64), new string('c', 64), new string('d', 64),
+        new string('e', 64), new string('f', 64), new string('1', 64), new string('2', 64),
+        now.AddMinutes(5), "copy-build", coverage);
+}
+
+static RecoveryQualificationV1 Qualification(DateTimeOffset now)
+{
+    var classes = RecoveryEvidenceCodec.ObservationClasses.Select(dataClass => new RecoveryQualifiedClassCoverageV1(
+        dataClass, dataClass == "originals" ? 1 : 0, dataClass == "originals" ? 1 : 0,
+        dataClass == "originals" ? 16 : 0, dataClass == "originals" ? 16 : 0, "healthy")).ToArray();
+    var digest = new string('a', 64);
+    var threshold = now.AddMinutes(-20);
+    return new RecoveryQualificationV1(1, Guid.NewGuid(), Guid.NewGuid(), now, "f".PadLeft(40, '0'),
+        digest, digest, digest, digest, digest, digest,
+        new("111111111111", "primary-alias", "ap-southeast-1"),
+        new("222222222222", "recovery-alias", "ap-southeast-2"),
+        new(Guid.NewGuid(), Guid.NewGuid(), digest, digest, "checkpoint-key", Convert.ToBase64String([1, 2, 3]),
+            now.AddMinutes(-40), "16/B374D848", 3, now.AddHours(-3), classes),
+        new(100_000, 1_000_000, 100_000_000, 100_000_000, "approved-budget", "approval-1"),
+        new(true, now.AddMinutes(-31), digest),
+        new(now.AddMinutes(-30), now.AddMinutes(-29), now.AddMinutes(-10), 600, 1200, digest),
+        new(true, true, true, true, true, true, true, true, true, true, true),
+        [new(Guid.NewGuid(), threshold, threshold.AddSeconds(10), threshold.AddMinutes(10), "delivered", digest)],
+        new(90, "GLACIER_IR", now.AddDays(-90), true),
+        new(true, true, true), [], []);
 }
 
 static async Task ObjectStoreChecksAsync()
@@ -183,9 +305,9 @@ static bool ThrowsInvalid(Action action)
     catch (InvalidDataException) { return true; }
 }
 
-static void RejectInvalid(Action action)
+static void RejectInvalid(Action action, [CallerLineNumber] int line = 0)
 {
-    if (!ThrowsInvalid(action)) throw new InvalidOperationException("Expected InvalidDataException.");
+    if (!ThrowsInvalid(action)) throw new InvalidOperationException($"Expected InvalidDataException at test line {line}.");
 }
 
 static async Task RejectAsync<T>(Func<Task> action) where T : Exception
