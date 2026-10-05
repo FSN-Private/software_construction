@@ -1,5 +1,13 @@
 # Web validation
 
+## Backup health (feature 011)
+
+After owner sign-in, choose **Backups** from Owner controls to inspect protection for originals, XMP, version history, metadata, audit, configuration and recovery records. The page refreshes every minute and supports a keyboard-accessible manual refresh. An unavailable service or failed refresh clears the previous result; an unknown, incomplete or overdue class requires operator attention. Returning to Gallery preserves its browsing context.
+
+Messages use the English fallback catalog in `src/RecoveryHealth.tsx`; dates and coverage follow the browser locale. The view consumes the owner-authorized `/v1/recovery/health` endpoint and does not display recovery bucket names, object keys or private exception details. See the [recovery operations guide](../../docs/operations/backup-recovery.md) for owner actions and the separately required cloud qualification.
+
+Run `npm run test:browser -- recovery.spec.ts` from this directory. The three health scenarios passed in Chrome, Edge and Firefox on 2026-10-05; supported screen-reader and production workload acceptance still require their own evidence.
+
 ## Versioned export baskets (feature 012)
 
 Set `exportsEnabled` only after the backend capability and its acceptance gates are ready. Gallery multi-selection and image/library history actions add exact committed versions to the default saved basket. Changing branch clears pending gallery selection; saved pins remain exact across browsing. Commit working edits before adding them. Hidden history requires an explicit advanced selection.
