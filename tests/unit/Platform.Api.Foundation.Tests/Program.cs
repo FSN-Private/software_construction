@@ -84,6 +84,7 @@ Assert(IngestDatabaseConfiguration.ResolveConnectionString("Host=explicit", _ =>
 Assert(IngestDatabaseConfiguration.ResolveConnectionString(null, _ => null) is null, "Incomplete database settings must keep ingest disabled.");
 RenderingChecks.Run();
 GalleryMetadataChecks.Run();
+await RecoveryQueueWorkerChecks.RunAsync();
 
 try { await IngestChecks.RunAsync(); }
 catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }
