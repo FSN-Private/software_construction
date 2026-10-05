@@ -11,7 +11,7 @@
 
 Use a separately administered recovery account in ap-southeast-2 for the current primary region ap-southeast-1. Capture a transactionally consistent PostgreSQL logical snapshot every 15 minutes. A recovery-side worker pulls the dump and its exact referenced S3 object versions, checks its purge journal before each write, and advances the healthy recovery watermark only after independent verification and signing. Rebuild the app from preserved configuration and exact image digests into an isolated recovery environment.
 
-This is a proposed design, not a claim that the RPO, RTO, cost envelope, account, owner identity path, or AWS rehearsal is approved or achieved.
+This is an approved local implementation design. Achieved RPO/RTO, actual workload/cost qualification, account provisioning and AWS rehearsal are not yet proven or authorized.
 
 ## Technical context and gates
 

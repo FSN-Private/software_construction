@@ -45,4 +45,3 @@ The 15-minute dump/copy interval is only a candidate. RPO evidence must compare 
 ## External prerequisites and approvals
 
 T006 approval is required before code. Real release evidence additionally requires an owner-provisioned recovery account/region, recovery KMS key and MFA custodian, scoped primary read trust, destination storage/ECR, verified owner mailbox, alert recipients, agreed byte/growth envelope and monthly budget, and explicit authorization for provisioning, deployment, cold transition, and a complete AWS drill. Local contract tests cannot replace these external checks. Until the account is provisioned and a full drill succeeds, FR-007/FR-008 remain blocked for release.
-
