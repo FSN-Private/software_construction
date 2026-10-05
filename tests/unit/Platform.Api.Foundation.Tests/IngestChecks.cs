@@ -159,6 +159,7 @@ internal static class IngestChecks
         await ReferenceBatchChecks.RunAsync(db, storage, s3, bucket);
         await GalleryEditChecks.RunAsync(db, storage);
         if (Environment.GetEnvironmentVariable("GALLERY_CAPACITY") == "1") await GalleryCapacityChecks.RunAsync(db, s3, bucket);
+        await RecoveryIntegrationChecks.RunAsync(db, storage);
         Console.WriteLine($"Ingest PostgreSQL/S3 checks passed ({images.Length} corpus objects plus retry/quarantine/atomic/fault matrix). Test schema/bucket: {schema}/{bucket}");
     }
 

@@ -23,6 +23,7 @@ using Platform.Api.Features.WindowsSync;
 using Platform.Api.Features.Gallery.Metadata;
 using Platform.Api.Features.Gallery.Browse;
 using Platform.Api.Features.Gallery;
+using Platform.Api.Features.Recovery;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +38,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.Audience = builder.Configuration["Authentication:CognitoClientId"];
     options.RequireHttpsMetadata = true;
 });
+if (builder.Configuration.GetValue<bool>("Recovery:RecoveryOnly"))
+    builder.Services.AddTransient<Microsoft.AspNetCore.Authentication.IClaimsTransformation, RecoveryOwnerClaimsTransformation>();
 builder.Services.AddAuthorization();
 builder.Services.AddCors(options => options.AddPolicy("exports-download", policy => Platform.Api.Features.Exports.ExportConfiguration.DownloadCors(policy, builder.Configuration["Exports:WebOrigin"])));
 builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationMiddlewareResultHandler, Platform.Api.Features.Exports.ExportAuthorizationResultHandler>();
@@ -86,6 +89,11 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportDownloadService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportCleanupService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportOperationsService>();
+    builder.Services.AddSingleton<RecoveryHealthService>();
+    builder.Services.AddSingleton<RecoveryOwnerResolver>();
+    builder.Services.AddSingleton<RecoveryObservationImporter>();
+    if (!string.IsNullOrWhiteSpace(builder.Configuration["Recovery:ObservationQueueUrl"]))
+        builder.Services.AddHostedService<RecoveryObservationQueueWorker>();
     builder.Services.AddHostedService<ExportMetricLoggingService>();
     builder.Services.AddHostedService<Platform.Api.Features.Exports.ExportPreparationWorker>();
 }
@@ -93,7 +101,9 @@ builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());
 // Export multipart admission is journaled once per call; invisible initiation retries could create untracked uploads.
 builder.Services.AddKeyedSingleton<IAmazonS3>("exports", (_, _) => new AmazonS3Client(new AmazonS3Config { MaxErrorRetry = 0 }));
 builder.Services.AddSingleton<IAmazonSQS>(_ => new AmazonSQSClient());
-builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(), builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."), builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
+builder.Services.AddSingleton(sp => new S3ObjectStore(sp.GetRequiredService<IAmazonS3>(),
+    builder.Configuration["Ingest:Bucket"] ?? throw new InvalidOperationException("Ingest:Bucket is required."),
+    builder.Configuration["Ingest:KmsKeyId"] ?? throw new InvalidOperationException("Ingest:KmsKeyId is required.")));
 
 var app = builder.Build();
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
@@ -126,6 +136,7 @@ Platform.Api.Features.Lineage.LineageEndpoints.Map(app);
 WindowsSyncEndpoints.Map(app);
 Platform.Api.Features.Rendering.RenderingEndpoints.Map(app);
 GalleryEndpoints.Map(app);
+RecoveryEndpoints.Map(app);
 
 app.MapGet("/live", () => Results.Ok(new { status = "live", contractVersion = "v1" }));
 app.MapGet("/ready", async (HttpContext context, ILogger<Program> logger, IServiceProvider services, CancellationToken cancellationToken) =>

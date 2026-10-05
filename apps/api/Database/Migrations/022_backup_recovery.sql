@@ -27,6 +27,50 @@ CREATE TABLE IF NOT EXISTS recovery_points (
 CREATE INDEX IF NOT EXISTS recovery_points_owner_latest
     ON recovery_points(owner_id, library_id, captured_at_utc DESC, point_id DESC);
 
+-- This recovery-signed canonical envelope binds the database catalog row to
+-- the independently verified manifest and exact-copy receipt set.
+CREATE TABLE IF NOT EXISTS recovery_point_attestations (
+    point_id uuid PRIMARY KEY REFERENCES recovery_points(point_id),
+    worker_id text NOT NULL,
+    signing_key_id text NOT NULL,
+    signing_public_key_sha256 char(64) NOT NULL CHECK (signing_public_key_sha256 ~ '^[0-9a-f]{64}$'),
+    payload_sha256 char(64) NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+    canonical_payload bytea NOT NULL CHECK (octet_length(canonical_payload) > 0),
+    signature bytea NOT NULL CHECK (octet_length(signature) > 0),
+    imported_at_utc timestamptz NOT NULL DEFAULT now()
+);
+
+-- Primary status storage keeps only the bounded, signed catalog summary here.
+-- The payload contains seven aggregate class totals and build/checkpoint
+-- digests, never object names, exact versions, paths, receipts or locators.
+COMMENT ON COLUMN recovery_points.manifest_bytes IS
+    'Feature 011 primary mirror: canonical signed compact catalog payload only; full object manifest stays in recovery-owned storage.';
+COMMENT ON COLUMN recovery_points.manifest IS
+    'Feature 011 primary mirror: parsed compact signed catalog summary only; must not contain per-object identities or locators.';
+
+CREATE TABLE IF NOT EXISTS recovery_cycle_statuses (
+    event_id uuid PRIMARY KEY,
+    worker_id text NOT NULL,
+    signing_key_id text NOT NULL,
+    signing_public_key_sha256 char(64) NOT NULL CHECK (signing_public_key_sha256 ~ '^[0-9a-f]{64}$'),
+    payload_sha256 char(64) NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+    canonical_payload bytea NOT NULL CHECK (octet_length(canonical_payload) > 0),
+    signature bytea NOT NULL CHECK (octet_length(signature) > 0),
+    capture_id uuid,
+    recovery_point_id uuid,
+    owner_id text NOT NULL,
+    library_id text NOT NULL,
+    observed_at_utc timestamptz NOT NULL,
+    stage text NOT NULL CHECK (stage IN ('capture','copy','verification','publication')),
+    failed_data_class text CHECK (failed_data_class IS NULL OR failed_data_class IN ('originals','xmp','version_graph','metadata','audit','configuration','recovery_records')),
+    outcome text NOT NULL CHECK (outcome IN ('missing','incomplete','corrupt','inaccessible','pending_retrieval','failed')),
+    safe_code text NOT NULL CHECK (safe_code IN ('capture_overdue','class_missing','manifest_mismatch','bytes_mismatch','graph_mismatch','audit_chain_mismatch','access_policy_failed','kms_unavailable','cold_retrieval_pending','copy_corrupt','alert_delivery_failed','observation_rejected','recovery_point_incomplete','recovery_point_integrity_failed','recovery_point_unavailable','recovery_copy_pending','future_timestamp','catalog_missing','catalog_invalid','capture_failed','copy_failed','verification_failed','publication_failed','snapshot_failed','coverage_incomplete')),
+    recovery_worker_build_digest char(64) NOT NULL CHECK (recovery_worker_build_digest ~ '^[0-9a-f]{64}$'),
+    imported_at_utc timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recovery_cycle_statuses_owner_latest
+    ON recovery_cycle_statuses(owner_id,library_id,observed_at_utc DESC,event_id DESC);
+
 -- Non-object artifacts are explicit components too: the complete database
 -- dump, migration identity, configuration, release and access evidence.
 CREATE TABLE IF NOT EXISTS recovery_point_components (
@@ -83,6 +127,7 @@ CREATE TABLE IF NOT EXISTS recovery_observations (
     observation_id uuid PRIMARY KEY,
     worker_id text NOT NULL,
     signing_key_id text NOT NULL,
+    signing_public_key_sha256 char(64) NOT NULL CHECK (signing_public_key_sha256 ~ '^[0-9a-f]{64}$'),
     observed_at_utc timestamptz NOT NULL,
     recovery_point_id uuid,
     owner_id text,
@@ -106,6 +151,7 @@ CREATE TABLE IF NOT EXISTS recovery_observations (
     CHECK (import_state <> 'verified' OR (recovery_point_id IS NOT NULL AND owner_id IS NOT NULL AND library_id IS NOT NULL AND manifest_sha256 IS NOT NULL AND data_class IS NOT NULL AND outcome IS NOT NULL AND expected_item_count IS NOT NULL AND expected_byte_length IS NOT NULL AND item_count IS NOT NULL AND byte_length IS NOT NULL AND safe_codes IS NOT NULL)),
     UNIQUE (worker_id, observation_id)
 );
+ALTER TABLE recovery_observations ADD COLUMN IF NOT EXISTS signing_public_key_sha256 char(64);
 CREATE INDEX IF NOT EXISTS recovery_observations_owner_latest
     ON recovery_observations(owner_id,library_id,data_class,observed_at_utc DESC) WHERE import_state='verified';
 CREATE INDEX IF NOT EXISTS recovery_observations_point_latest
@@ -114,6 +160,17 @@ CREATE INDEX IF NOT EXISTS recovery_observations_point_latest
 CREATE INDEX IF NOT EXISTS recovery_observations_point_alert
     ON recovery_observations(recovery_point_id,owner_id,library_id,manifest_sha256,observed_at_utc DESC)
     WHERE import_state='verified' AND alert_delivery IS NOT NULL;
+
+-- Permanent malformed/untrusted queue deliveries are acknowledged only after
+-- their body digest and allow-listed disposition have been durably recorded.
+CREATE TABLE IF NOT EXISTS recovery_observation_rejections (
+    rejection_id uuid PRIMARY KEY,
+    body_sha256 char(64) NOT NULL CHECK (body_sha256 ~ '^[0-9a-f]{64}$'),
+    safe_code text NOT NULL CHECK (safe_code IN ('invalid_envelope','untrusted_signer','invalid_signature','digest_mismatch','invalid_payload','observation_scope_mismatch','manifest_mismatch','replay_conflict')),
+    rejected_at_utc timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (body_sha256,safe_code)
+);
+CREATE INDEX IF NOT EXISTS recovery_observation_rejections_recent ON recovery_observation_rejections(rejected_at_utc DESC);
 
 -- A producer must admit every recovery write before calling storage. Unknown
 -- outcomes remain fenced until provider evidence proves settlement/quiescence.
@@ -372,6 +429,12 @@ DROP TRIGGER IF EXISTS recovery_validation_revisions_immutable ON recovery_valid
 CREATE TRIGGER recovery_validation_revisions_immutable BEFORE UPDATE OR DELETE ON recovery_validation_revisions FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_observations_immutable ON recovery_observations;
 CREATE TRIGGER recovery_observations_immutable BEFORE UPDATE OR DELETE ON recovery_observations FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+DROP TRIGGER IF EXISTS recovery_point_attestations_immutable ON recovery_point_attestations;
+CREATE TRIGGER recovery_point_attestations_immutable BEFORE UPDATE OR DELETE ON recovery_point_attestations FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+DROP TRIGGER IF EXISTS recovery_cycle_statuses_immutable ON recovery_cycle_statuses;
+CREATE TRIGGER recovery_cycle_statuses_immutable BEFORE UPDATE OR DELETE ON recovery_cycle_statuses FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+DROP TRIGGER IF EXISTS recovery_observation_rejections_immutable ON recovery_observation_rejections;
+CREATE TRIGGER recovery_observation_rejections_immutable BEFORE UPDATE OR DELETE ON recovery_observation_rejections FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_components_immutable ON recovery_point_components;
 CREATE TRIGGER recovery_point_components_immutable BEFORE UPDATE OR DELETE ON recovery_point_components FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_objects_immutable ON recovery_point_objects;

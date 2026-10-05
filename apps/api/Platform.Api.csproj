@@ -16,5 +16,6 @@
     <PackageReference Include="MetadataExtractor" Version="2.9.3" />
     <ProjectReference Include="../../packages/contracts/Platform.Contracts.csproj" />
     <ProjectReference Include="../../packages/storage/Platform.Storage.csproj" />
+    <ProjectReference Include="../../packages/recovery/Platform.Recovery.csproj" />
   </ItemGroup>
 </Project>
