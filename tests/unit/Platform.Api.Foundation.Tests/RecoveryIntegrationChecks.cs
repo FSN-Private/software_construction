@@ -114,6 +114,8 @@ internal static class RecoveryIntegrationChecks
 
         await IdentityChecksAsync(db, storage, clock, now);
         await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint);
+        if (Environment.GetEnvironmentVariable("RECOVERY_CAPACITY") == "1")
+            await RecoveryHealthCapacityChecks.RunAsync(db, health, "test-owner");
         Console.WriteLine("Recovery integration checks passed: signed compact catalogs, queue ordering/replay, health, cycle failure and identity binding.");
     }
 

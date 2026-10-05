@@ -6,7 +6,7 @@ const result = spawnSync('dotnet', [
   '--no-restore',
 ], {
   stdio: 'inherit',
-  env: { ...process.env, INGEST_INTEGRATION: '1' },
+  env: { ...process.env, INGEST_INTEGRATION: '1', RECOVERY_CAPACITY: process.argv.includes('--capacity') ? '1' : process.env.RECOVERY_CAPACITY },
 });
 
 if (result.error) throw result.error;
