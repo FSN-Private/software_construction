@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -29,7 +30,7 @@ internal static class ExportHttpChecks
         builder.Services.AddAuthorization();
         builder.Services.AddCors(options => options.AddPolicy("exports-download", policy => ExportConfiguration.DownloadCors(policy, "https://web.example.test")));
         builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, ExportAuthorizationResultHandler>();
-        builder.Services.AddSingleton<IAuditWriter>(new PostgresAuditWriter(db));
+        builder.Services.AddSingleton<IAuditWriter>(new PostgresAuditWriter(db, new ConfigurationBuilder().Build()));
         builder.Services.AddSingleton<OperationIdFactory>();
         await using var app = builder.Build();
         app.UsePlatformTelemetry(); app.UseAuthentication(); app.UseCors(); app.UseAuthorization();

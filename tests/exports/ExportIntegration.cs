@@ -27,7 +27,7 @@ public static class ExportIntegration
             await using (var oldReader = db.CreateCommand("SELECT count(*) FROM assets WHERE state='active'"))
                 if ((long)(await oldReader.ExecuteScalarAsync())! != 0) throw new InvalidOperationException("Additive migration old-reader compatibility");
             await using var count = db.CreateCommand("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name LIKE 'export_%'");
-            if ((long)(await count.ExecuteScalarAsync())! != 9) throw new InvalidOperationException("Export migration table count");
+            if ((long)(await count.ExecuteScalarAsync())! != 10) throw new InvalidOperationException("Export migration table count");
             using var s3 = new FixtureS3();
             await s3.ListBucketsAsync(new ListBucketsRequest());
             var bucket = "exports-" + Guid.NewGuid().ToString("N");
@@ -296,12 +296,12 @@ public static class ExportIntegration
                 Check((await failureData.ReadToEndAsync()).Contains(fault == "corrupt" ? "integrity_error" : "storage_unavailable"), "Failures summary records the exact safe failed-input reason");
             }
             var oversize = await preparation.SubmitAsync("owner", "library", basket.Id, submit, "oversize", default);
-            await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "UPDATE export_requests SET created_at=now()-interval '3 seconds' WHERE id=$1", default, oversize.Id);
+            await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "UPDATE export_requests SET created_at=now()-interval '5 seconds' WHERE id=$1", default, oversize.Id);
             configuration["Exports:PackageBytes"] = "1";
             var measured = new ExportMetricTestLogger();
             using (var collector = new Platform.Api.Telemetry.ExportMetricLoggingService(measured)) { await collector.StartAsync(default); await worker.TickAsync(default); await collector.StopAsync(default); }
             Check(measured.Events.Any(e => Equals(e["MetricName"], "platform.exports.failed") && Equals(e["MetricValue"], 1d)) && !measured.Events.Any(e => Equals(e["MetricName"], "platform.exports.prepared")), "Terminal failure is measured as failed rather than successfully prepared");
-            Check(measured.Events.Any(e => Equals(e["MetricName"], "platform.exports.preparation.duration") && Convert.ToDouble(e["MetricValue"]) >= 3000), "Terminal preparation duration includes elapsed request waiting, not only the last worker attempt");
+            Check(measured.Events.Any(e => Equals(e["MetricName"], "platform.exports.preparation.duration") && Convert.ToDouble(e["MetricValue"]) >= 3000), "Terminal preparation duration includes elapsed request waiting, not only the last worker attempt; values=" + string.Join(",", measured.Events.Where(e => Equals(e["MetricName"], "platform.exports.preparation.duration")).Select(e => Convert.ToDouble(e["MetricValue"]).ToString("F0"))));
             configuration["Exports:PackageBytes"] = null;
             var limited = await preparation.GetAsync("owner", "library", oversize.Id, default);
             Check(limited.State == "failed" && limited.Reason == "resource_limit" && limited.PackageSha256 is null && limited.Outcomes.All(o => o.Status != "pending"), "Oversize preparation cannot publish a package and terminalizes all pending outcomes");
@@ -397,6 +397,8 @@ public static class ExportIntegration
         await invalidation.BeginStorageAsync(lostCallback, writer, "complete", default);
         var completedUpload = await s3.CompleteMultipartUploadAsync(new() { BucketName = bucket, Key = callbackKey, UploadId = initiated.UploadId, PartETags = [new(1, part.ETag)] });
         await invalidation.StorageReturnedAsync(lostCallback, writer, completedUpload.ResponseMetadata.RequestId, null, completedUpload.VersionId, default);
+        await s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = callbackKey });
+        Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = callbackKey })).Versions?.Any(version => version.Key == callbackKey && version.IsDeleteMarker == true) == true, "Fixture confirms a delete marker is present before exact-version cleanup");
         // No SettleWrite callback: production cleanup must recover from the durable provider completion receipt.
         // Completion seals this intent's storage admission in the same transaction, including across host loss.
         var purge = new ExportPurgeEvent(Guid.NewGuid(), "owner", "library", asset, null, "original", sourceSha, 1, Guid.NewGuid());
@@ -451,7 +453,19 @@ public static class ExportIntegration
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = lateKey } )).Versions?.Any() != true, "Late settled object versions are deleted");
         Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = "derivatives/shared/" })).Versions.Count == 1, "Export cleanup preserves shared renderer objects");
         await using (var connection = await db.OpenConnectionAsync()) { await using var tx = await connection.BeginTransactionAsync(); Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Unknown storage outcomes remain draining after settled cleanup"); await tx.CommitAsync(); }
-        await invalidation.SettleWriteAsync(unknown, writer, null, true, default); await cleanup.TickAsync(default);
+        await invalidation.StopWriterAsync(unknown, writer, default); await invalidation.SettleWriteAsync(unknown, writer, null, true, default); await cleanup.TickAsync(default);
+        await using (var connection = await db.OpenConnectionAsync())
+        {
+            var session = (Guid)(await ScalarAsync(connection, "SELECT session_id FROM export_download_grants WHERE request_id=$1 ORDER BY kind DESC LIMIT 1", default, downloadableBeforePurge.Id))!;
+            var admission = Guid.NewGuid();
+            var processStartTicks = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+            await ExecuteAsync(connection, "INSERT INTO export_download_admissions(id,request_id,owner_id,library_id,session_id,process_host,process_pid,process_start_ticks) VALUES($1,$2,'owner','library',$3,$4,$5,$6)", default, admission, downloadableBeforePurge.Id, session, Environment.MachineName, Environment.ProcessId, processStartTicks);
+            await using var tx = await connection.BeginTransactionAsync();
+            Check(!await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "An admitted private export download blocks purge acknowledgment after all package writers have settled");
+            await tx.CommitAsync();
+            await ExecuteAsync(connection, "UPDATE export_download_admissions SET closed_at=now(),close_reason='completed' WHERE id=$1", default, admission);
+        }
+        Check((await s3.ListVersionsAsync(new ListVersionsRequest { BucketName = bucket, Prefix = callbackKey })).Versions?.Any() != true, "Cleanup removes object versions and delete markers before acknowledgment");
         await using (var connection = await db.OpenConnectionAsync()) { await using var tx = await connection.BeginTransactionAsync(); Check(await invalidation.AcknowledgeAsync(tx, "owner", "library", purge.EventId, default), "Acknowledgment follows proven settlement and exact version cleanup"); await tx.CommitAsync(); }
         basket = (await service.MutateAsync("owner", "library", basket.Id, basket.Revision, "clear", null, false, null, null, default))!;
         Check(basket.Items.Count == 0, "Clear is persistent");
@@ -460,6 +474,13 @@ public static class ExportIntegration
         Check((await preparation.GetAsync("owner", "library", request.Id, default)).Snapshot.Items.Count == request.Snapshot.Items.Count, "Basket deletion preserves immutable request evidence");
         await using var hold = db.CreateCommand("SELECT count(*) FROM lifecycle_holds");
         Check((long)(await hold.ExecuteScalarAsync())! == 4, "Basket changes never add or release the four pre-existing history holds");
+        await using (var ledger = db.CreateCommand("SELECT count(*) FROM recovery_change_ledger WHERE owner_id='owner' AND library_id='library' AND event_type LIKE 'exports.%'"))
+            Check((long)(await ledger.ExecuteScalarAsync())! > 20, "Export metadata, preparation, writer quiescence, download and cleanup changes append the recovery ledger");
+        await using (var provenance = db.CreateCommand("SELECT count(*) FROM recovery_change_ledger WHERE owner_id='owner' AND library_id='library' AND event_type='exports.package_prepared' AND object_references ? @digest"))
+        {
+            provenance.Parameters.AddWithValue("digest", sourceSha);
+            Check((long)(await provenance.ExecuteScalarAsync())! > 0, "Export recovery ledger events bind the immutable source digest");
+        }
         Console.WriteLine("Export persistent basket/selection/authorization/revision/hidden/quota checks passed.");
     }
     private static async Task PinnedRenderChecksAsync(NpgsqlDataSource db, ExportPin pin, IAmazonS3 s3, string bucket)

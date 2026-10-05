@@ -27,7 +27,8 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         if (await ScalarAsync(db, "SELECT 1 FROM export_download_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>now()", ct, session) is null) throw new ExportProblem("unauthenticated", 401);
         var code = Token(); var until = new[] { expiry, DateTimeOffset.UtcNow.AddSeconds(60) }.Min();
         await ExecuteAsync(db, "INSERT INTO export_download_grants(token_hash,request_id,session_id,kind,expires_at,bearer_expires_at) VALUES($1,$2,$3,'bootstrap',$4,$5)", ct, Hash(code), id, session, until, expiry);
-        await AuditAsync(db, owner, c.Items["platform.operation_id"]?.ToString() ?? ExportDatabase.OperationId, "exports.download_granted", id, "accepted", ct); await tx.CommitAsync(ct);
+        await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.download_granted", "export_request", id.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, id, ct), ct);
+        await tx.CommitAsync(ct);
         c.Items["platform.idempotency.reissue"] = true;
         return new { Code = code, ExchangeUrl = origin + Path(library, id) + "/download-session", ExpiresAtUtc = until };
     }
@@ -43,7 +44,7 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         if (await ExecuteAsync(db, "UPDATE export_download_grants SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()", ct, Hash(code)) != 1) throw new ExportProblem("download_denied", 403);
         var cookie = Token(); var until = new[] { grant.SessionExpiry, DateTimeOffset.UtcNow.AddMinutes(5) }.Min();
         await ExecuteAsync(db, "INSERT INTO export_download_grants(token_hash,request_id,session_id,kind,expires_at,bearer_expires_at) VALUES($1,$2,$3,'cookie',$4,$5)", ct, Hash(cookie), id, grant.Session, until, grant.SessionExpiry);
-        await AuditAsync(db, grant.Owner, ExportDatabase.OperationId, "exports.download_session_started", id, "accepted", ct);
+        await ExportDatabase.RecordChangeAsync(db, tx, grant.Owner, library, "exports.download_session_started", "export_request", id.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, id, ct), ct);
         await tx.CommitAsync(ct);
         c.Response.Cookies.Append(Cookie, cookie, new CookieOptions { Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax, Path = Path(library, id) + "/download", Expires = until, IsEssential = true });
         c.Response.StatusCode = 303; c.Response.Headers.Location = Path(library, id) + "/download";
@@ -52,7 +53,16 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
     {
         var expiry = BearerExpiry(c);
         await using var db = await source.OpenConnectionAsync(ct); await using var tx = await db.BeginTransactionAsync(ct); await LockOwnerAsync(db, owner, ct);
-        await ExecuteAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at,revoked_at) VALUES($3,$1,$2,$4,now()) ON CONFLICT(owner_id,session_hash) DO UPDATE SET revoked_at=now(); UPDATE export_download_grants g SET revoked_at=now() FROM export_download_sessions s WHERE g.session_id=s.id AND s.owner_id=$1 AND s.revoked_at IS NOT NULL", ct, owner, SessionHash(c), Guid.NewGuid(), expiry);
+        var session = (Guid)(await ScalarAsync(db, "INSERT INTO export_download_sessions(id,owner_id,session_hash,expires_at,revoked_at) VALUES($3,$1,$2,$4,now()) ON CONFLICT(owner_id,session_hash) DO UPDATE SET revoked_at=now() RETURNING id", ct, owner, SessionHash(c), Guid.NewGuid(), expiry))!;
+        var libraries = new List<string>();
+        await using (var cmd = Command(db, "SELECT DISTINCT r.library_id FROM export_download_grants g JOIN export_requests r ON r.id=g.request_id WHERE g.session_id=$1 ORDER BY r.library_id", session))
+        await using (var r = await cmd.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) libraries.Add(r.GetString(0));
+        foreach (var library in libraries)
+        {
+            await ExportDatabase.LockAsync(db, owner, library, ct);
+            if (await ExecuteAsync(db, "UPDATE export_download_grants SET revoked_at=now() WHERE session_id=$1 AND revoked_at IS NULL", ct, session) != 0)
+                await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.download_revoked", "export_download_session", session.ToString("D"), [], ct);
+        }
         await tx.CommitAsync(ct);
     }
     public async Task StreamAsync(HttpContext c, string library, Guid id, CancellationToken ct)
@@ -60,7 +70,7 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
         Platform.Api.Telemetry.PlatformTelemetry.ExportDownloadAttempts.Add(1);
         RequireOrigin(c);
         await using var db = await source.OpenConnectionAsync(ct);
-        string owner; Guid session;
+        string owner; Guid session; var admission = Guid.NewGuid();
         await using (var tx = await db.BeginTransactionAsync(ct))
         {
             if (Platform.Contracts.OwnerAuthorization.TryGetOwner(c.User, out var bearerOwner))
@@ -74,23 +84,27 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
             c.Items["exports.audit_owner"] = owner;
             await ExportDatabase.LockAsync(db, owner, library, ct); await ReadyAsync(db, owner, library, id, ct);
             await RequireSessionAsync(db, session, ct);
-            await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.download_admitted", id, "accepted", ct); await tx.CommitAsync(ct);
+            await ExecuteAsync(db, "INSERT INTO export_download_admissions(id,request_id,owner_id,library_id,session_id,process_host,process_pid,process_start_ticks) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", ct,
+                admission, id, owner, library, session, Environment.MachineName, Environment.ProcessId, ExportInvalidationService.ProcessStartTicks);
+            await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.download_admitted", "export_download_admission", admission.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, id, ct), ct);
+            await tx.CommitAsync(ct);
         }
-        string key; string version; string sha; long length;
-        await using (var cmd = Command(db, "SELECT package_key,package_version,package_sha256,package_bytes FROM export_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3", id, owner, library))
-        await using (var r = await cmd.ExecuteReaderAsync(ct)) { if (!await r.ReadAsync(ct) || r.IsDBNull(0) || r.IsDBNull(1) || r.IsDBNull(2) || r.IsDBNull(3)) throw new ExportProblem("download_unavailable", 409); key = r.GetString(0); version = r.GetString(1); sha = r.GetString(2).Trim(); length = r.GetInt64(3); }
-        var etag = '"' + sha + '"';
-        var range = ExportRange.Parse(c.Request.Headers.Range.ToString(), c.Request.Headers.IfRange.ToString(), etag, length);
-        c.Response.Headers.CacheControl = "private, no-store"; c.Response.Headers.ETag = etag; c.Response.Headers.AcceptRanges = "bytes";
-        c.Response.Headers["X-Content-SHA256"] = sha; c.Response.Headers.ContentDisposition = $"attachment; filename=\"export-{id:N}.zip\"";
-        c.Response.ContentType = "application/zip"; c.Response.ContentLength = range.End - range.Start + 1;
-        if (range.Partial) { c.Response.StatusCode = 206; c.Response.Headers.ContentRange = $"bytes {range.Start}-{range.End}/{length}"; }
-        using var bytes = await storage.GetObjectAsync(new GetObjectRequest { BucketName = config["Rendering:DerivativeBucket"] ?? throw new ExportProblem("download_unavailable", 503), Key = key, VersionId = version, ByteRange = range.Partial ? new ByteRange(range.Start, range.End) : null }, ct);
-        if (bytes.ContentLength != c.Response.ContentLength) throw new ExportProblem("integrity_error");
-        if (HttpMethods.IsHead(c.Request.Method)) return;
-        var buffer = new byte[81920]; long sent = 0; var checkedAt = DateTimeOffset.MinValue;
+        var closeReason = "aborted";
         try
         {
+            string key; string version; string sha; long length;
+            await using (var cmd = Command(db, "SELECT package_key,package_version,package_sha256,package_bytes FROM export_requests WHERE id=$1 AND owner_id=$2 AND library_id=$3", id, owner, library))
+            await using (var r = await cmd.ExecuteReaderAsync(ct)) { if (!await r.ReadAsync(ct) || r.IsDBNull(0) || r.IsDBNull(1) || r.IsDBNull(2) || r.IsDBNull(3)) throw new ExportProblem("download_unavailable", 409); key = r.GetString(0); version = r.GetString(1); sha = r.GetString(2).Trim(); length = r.GetInt64(3); }
+            var etag = '"' + sha + '"';
+            var range = ExportRange.Parse(c.Request.Headers.Range.ToString(), c.Request.Headers.IfRange.ToString(), etag, length);
+            c.Response.Headers.CacheControl = "private, no-store"; c.Response.Headers.ETag = etag; c.Response.Headers.AcceptRanges = "bytes";
+            c.Response.Headers["X-Content-SHA256"] = sha; c.Response.Headers.ContentDisposition = $"attachment; filename=\"export-{id:N}.zip\"";
+            c.Response.ContentType = "application/zip"; c.Response.ContentLength = range.End - range.Start + 1;
+            if (range.Partial) { c.Response.StatusCode = 206; c.Response.Headers.ContentRange = $"bytes {range.Start}-{range.End}/{length}"; }
+            using var bytes = await storage.GetObjectAsync(new GetObjectRequest { BucketName = config["Rendering:DerivativeBucket"] ?? throw new ExportProblem("download_unavailable", 503), Key = key, VersionId = version, ByteRange = range.Partial ? new ByteRange(range.Start, range.End) : null }, ct);
+            if (bytes.ContentLength != c.Response.ContentLength) throw new ExportProblem("integrity_error");
+            if (HttpMethods.IsHead(c.Request.Method)) { closeReason = "completed"; return; }
+            var buffer = new byte[81920]; long sent = 0; var checkedAt = DateTimeOffset.MinValue;
             while (true)
             {
                 if (DateTimeOffset.UtcNow - checkedAt >= TimeSpan.FromSeconds(1))
@@ -106,9 +120,19 @@ public sealed class ExportDownloadService(NpgsqlDataSource source, IAmazonS3 sto
                 await c.Response.Body.WriteAsync(buffer.AsMemory(0, read), ct);
             }
             if (sent != c.Response.ContentLength) throw new ExportProblem("integrity_error");
-            await AuditAsync(db, owner, ExportDatabase.OperationId, "exports.download_completed", id, "completed", ct);
+            closeReason = "completed";
         }
         catch { c.Abort(); throw; }
+        finally { await CloseAdmissionAsync(db, owner, library, id, admission, closeReason); }
+    }
+
+    private static async Task CloseAdmissionAsync(NpgsqlConnection db, string owner, string library, Guid request, Guid admission, string reason)
+    {
+        await using var tx = await db.BeginTransactionAsync(CancellationToken.None);
+        await ExportDatabase.LockAsync(db, owner, library, CancellationToken.None);
+        if (await ExecuteAsync(db, "UPDATE export_download_admissions SET closed_at=now(),close_reason=$2 WHERE id=$1 AND closed_at IS NULL", CancellationToken.None, admission, reason) != 0)
+            await ExportDatabase.RecordChangeAsync(db, tx, owner, library, "exports.download_" + reason, "export_download_admission", admission.ToString("D"), await ExportDatabase.RequestContentDigestsAsync(db, request, CancellationToken.None), CancellationToken.None, outcome: reason);
+        await tx.CommitAsync(CancellationToken.None);
     }
     private void RequireOrigin(HttpContext c)
     {

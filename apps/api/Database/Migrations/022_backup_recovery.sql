@@ -356,6 +356,26 @@ CREATE TABLE IF NOT EXISTS recovery_materialization_receipts (
     CHECK (source_version_id <> 'null' AND destination_version_id <> 'null')
 );
 
+-- Feature 012 package downloads are active protected-data readers. A tombstone
+-- cannot be acknowledged until each already-admitted stream closes or its exact
+-- local process identity is independently proven gone.
+CREATE TABLE IF NOT EXISTS export_download_admissions (
+    id uuid PRIMARY KEY,
+    request_id uuid NOT NULL REFERENCES export_requests(id),
+    owner_id text NOT NULL,
+    library_id text NOT NULL,
+    session_id uuid NOT NULL REFERENCES export_download_sessions(id),
+    process_host text NOT NULL,
+    process_pid integer NOT NULL CHECK (process_pid > 0),
+    process_start_ticks bigint NOT NULL CHECK (process_start_ticks > 0),
+    admitted_at timestamptz NOT NULL DEFAULT now(),
+    closed_at timestamptz,
+    close_reason text CHECK (close_reason IS NULL OR close_reason IN ('completed','aborted','process_exited')),
+    CHECK ((closed_at IS NULL) = (close_reason IS NULL))
+);
+CREATE INDEX IF NOT EXISTS export_download_admissions_scope
+    ON export_download_admissions(owner_id,library_id,request_id,closed_at);
+
 CREATE TABLE IF NOT EXISTS recovery_holds (
     hold_id uuid PRIMARY KEY,
     owner_id text NOT NULL,
