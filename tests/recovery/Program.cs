@@ -100,6 +100,20 @@ static async Task ObjectStoreChecksAsync()
     await RejectAsync<InvalidDataException>(() => Store(corruptSource, noDestination).CopyVerifiedAsync(intent with { IntentId = Guid.NewGuid() }));
     Check(noDestination.PutCount == 0, "Corrupt source bytes are rejected before any destination write.");
 
+    source.ReturnedVersionId = "source-v2";
+    var wrongVersionDestination = new TestS3();
+    await RejectAsync<InvalidDataException>(() => Store(source, wrongVersionDestination).CopyVerifiedAsync(intent));
+    Check(wrongVersionDestination.PutCount == 0, "A wrong source version is rejected even when its bytes match.");
+    source.ReturnedVersionId = null;
+
+    var deniedSource = new TestS3 { DenyReads = true };
+    var deniedDestination = new TestS3();
+    await RejectAsync<AmazonS3Exception>(() => Store(deniedSource, deniedDestination).CopyVerifiedAsync(intent));
+    Check(deniedDestination.PutCount == 0, "Denied source/key access cannot produce a recovery copy.");
+    destination.DenyReads = true;
+    await RejectAsync<AmazonS3Exception>(() => store.ReadVerifiedAsync(receipt));
+    destination.DenyReads = false;
+
     var swapped = new TestS3();
     swapped.Add("primary", "source-key", "source-v1", [9, 8, 7]);
     swapped.Add("primary", "source-key", "source-v2", content);
@@ -198,6 +212,7 @@ sealed class TestS3 : AmazonS3Client
     public bool HasRetention { get; init; } = true;
     public DateTime? RetainUntilUtc { get; init; }
     public string? ReturnedVersionId { get; set; }
+    public bool DenyReads { get; set; }
     public PublicAccessBlockConfiguration? PublicAccessBlock { get; init; } = new()
     {
         BlockPublicAcls = true, IgnorePublicAcls = true, BlockPublicPolicy = true, RestrictPublicBuckets = true
@@ -228,6 +243,7 @@ sealed class TestS3 : AmazonS3Client
 
     public override Task<GetObjectResponse> GetObjectAsync(GetObjectRequest request, CancellationToken cancellationToken = default)
     {
+        if (DenyReads) throw new AmazonS3Exception("fixture access denied") { StatusCode = HttpStatusCode.Forbidden, ErrorCode = "AccessDenied" };
         if (!objects.TryGetValue((request.BucketName, request.Key, request.VersionId ?? ""), out var bytes))
             throw new AmazonS3Exception("fixture exact version missing") { StatusCode = HttpStatusCode.NotFound };
         Stream stream = FailReadAfterBytes is { } after ? new ReadFailureStream(bytes, after) : new MemoryStream(bytes, writable: false);
