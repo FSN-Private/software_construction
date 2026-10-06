@@ -282,9 +282,9 @@ export class PlatformFoundationStack extends Stack {
     encryptionKey.grantEncryptDecrypt(workerTask.taskRole);
 
     if (props.recoveryIntegration) {
-      apiContainer.addEnvironment('Recovery__LibraryId', props.recoveryIntegration.recoveryLibraryId);
       apiContainer.addEnvironment('Gallery__LibraryId', props.recoveryIntegration.recoveryLibraryId);
       for (const container of [apiContainer, workerContainer, rendererContainer, migrationContainer]) {
+        container.addEnvironment('Recovery__LibraryId', props.recoveryIntegration.recoveryLibraryId);
         container.addEnvironment('Recovery__SourceRevision', props.recoveryIntegration.captureImageTag);
         container.addEnvironment('Recovery__ApiBuildDigest', props.recoveryIntegration.apiBuildDigest);
         container.addEnvironment('Recovery__IngestWorkerBuildDigest', props.recoveryIntegration.ingestWorkerBuildDigest);

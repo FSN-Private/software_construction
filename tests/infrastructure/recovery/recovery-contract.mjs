@@ -28,6 +28,12 @@ const controlTable = resourceOf('AWS::DynamoDB::Table', value => values(value.Pr
 const bucket = resourceOf('AWS::S3::Bucket', value => value.Properties?.ObjectLockConfiguration?.ObjectLockEnabled === 'Enabled');
 const evidenceBucket = resourceOf('AWS::S3::Bucket', value => value.Properties?.ObjectLockConfiguration?.Rule?.DefaultRetention?.Mode === 'COMPLIANCE');
 const liveBucket = resourceOf('AWS::S3::Bucket', value => value.Properties?.LifecycleConfiguration?.Rules?.some(rule => rule.Prefix === 'staging/'));
+const primaryTaskEnvironment = family => {
+  const task = Object.entries(foundation.Resources).find(([, value]) => value.Type === 'AWS::ECS::TaskDefinition' &&
+    values(value.Properties?.Family).includes(family))?.[1];
+  assert.ok(task, `Missing primary ${family} task`);
+  return Object.fromEntries(task.Properties.ContainerDefinitions[0].Environment.map(({ Name, Value }) => [Name, Value]));
+};
 
 assert.equal(bucket.Properties.ObjectLockConfiguration.ObjectLockEnabled, 'Enabled');
 assert.equal(bucket.Properties.ObjectLockConfiguration.Rule.DefaultRetention.Days, 90);
@@ -100,6 +106,13 @@ for (const name of ['Recovery__ApiBuildDigest', 'Recovery__IngestWorkerBuildDige
 }
 const captureEnvironment = Object.fromEntries(captureTask.Properties.ContainerDefinitions[0].Environment.map(({ Name, Value }) => [Name, Value]));
 assert.equal(captureEnvironment.Recovery__LibraryId, '00000000-0000-0000-0000-000000000011');
+const canonicalLibraryId = captureEnvironment.Recovery__LibraryId;
+for (const family of ['platform-nonprod-api', 'platform-nonprod-ingest-worker', 'platform-nonprod-render-worker', 'platform-nonprod-ingest-migration']) {
+  assert.equal(primaryTaskEnvironment(family).Recovery__LibraryId, canonicalLibraryId,
+    `${family} must use the same canonical recovery library as capture`);
+}
+assert.equal(primaryTaskEnvironment('platform-nonprod-api').Gallery__LibraryId, canonicalLibraryId,
+  'The API gallery must use the canonical recovery library');
 assert.equal(captureEnvironment.Recovery__Database__Name, 'platform');
 assert.ok(captureEnvironment.Recovery__Database__Host);
 assert.ok(captureEnvironment.Recovery__Database__Port);
