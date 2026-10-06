@@ -92,6 +92,7 @@ if (!string.IsNullOrWhiteSpace(ingestConnection) && !string.IsNullOrWhiteSpace(b
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportCleanupService>();
     builder.Services.AddSingleton<Platform.Api.Features.Exports.ExportOperationsService>();
     builder.Services.AddSingleton<RecoveryHealthService>();
+    builder.Services.AddSingleton<RecoveryPurgeService>();
     builder.Services.AddSingleton<RecoveryOwnerResolver>();
     builder.Services.AddSingleton<RecoveryObservationImporter>();
     if (!string.IsNullOrWhiteSpace(builder.Configuration["Recovery:ObservationQueueUrl"]))

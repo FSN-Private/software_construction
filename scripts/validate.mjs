@@ -42,9 +42,12 @@ if (category === 'toolchain') {
   execFileSync('dotnet', ['publish', 'apps/recovery-worker/Platform.Recovery.Worker.csproj', '--configuration', 'Release',
     '--no-restore', '--output', 'artifacts/recovery-worker'], { stdio: 'inherit' });
   execFileSync(process.execPath, ['tests/infrastructure/release/recovery-qualification-cli.mjs'], { stdio: 'inherit' });
+  execFileSync('docker', ['build', '--file', 'apps/recovery-worker/Dockerfile', '--tag', 'software-construction-recovery-worker:local', '.'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/integration/recovery-native/run.mjs'], { stdio: 'inherit' });
   execFileSync(process.execPath, ['tests/integration/recovery/run.mjs'], { stdio: 'inherit' });
   execFileSync(process.execPath, ['tests/infrastructure/release/recovery-release-evidence.mjs'], { stdio: 'inherit' });
   execFileSync(process.execPath, ['tests/infrastructure/release/recovery-drill.mjs'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['tests/infrastructure/release/recovery-template.mjs'], { stdio: 'inherit' });
   const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
   const npmArguments = process.platform === 'win32'
     ? [process.env.npm_execpath ?? join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]

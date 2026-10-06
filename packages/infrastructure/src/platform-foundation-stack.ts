@@ -21,8 +21,10 @@ import { AllowedMethods, CachePolicy, Distribution, OriginProtocolPolicy, Origin
 import { VpcOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import { ApplicationLoadBalancer, ApplicationProtocol, ListenerAction, ListenerCondition } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { createOwnerIdentity } from './identity/owner-identity.js';
+import { addPrimaryRecoveryCapture } from './recovery/primary-recovery.js';
 
 export interface PlatformFoundationStackProps extends StackProps {
+  readonly offlineSynthesis?: boolean;
   readonly environmentName: string;
   readonly monthlyBudgetUsd: number;
   readonly ownerEmail: string;
@@ -30,6 +32,31 @@ export interface PlatformFoundationStackProps extends StackProps {
   readonly webOrigin: string;
   readonly cognitoDomainPrefix: string;
   readonly deploymentRoleArn?: string;
+  readonly recoveryIntegration?: {
+    readonly recoveryAccountId: string;
+    readonly recoveryLibraryId: string;
+    readonly recoveryOwnerId?: string;
+    readonly sourceDatabaseSecretArn: string;
+    readonly sourceDatabaseSecretKmsKeyArn?: string;
+    readonly captureImageTag: string;
+    readonly captureImageDigest: string;
+    readonly apiBuildDigest: string;
+    readonly ingestWorkerBuildDigest: string;
+    readonly rendererBuildDigest: string;
+    readonly recoveryTemplateDigest: string;
+    readonly migrationDigest: string;
+    readonly configurationDigest: string;
+    readonly databaseRootCertificate: string;
+    readonly databaseRootCertificateSha256: string;
+    readonly ownerApprovalTrustKeyId: string;
+    readonly ownerApprovalTrustPublicKeySpkiBase64: string;
+    readonly ownerApprovalTrustPublicKeySha256: string;
+    readonly observationSigningKeyId: string;
+    readonly observationPublicKeySpkiBase64: string;
+    readonly observationPublicKeySha256: string;
+    readonly captureEphemeralStorageGiB: number;
+    readonly schedulesEnabled: boolean;
+  };
 }
 
 export class PlatformFoundationStack extends Stack {
@@ -41,7 +68,9 @@ export class PlatformFoundationStack extends Stack {
     }
 
     const vpc = new Vpc(this, 'PlatformVpc', {
-      maxAzs: 2,
+      ...(props.offlineSynthesis
+        ? { availabilityZones: ['ap-southeast-1a', 'ap-southeast-1b'] }
+        : { maxAzs: 2 }),
       natGateways: 0,
       subnetConfiguration: [
         { name: 'edge', subnetType: SubnetType.PUBLIC },
@@ -70,6 +99,7 @@ export class PlatformFoundationStack extends Stack {
       retention: RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
     const identity = createOwnerIdentity(this, { ownerEmail: props.ownerEmail, webOrigin: props.webOrigin, domainPrefix: props.cognitoDomainPrefix });
     const ingestBucket = new Bucket(this, 'IngestBucket', {
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
@@ -179,7 +209,7 @@ export class PlatformFoundationStack extends Stack {
       portMappings: [{ containerPort: 8080 }],
     });
     const workerTask = new FargateTaskDefinition(this, 'WorkerTask', { family: `platform-${props.environmentName}-ingest-worker`, cpu: 256, memoryLimitMiB: 512, executionRole: workerExecutionRole });
-    workerTask.addContainer('worker', {
+    const workerContainer = workerTask.addContainer('worker', {
       containerName: 'worker',
       image: ContainerImage.fromEcrRepository(workerRepository, 'bootstrap'),
       environment: databaseEnvironment,
@@ -187,7 +217,7 @@ export class PlatformFoundationStack extends Stack {
       logging: LogDrivers.awsLogs({ logGroup: telemetry, streamPrefix: 'ingest-worker' }),
     });
     const migrationTask = new FargateTaskDefinition(this, 'MigrationTask', { family: `platform-${props.environmentName}-ingest-migration`, cpu: 256, memoryLimitMiB: 512, executionRole: migrationExecutionRole });
-    migrationTask.addContainer('migration', {
+    const migrationContainer = migrationTask.addContainer('migration', {
       containerName: 'migration',
       image: ContainerImage.fromEcrRepository(workerRepository, 'bootstrap'),
       environment: databaseEnvironment,
@@ -250,6 +280,34 @@ export class PlatformFoundationStack extends Stack {
     }));
     encryptionKey.grantEncryptDecrypt(apiTask.taskRole);
     encryptionKey.grantEncryptDecrypt(workerTask.taskRole);
+
+    if (props.recoveryIntegration) {
+      apiContainer.addEnvironment('Recovery__LibraryId', props.recoveryIntegration.recoveryLibraryId);
+      apiContainer.addEnvironment('Gallery__LibraryId', props.recoveryIntegration.recoveryLibraryId);
+      for (const container of [apiContainer, workerContainer, rendererContainer, migrationContainer]) {
+        container.addEnvironment('Recovery__SourceRevision', props.recoveryIntegration.captureImageTag);
+        container.addEnvironment('Recovery__ApiBuildDigest', props.recoveryIntegration.apiBuildDigest);
+        container.addEnvironment('Recovery__IngestWorkerBuildDigest', props.recoveryIntegration.ingestWorkerBuildDigest);
+        container.addEnvironment('Recovery__RecoveryWorkerBuildDigest', props.recoveryIntegration.captureImageDigest);
+        container.addEnvironment('Recovery__RendererBuildDigest', props.recoveryIntegration.rendererBuildDigest);
+        container.addEnvironment('Recovery__RecoveryTemplateDigest', props.recoveryIntegration.recoveryTemplateDigest);
+        container.addEnvironment('Recovery__MigrationDigest', props.recoveryIntegration.migrationDigest);
+        container.addEnvironment('Recovery__ConfigurationDigest', props.recoveryIntegration.configurationDigest);
+      }
+      addPrimaryRecoveryCapture(this, {
+        environmentName: props.environmentName,
+        ...props.recoveryIntegration,
+        vpc,
+        cluster,
+        database,
+        ingestBucket,
+        encryptionKey,
+        telemetry,
+        alerts,
+        apiContainer,
+        apiTaskRole: apiTask.taskRole,
+      });
+    }
 
     const apiSecurityGroup = new SecurityGroup(this, 'ApiSecurityGroup', { vpc, allowAllOutbound: true });
     const workerSecurityGroup = new SecurityGroup(this, 'WorkerSecurityGroup', { vpc, allowAllOutbound: true });
@@ -316,7 +374,6 @@ export class PlatformFoundationStack extends Stack {
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['iam:PassRole'], resources: [apiTask.taskRole.roleArn, workerTask.taskRole.roleArn, rendererTask.taskRole.roleArn, migrationTask.taskRole.roleArn, apiExecutionRole.roleArn, workerExecutionRole.roleArn, rendererExecutionRole.roleArn, migrationExecutionRole.roleArn] }));
       deploymentRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['rds:DescribeDBInstances', 'rds:StartDBInstance', 'rds:StopDBInstance'], resources: [database.instanceArn] }));
     }
-    const alerts = new Topic(this, 'OwnerAlerts', { masterKey: encryptionKey });
     encryptionKey.addToResourcePolicy(new aws_iam.PolicyStatement({
       principals: [new aws_iam.ServicePrincipal('cloudwatch.amazonaws.com'), new aws_iam.ServicePrincipal('sns.amazonaws.com')],
       actions: ['kms:Decrypt', 'kms:GenerateDataKey*'],
@@ -388,7 +445,6 @@ export class PlatformFoundationStack extends Stack {
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
       ['CiFailureAlarm', 'Platform/Delivery', 'CiFailures', 1],
-      ['BackupAgePlaceholderAlarm', 'Platform/Data', 'BackupAgeHours', 26],
     ] as const) {
       const alarm = new Alarm(this, id, { metric: new Metric({ namespace, metricName, statistic: 'Maximum', period: Duration.minutes(5) }), threshold, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
       alarm.addAlarmAction(new SnsAction(alerts));
@@ -405,7 +461,6 @@ export class PlatformFoundationStack extends Stack {
       [new GraphWidget({ title: 'Renderer queue', left: [rendererQueue.metricApproximateAgeOfOldestMessage(), rendererDlq.metricApproximateNumberOfMessagesVisible()] })],
       [new GraphWidget({ title: 'Export measurements', left: exportMeasurements })],
       [new GraphWidget({ title: 'Delivery and CI failures', left: [new Metric({ namespace: 'Platform/Delivery', metricName: 'DeploymentFailures' }), new Metric({ namespace: 'Platform/Delivery', metricName: 'CiFailures' })] })],
-      [new GraphWidget({ title: 'Backup age placeholder', left: [new Metric({ namespace: 'Platform/Data', metricName: 'BackupAgeHours' })] })],
       [new GraphWidget({ title: 'Monthly cost', left: [new Metric({ namespace: 'AWS/Billing', metricName: 'EstimatedCharges', dimensionsMap: { Currency: 'USD' } })] })],
     ] });
 

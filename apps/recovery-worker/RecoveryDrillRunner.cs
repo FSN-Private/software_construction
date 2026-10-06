@@ -215,7 +215,7 @@ internal static class RecoveryDrillRunner
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task ValidateRestoredPointAsync(
+    internal static async Task ValidateRestoredPointAsync(
         RecoveryDatabaseConnection credentials,
         string databaseName,
         RecoveryPointManifestV1 manifest,

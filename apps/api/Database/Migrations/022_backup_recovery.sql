@@ -430,6 +430,37 @@ DROP TRIGGER IF EXISTS media_purge_tombstone_immutable ON media_purge_tombstones
 CREATE TRIGGER media_purge_tombstone_immutable BEFORE UPDATE OR DELETE ON media_purge_tombstones
     FOR EACH ROW EXECUTE FUNCTION media_purge_tombstone_immutable();
 
+-- A primary confirmation is only a reversible proposal. It must not create
+-- the immutable denial tombstone until the independently authorized recovery
+-- executor has completed its exact-version work and its receipt is imported.
+CREATE TABLE IF NOT EXISTS recovery_purge_proposals (
+    operation_id uuid PRIMARY KEY,
+    event_id uuid NOT NULL UNIQUE,
+    owner_id text NOT NULL,
+    library_id text NOT NULL,
+    asset_id uuid NOT NULL,
+    edit_id uuid,
+    category text NOT NULL CHECK (category IN ('original','xmp')),
+    content_sha256 char(64) NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    expected_lifecycle_version bigint NOT NULL CHECK (expected_lifecycle_version > 0),
+    lifecycle_generation bigint NOT NULL CHECK (lifecycle_generation > 0),
+    proposed_at_utc timestamptz NOT NULL,
+    eligible_at_utc timestamptz NOT NULL,
+    expires_at_utc timestamptz NOT NULL,
+    proposal_digest char(64) NOT NULL CHECK (proposal_digest ~ '^[0-9a-f]{64}$'),
+    canonical_proposal bytea NOT NULL CHECK (octet_length(canonical_proposal) > 0),
+    phase text NOT NULL CHECK (phase IN ('proposal','awaiting_independent_approval','approved','executing','primary_cleanup','completed','failed')),
+    primary_actor text NOT NULL,
+    reason_code text NOT NULL,
+    created_at_utc timestamptz NOT NULL DEFAULT now(),
+    updated_at_utc timestamptz NOT NULL DEFAULT now(),
+    CHECK (eligible_at_utc >= proposed_at_utc AND expires_at_utc > proposed_at_utc),
+    CHECK (category <> 'xmp' OR edit_id IS NOT NULL),
+    UNIQUE (owner_id,library_id,asset_id,edit_id,category,lifecycle_generation)
+);
+CREATE INDEX IF NOT EXISTS recovery_purge_proposal_pending
+    ON recovery_purge_proposals(phase,updated_at_utc) WHERE phase NOT IN ('completed','failed');
+
 CREATE TABLE IF NOT EXISTS recovery_purge_journals (
     operation_id uuid PRIMARY KEY,
     event_id uuid NOT NULL UNIQUE REFERENCES media_purge_tombstones(event_id),
@@ -461,6 +492,132 @@ CREATE TABLE IF NOT EXISTS recovery_purge_journals (
     CHECK (phase NOT IN ('approved','tombstoned','export_pending','writers_pending','deleting','verifying','completed') OR independent_receipt IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS recovery_purge_pending ON recovery_purge_journals(phase,updated_at_utc) WHERE phase NOT IN ('completed','failed');
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='recovery_purge_journals_proposal_fk') THEN
+        ALTER TABLE recovery_purge_journals ADD CONSTRAINT recovery_purge_journals_proposal_fk
+            FOREIGN KEY (operation_id) REFERENCES recovery_purge_proposals(operation_id);
+    END IF;
+END $$;
+
+-- The final receipt is independently signed by the pinned owner/MFA key after
+-- both failure domains and the 012 export publisher have been reconciled.
+-- This append-only record is the only authority to mark a purge completed.
+CREATE TABLE IF NOT EXISTS recovery_purge_completions (
+    event_id uuid PRIMARY KEY REFERENCES media_purge_tombstones(event_id),
+    operation_id uuid NOT NULL UNIQUE REFERENCES recovery_purge_journals(operation_id),
+    owner_id text NOT NULL,
+    library_id text NOT NULL,
+    asset_id uuid NOT NULL,
+    edit_id uuid,
+    category text NOT NULL CHECK (category IN ('original','xmp')),
+    content_sha256 char(64) NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    lifecycle_generation bigint NOT NULL CHECK (lifecycle_generation > 0),
+    snapshot_fence_generation bigint NOT NULL CHECK (snapshot_fence_generation > 0),
+    proposal_digest char(64) NOT NULL CHECK (proposal_digest ~ '^[0-9a-f]{64}$'),
+    purge_plan_digest char(64) NOT NULL CHECK (purge_plan_digest ~ '^[0-9a-f]{64}$'),
+    owner_approval_payload_sha256 char(64) NOT NULL CHECK (owner_approval_payload_sha256 ~ '^[0-9a-f]{64}$'),
+    recovery_execution_receipt_sha256 char(64) NOT NULL CHECK (recovery_execution_receipt_sha256 ~ '^[0-9a-f]{64}$'),
+    primary_cleanup_receipt_sha256 char(64) NOT NULL CHECK (primary_cleanup_receipt_sha256 ~ '^[0-9a-f]{64}$'),
+    affected_point_set_sha256 char(64) NOT NULL CHECK (affected_point_set_sha256 ~ '^[0-9a-f]{64}$'),
+    deleted_version_count bigint NOT NULL CHECK (deleted_version_count >= 0),
+    deleted_byte_length bigint NOT NULL CHECK (deleted_byte_length >= 0),
+    retained_shared_version_count bigint NOT NULL CHECK (retained_shared_version_count >= 0),
+    settled_writer_intent_set_sha256 char(64) NOT NULL CHECK (settled_writer_intent_set_sha256 ~ '^[0-9a-f]{64}$'),
+    export_acknowledgement_sha256 char(64) NOT NULL CHECK (export_acknowledgement_sha256 ~ '^[0-9a-f]{64}$'),
+    media_fence_scope_id text NOT NULL,
+    snapshot_fence_scope_id text NOT NULL,
+    snapshot_fence_released_at_utc timestamptz NOT NULL,
+    released_by text NOT NULL,
+    completed_at_utc timestamptz NOT NULL,
+    recovery_worker_build_digest char(64) NOT NULL CHECK (recovery_worker_build_digest ~ '^[0-9a-f]{64}$'),
+    signing_key_id text NOT NULL,
+    signing_public_key_sha256 char(64) NOT NULL CHECK (signing_public_key_sha256 ~ '^[0-9a-f]{64}$'),
+    payload_sha256 char(64) NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+    canonical_payload bytea NOT NULL CHECK (octet_length(canonical_payload) > 0),
+    signature bytea NOT NULL CHECK (octet_length(signature) > 0),
+    imported_at_utc timestamptz NOT NULL DEFAULT now(),
+    CHECK (snapshot_fence_released_at_utc <= completed_at_utc),
+    CHECK (category <> 'xmp' OR edit_id IS NOT NULL)
+);
+
+CREATE OR REPLACE FUNCTION recovery_purge_completed_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.phase = 'completed' AND NOT EXISTS (
+        SELECT 1 FROM recovery_purge_completions c
+        WHERE c.operation_id=NEW.operation_id AND c.event_id=NEW.event_id
+    ) THEN
+        RAISE EXCEPTION 'recovery_purge_completion_receipt_required';
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS recovery_purge_completed_guard ON recovery_purge_journals;
+CREATE TRIGGER recovery_purge_completed_guard BEFORE INSERT OR UPDATE OF phase ON recovery_purge_journals
+    FOR EACH ROW EXECUTE FUNCTION recovery_purge_completed_guard();
+
+CREATE OR REPLACE FUNCTION recovery_purge_completion_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    tombstone media_purge_tombstones%ROWTYPE;
+    journal recovery_purge_journals%ROWTYPE;
+    proposal recovery_purge_proposals%ROWTYPE;
+BEGIN
+    SELECT * INTO STRICT tombstone FROM media_purge_tombstones WHERE event_id=NEW.event_id;
+    SELECT * INTO STRICT journal FROM recovery_purge_journals WHERE operation_id=NEW.operation_id;
+    SELECT * INTO STRICT proposal FROM recovery_purge_proposals WHERE operation_id=NEW.operation_id;
+    IF tombstone.owner_id IS DISTINCT FROM NEW.owner_id OR tombstone.library_id IS DISTINCT FROM NEW.library_id OR
+       tombstone.asset_id IS DISTINCT FROM NEW.asset_id OR tombstone.edit_id IS DISTINCT FROM NEW.edit_id OR
+       tombstone.category IS DISTINCT FROM NEW.category OR tombstone.content_sha256 IS DISTINCT FROM NEW.content_sha256 OR
+       tombstone.lifecycle_generation IS DISTINCT FROM NEW.lifecycle_generation OR
+       journal.event_id IS DISTINCT FROM NEW.event_id OR journal.owner_id IS DISTINCT FROM NEW.owner_id OR
+       journal.library_id IS DISTINCT FROM NEW.library_id OR journal.asset_id IS DISTINCT FROM NEW.asset_id OR
+       journal.edit_id IS DISTINCT FROM NEW.edit_id OR journal.category IS DISTINCT FROM NEW.category OR
+       journal.content_sha256 IS DISTINCT FROM NEW.content_sha256 OR journal.lifecycle_generation IS DISTINCT FROM NEW.lifecycle_generation OR
+       journal.phase NOT IN ('verifying','primary_cleanup') OR journal.independent_receipt IS NULL OR
+       proposal.event_id IS DISTINCT FROM NEW.event_id OR proposal.owner_id IS DISTINCT FROM NEW.owner_id OR
+       proposal.library_id IS DISTINCT FROM NEW.library_id OR proposal.asset_id IS DISTINCT FROM NEW.asset_id OR
+       proposal.edit_id IS DISTINCT FROM NEW.edit_id OR proposal.category IS DISTINCT FROM NEW.category OR
+       proposal.content_sha256 IS DISTINCT FROM NEW.content_sha256 OR proposal.lifecycle_generation IS DISTINCT FROM NEW.lifecycle_generation OR
+       proposal.proposal_digest IS DISTINCT FROM NEW.proposal_digest OR proposal.phase NOT IN ('primary_cleanup','completed') THEN
+        RAISE EXCEPTION 'recovery_purge_completion_binding_mismatch';
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS recovery_purge_completion_binding ON recovery_purge_completions;
+CREATE TRIGGER recovery_purge_completion_binding BEFORE INSERT ON recovery_purge_completions
+    FOR EACH ROW EXECUTE FUNCTION recovery_purge_completion_binding();
+
+CREATE OR REPLACE FUNCTION recovery_purge_proposal_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'immutable_recovery_purge_proposal'; END IF;
+    IF (to_jsonb(NEW) - ARRAY['phase','updated_at_utc']) IS DISTINCT FROM
+       (to_jsonb(OLD) - ARRAY['phase','updated_at_utc']) THEN
+        RAISE EXCEPTION 'immutable_recovery_purge_proposal';
+    END IF;
+    IF NEW.phase = 'completed' AND NOT EXISTS (
+        SELECT 1 FROM recovery_purge_completions c
+        WHERE c.operation_id=NEW.operation_id AND c.event_id=NEW.event_id
+    ) THEN
+        RAISE EXCEPTION 'recovery_purge_completion_receipt_required';
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS recovery_purge_proposal_immutable ON recovery_purge_proposals;
+CREATE TRIGGER recovery_purge_proposal_immutable BEFORE UPDATE OR DELETE ON recovery_purge_proposals
+    FOR EACH ROW EXECUTE FUNCTION recovery_purge_proposal_immutable();
+
+CREATE OR REPLACE FUNCTION media_purge_completion_timestamp_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.completed_at_utc IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM recovery_purge_completions c
+        WHERE c.event_id=NEW.event_id AND c.completed_at_utc=NEW.completed_at_utc
+    ) THEN
+        RAISE EXCEPTION 'recovery_purge_completion_receipt_required';
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS media_purge_completion_timestamp_guard ON media_purge_tombstones;
+CREATE TRIGGER media_purge_completion_timestamp_guard BEFORE UPDATE OF completed_at_utc ON media_purge_tombstones
+    FOR EACH ROW EXECUTE FUNCTION media_purge_completion_timestamp_guard();
 
 CREATE TABLE IF NOT EXISTS recovery_purge_objects (
     operation_id uuid NOT NULL REFERENCES recovery_purge_journals(operation_id),
@@ -552,6 +709,8 @@ DROP TRIGGER IF EXISTS recovery_cycle_statuses_immutable ON recovery_cycle_statu
 CREATE TRIGGER recovery_cycle_statuses_immutable BEFORE UPDATE OR DELETE ON recovery_cycle_statuses FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_observation_rejections_immutable ON recovery_observation_rejections;
 CREATE TRIGGER recovery_observation_rejections_immutable BEFORE UPDATE OR DELETE ON recovery_observation_rejections FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
+DROP TRIGGER IF EXISTS recovery_purge_completions_immutable ON recovery_purge_completions;
+CREATE TRIGGER recovery_purge_completions_immutable BEFORE UPDATE OR DELETE ON recovery_purge_completions FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_components_immutable ON recovery_point_components;
 CREATE TRIGGER recovery_point_components_immutable BEFORE UPDATE OR DELETE ON recovery_point_components FOR EACH ROW EXECUTE FUNCTION recovery_append_only();
 DROP TRIGGER IF EXISTS recovery_point_objects_immutable ON recovery_point_objects;
@@ -562,6 +721,7 @@ SELECT DISTINCT owner_id,library_id FROM (
     SELECT owner_id,library_id FROM recovery_points
     UNION ALL SELECT owner_id,library_id FROM recovery_holds
     UNION ALL SELECT owner_id,library_id FROM media_purge_tombstones
+    UNION ALL SELECT owner_id,library_id FROM recovery_purge_proposals
     UNION ALL SELECT owner_id,library_id FROM recovery_purge_journals
 ) AS recovery_scopes
 WHERE owner_id IS NOT NULL AND owner_id <> '' AND library_id IS NOT NULL AND library_id <> ''

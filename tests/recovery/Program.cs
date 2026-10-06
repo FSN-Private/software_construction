@@ -21,6 +21,8 @@ try
     }
     if (args.Length != 0) throw new InvalidOperationException("usage: recovery-tests [--write-qualification-fixture <directory>]");
     ContractChecks();
+    OwnerPointIndexChecks();
+    await OwnerPointIndexBootstrapChecksAsync();
     EvidenceContractChecks();
     OwnerAccessEvidenceChecks();
     VerifierContractChecks();
@@ -199,6 +201,121 @@ static void ContractChecks()
     var noncanonical = bytes.Concat(" "u8.ToArray()).ToArray();
     RejectInvalid(() => RecoveryPointManifestV1.ParseCanonical(noncanonical));
 }
+
+static void OwnerPointIndexChecks()
+{
+    var owner = "owner-1";
+    var library = "main";
+    var first = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    var second = Guid.Parse("00000000-0000-0000-0000-000000000002");
+    var forward = RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(owner, library, [first, second]);
+    var reverse = RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(owner, library, [second, first]);
+    if (forward != reverse || forward == RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(owner, "other", [first, second]) ||
+        RecoveryOwnerPointIndex.PartitionKey(owner, library) != "OWNER#" + RecoveryOwnerPointIndex.ScopeHash(owner, library) ||
+        RecoveryOwnerPointIndex.PointSortKey(first) != "POINT#00000000-0000-0000-0000-000000000001")
+        throw new InvalidOperationException("Owner point index canonicalization failed.");
+    ThrowsInvalid(() => RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(owner, library, [first, first]));
+
+    var firstDigest = new string('a', 64);
+    var secondDigest = new string('b', 64);
+    var thirdDigest = new string('c', 64);
+    var bootstrapDigest = RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(owner, library, [first, second]);
+    var indexed = new RecoveryOwnerPointMembership[]
+    {
+        new(first, firstDigest, true),
+        new(second, secondDigest, true),
+        new(Guid.Parse("00000000-0000-0000-0000-000000000003"), thirdDigest, false)
+    };
+    var discovered = new Dictionary<Guid, string>
+    {
+        [first] = firstDigest,
+        [second] = secondDigest,
+        [indexed[2].PointId] = thirdDigest
+    };
+    RecoveryOwnerPointIndex.ValidateStrongIndex(owner, library, 2, bootstrapDigest, 3, indexed, discovered);
+    RejectInvalid(() => RecoveryOwnerPointIndex.ValidateStrongIndex(owner, library, 2, bootstrapDigest, 4, indexed, discovered));
+    RejectInvalid(() => RecoveryOwnerPointIndex.ValidateStrongIndex(owner, library, 2, new string('f', 64), 3, indexed, discovered));
+    RejectInvalid(() => RecoveryOwnerPointIndex.ValidateStrongIndex(owner, library, 2, bootstrapDigest, 3,
+        indexed, new Dictionary<Guid, string> { [first] = firstDigest, [second] = secondDigest }));
+    RejectInvalid(() => RecoveryOwnerPointIndex.ValidateStrongIndex(owner, library, 2, bootstrapDigest, 3,
+        [.. indexed, indexed[0]], discovered));
+}
+
+static async Task OwnerPointIndexBootstrapChecksAsync()
+{
+    var ownerA = "owner-a";
+    var libraryA = "main";
+    var ownerB = "owner-b";
+    var libraryB = "archive";
+    var pointA = Guid.Parse("10000000-0000-0000-0000-000000000001");
+    var pointB = Guid.Parse("10000000-0000-0000-0000-000000000002");
+    var pointC = Guid.Parse("20000000-0000-0000-0000-000000000003");
+    var digestA = new string('a', 64);
+    var digestB = new string('b', 64);
+    var digestC = new string('c', 64);
+    var seed = new[]
+    {
+        LegacyCopy(pointA, ownerA, libraryA, digestA),
+        LegacyCopy(pointB, ownerA, libraryA, digestB),
+        LegacyCopy(pointC, ownerB, libraryB, digestC)
+    };
+    var client = RecoveryIndexDynamoFake.Create(seed, pageSize: 1, out var fake);
+    await RecoveryPointIndexBootstrapRunner.BootstrapAsync(client, "control", "owner-empty", "main", CancellationToken.None);
+    Check(fake.ScanCalls >= seed.Length && fake.QueryCalls >= 3,
+        "Index bootstrap follows every small Scan and strongly consistent Query page.");
+
+    var markerA = fake.Read(RecoveryOwnerPointIndex.PartitionKey(ownerA, libraryA), "INDEX")!;
+    var markerB = fake.Read(RecoveryOwnerPointIndex.PartitionKey(ownerB, libraryB), "INDEX")!;
+    var emptyMarker = fake.Read(RecoveryOwnerPointIndex.PartitionKey("owner-empty", "main"), "INDEX")!;
+    Check(markerA["status"].S == "complete" && markerA["bootstrapPointCount"].N == "2" &&
+          markerA["indexedPointCount"].N == "2" &&
+          markerA["bootstrapPointSetSha256"].S == RecoveryOwnerPointIndex.ComputeBootstrapPointSetSha256(ownerA, libraryA, [pointA, pointB]),
+        "Bootstrap stores the discovered baseline membership count and canonical digest.");
+    Check(markerB["bootstrapPointCount"].N == "1" && markerB["indexedPointCount"].N == "1" &&
+          emptyMarker["bootstrapPointCount"].N == "0" && emptyMarker["indexedPointCount"].N == "0",
+        "Bootstrap indexes all discovered scopes and only an explicitly configured empty scope.");
+
+    var newPoint = Guid.Parse("10000000-0000-0000-0000-000000000004");
+    var newActions = RecoveryPointIndexBootstrapRunner.BuildPointIndexAdmissionActions("control", ownerA,
+        libraryA, newPoint, new string('d', 64), alreadyIndexed: false);
+    var combined = CopyRunner.BuildPointLeaseAdmissionTransactionItems(new Update
+    {
+        TableName = "control",
+        Key = RecoveryPointIndexBootstrapRunner.OwnerPointKey(ownerA, libraryA, newPoint),
+        UpdateExpression = "SET leaseToken=:token"
+    }, newActions);
+    Check(combined.Count == 3 && combined[0].Update is not null && combined[1].Put is not null &&
+          combined[1].Put.ConditionExpression == "attribute_not_exists(pk)" &&
+          combined[2].Update?.UpdateExpression == "ADD indexedPointCount :one",
+        "New copy lease, immutable owner membership, and marker increment are one three-action transaction.");
+
+    var existingActions = RecoveryPointIndexBootstrapRunner.BuildPointIndexAdmissionActions("control", ownerA,
+        libraryA, pointA, digestA, alreadyIndexed: true);
+    Check(existingActions.Count == 2 && existingActions.All(item => item.ConditionCheck is not null) &&
+          existingActions.All(item => item.Update is null && item.Put is null),
+        "Replay of an indexed point checks its marker and exact membership without incrementing the count.");
+
+    var missingClient = RecoveryIndexDynamoFake.Create([], pageSize: 1, out var missingFake);
+    await RejectAsync<RecoveryWorkerException>(() => RecoveryPointIndexBootstrapRunner.BuildNewPointAdmissionAsync(
+        missingClient, "control", ownerA, libraryA, pointA, digestA, CancellationToken.None));
+    Check(missingFake.ScanCalls == 0,
+        "Copy admission fails closed on a missing marker and never falls back to bootstrap Scan.");
+
+    fake.Remove(RecoveryOwnerPointIndex.PartitionKey(ownerA, libraryA), RecoveryOwnerPointIndex.PointSortKey(pointA));
+    await RejectAsync<RecoveryWorkerException>(() => RecoveryPointIndexBootstrapRunner.BootstrapAsync(
+        client, "control", "owner-empty", "main", CancellationToken.None));
+}
+
+static Dictionary<string, AttributeValue> LegacyCopy(Guid pointId, string ownerId, string libraryId, string digest) => new()
+{
+    ["pk"] = new AttributeValue { S = "POINT#" + pointId.ToString("D") },
+    ["sk"] = new AttributeValue { S = "COPY" },
+    ["pointId"] = new AttributeValue { S = pointId.ToString("D") },
+    ["ownerId"] = new AttributeValue { S = ownerId },
+    ["libraryId"] = new AttributeValue { S = libraryId },
+    ["sourceManifestSha256"] = new AttributeValue { S = digest },
+    ["state"] = new AttributeValue { S = "copied" }
+};
 
 static void EvidenceContractChecks()
 {

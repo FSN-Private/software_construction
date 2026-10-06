@@ -59,8 +59,12 @@ internal static class CaptureRunner
                 var scopeData = new List<CapturedScope>(scopes.Count);
                 foreach (var scope in scopes)
                 {
+                    var purgeOmissions = await RecoveryPurgeCapture.ReadAuthorizedOmissionsAsync(
+                        database, transaction, configuration, scope.OwnerId, scope.LibraryId,
+                        DateTimeOffset.UtcNow, cancellationToken);
                     var watermark = await ReadAndVerifyWatermarkAsync(database, transaction, scope.OwnerId, scope.LibraryId, snapshotCutoffUtc, cancellationToken);
-                    var objects = await ReadObjectClosureAsync(database, transaction, sourceBucket, scope.OwnerId, scope.LibraryId, cancellationToken);
+                    var objects = await ReadObjectClosureAsync(database, transaction, sourceBucket, scope.OwnerId,
+                        scope.LibraryId, purgeOmissions, cancellationToken);
                     var counts = await ReadClassCountsAsync(database, transaction, scope.OwnerId, scope.LibraryId, objects, cancellationToken);
                     scopeData.Add(new(scope, watermark, objects, counts));
                 }
@@ -205,13 +209,13 @@ internal static class CaptureRunner
         return path;
     }
 
-    private static async Task<(string SnapshotId, DateTimeOffset CutoffUtc, string Lsn)> ExportSnapshotAsync(
+    internal static async Task<(string SnapshotId, DateTimeOffset CutoffUtc, string Lsn)> ExportSnapshotAsync(
         NpgsqlConnection database,
         NpgsqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(
-            "SELECT pg_export_snapshot(), transaction_timestamp(), pg_current_wal_lsn()::text", database, transaction);
+            "SELECT pg_export_snapshot(), statement_timestamp(), pg_current_wal_lsn()::text", database, transaction);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new RecoveryWorkerException("snapshot_export_failed");
         var snapshot = reader.GetString(0);
@@ -228,7 +232,7 @@ internal static class CaptureRunner
         string? configuredLibraryId,
         CancellationToken cancellationToken)
     {
-        if ((configuredOwnerId is null) != (configuredLibraryId is null))
+        if (configuredOwnerId is not null && configuredLibraryId is null)
             throw new RecoveryWorkerException("configured_scope_incomplete");
         var scopes = new HashSet<RecoveryScope>();
         await using var command = new NpgsqlCommand(
@@ -237,10 +241,12 @@ internal static class CaptureRunner
         while (await reader.ReadAsync(cancellationToken))
             scopes.Add(new(reader.GetString(0), reader.GetString(1)));
         await reader.CloseAsync();
+        if (configuredLibraryId is not null &&
+            (string.IsNullOrWhiteSpace(configuredLibraryId) || configuredLibraryId.Length > 200))
+            throw new RecoveryWorkerException("configured_scope_invalid");
         if (configuredOwnerId is not null && configuredLibraryId is not null)
         {
-            if (string.IsNullOrWhiteSpace(configuredOwnerId) || configuredOwnerId.Length > 200 ||
-                string.IsNullOrWhiteSpace(configuredLibraryId) || configuredLibraryId.Length > 200)
+            if (string.IsNullOrWhiteSpace(configuredOwnerId) || configuredOwnerId.Length > 200)
                 throw new RecoveryWorkerException("configured_scope_invalid");
             scopes.Add(new(configuredOwnerId, configuredLibraryId));
         }
@@ -248,7 +254,7 @@ internal static class CaptureRunner
             .ThenBy(scope => scope.LibraryId, StringComparer.Ordinal).ToList();
     }
 
-    private static async Task<RecoveryChangeWatermark> ReadAndVerifyWatermarkAsync(
+    internal static async Task<RecoveryChangeWatermark> ReadAndVerifyWatermarkAsync(
         NpgsqlConnection database,
         NpgsqlTransaction transaction,
         string ownerId,
@@ -284,12 +290,13 @@ internal static class CaptureRunner
         return result;
     }
 
-    private static async Task<IReadOnlyList<RecoveryObjectReference>> ReadObjectClosureAsync(
+    internal static async Task<IReadOnlyList<RecoveryObjectReference>> ReadObjectClosureAsync(
         NpgsqlConnection database,
         NpgsqlTransaction transaction,
         string sourceBucket,
         string ownerId,
         string libraryId,
+        IReadOnlySet<RecoveryPurgedReference> authorizedOmissions,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -322,6 +329,17 @@ internal static class CaptureRunner
                   FROM vc_working_changes w
                  WHERE w.owner_id=$1 AND w.library_id=$2 AND w.base_content_sha256 IS NOT NULL
                 UNION ALL
+                SELECT l.owner_id, l.library_id, l.asset_id, l.edit_id, l.target_commit_id::text,
+                       l.sha256, 'xmp'::text
+                  FROM lineage_merge_content l
+                 WHERE l.owner_id=$1 AND l.library_id=$2
+                UNION ALL
+                SELECT l.owner_id, l.library_id, l.asset_id, l.edit_id, l.target_commit_id::text,
+                       provenance.sha256, 'xmp'::text
+                  FROM lineage_merge_content l
+                  CROSS JOIN LATERAL (VALUES (l.base_sha256), (l.target_sha256), (l.source_sha256)) AS provenance(sha256)
+                 WHERE l.owner_id=$1 AND l.library_id=$2 AND provenance.sha256 IS NOT NULL
+                UNION ALL
                 SELECT s.owner_id, s.library_id, w.asset_id, w.edit_id, w.base_commit_id::text,
                        w.current_content_sha256, CASE WHEN w.edit_id IS NULL THEN 'original' ELSE 'xmp' END
                   FROM vc_stashes s
@@ -345,7 +363,7 @@ internal static class CaptureRunner
                  WHERE a.owner_id=$1 AND pi.state IN ('pending-publication','publishing')
             )
             SELECT r.owner_id, r.library_id, r.asset_id, r.edit_id, r.commit_id, r.object_class,
-                   co.sha256, co.byte_length, co.storage_key, co.storage_version
+                   r.sha256, co.byte_length, co.storage_key, co.storage_version, co.category, co.integrity_state
               FROM refs r LEFT JOIN content_objects co ON co.sha256=r.sha256
              ORDER BY co.sha256, co.storage_key, co.storage_version, r.asset_id, r.edit_id, r.commit_id
             """;
@@ -356,19 +374,35 @@ internal static class CaptureRunner
         var rows = new List<ObjectRow>();
         while (await reader.ReadAsync(cancellationToken))
         {
-            if (reader.IsDBNull(6) || reader.IsDBNull(8) || reader.IsDBNull(9))
-                throw new RecoveryWorkerException("referenced_object_incomplete");
             var objectClass = reader.GetString(5) switch
             {
                 "original" => RecoveryDataClass.OriginalImage,
                 "xmp" => RecoveryDataClass.XmpSidecar,
                 _ => throw new RecoveryWorkerException("referenced_object_class_invalid")
             };
+            var rowOwner = reader.GetString(0);
+            var rowLibrary = reader.GetString(1);
+            var assetId = reader.GetGuid(2);
+            Guid? editId = reader.IsDBNull(3) ? null : reader.GetGuid(3);
+            var digest = reader.GetString(6).Trim();
+            var isAuthorizedOmission = authorizedOmissions.Contains(new RecoveryPurgedReference(rowOwner, rowLibrary,
+                assetId, editId, objectClass == RecoveryDataClass.XmpSidecar ? "xmp" : "original", digest));
+            var hasObject = !reader.IsDBNull(7) || !reader.IsDBNull(8) || !reader.IsDBNull(9) ||
+                !reader.IsDBNull(10) || !reader.IsDBNull(11);
+            if (!hasObject && isAuthorizedOmission) continue;
+            if (reader.IsDBNull(10) || reader.IsDBNull(11))
+                throw new RecoveryWorkerException("referenced_object_incomplete");
+            var expectedCategory = objectClass == RecoveryDataClass.XmpSidecar ? "xmp" : "original";
+            if (!string.Equals(reader.GetString(10), expectedCategory, StringComparison.Ordinal) ||
+                !string.Equals(reader.GetString(11), "authoritative", StringComparison.Ordinal))
+                throw new RecoveryWorkerException("referenced_object_unavailable");
+            if (reader.IsDBNull(7) || reader.IsDBNull(8) || reader.IsDBNull(9))
+                throw new RecoveryWorkerException("referenced_object_incomplete");
             rows.Add(new ObjectRow(
                 objectClass,
-                reader.GetString(0), reader.GetString(1), reader.GetGuid(2),
-                reader.IsDBNull(3) ? null : reader.GetGuid(3), reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetString(6).Trim(), reader.GetInt64(7), reader.GetString(8), reader.GetString(9)));
+                rowOwner, rowLibrary, assetId,
+                editId, reader.IsDBNull(4) ? null : reader.GetString(4),
+                digest, reader.GetInt64(7), reader.GetString(8), reader.GetString(9)));
         }
 
         var objects = new List<RecoveryObjectReference>();
@@ -398,6 +432,16 @@ internal static class CaptureRunner
         IReadOnlyList<RecoveryObjectReference> objects,
         CancellationToken cancellationToken)
     {
+        await using (var orphanCheck = new NpgsqlCommand("""
+            SELECT 1 FROM recovery_audit_checkpoints c
+            LEFT JOIN recovery_audit_events e ON e.sequence=c.sequence AND e.event_sha256=c.event_sha256
+            WHERE e.sequence IS NULL LIMIT 1
+            """, database, transaction))
+        {
+            if (await orphanCheck.ExecuteScalarAsync(cancellationToken) is not null)
+                throw new RecoveryWorkerException("recovery_audit_checkpoint_orphan");
+        }
+
         var counts = Enum.GetValues<RecoveryDataClass>()
             .Where(value => value != RecoveryDataClass.PreviewDerivative)
             .ToDictionary(value => value, _ => new CountBytes(0, 0));
@@ -409,15 +453,56 @@ internal static class CaptureRunner
             objects.Where(item => item.DataClass == RecoveryDataClass.XmpSidecar).Sum(item => item.ByteLength));
 
         counts[RecoveryDataClass.VersionGraph] = await SumTablesAsync(database, transaction, ownerId, libraryId,
-            ["vc_commits", "vc_commit_parents", "vc_commit_entries", "vc_refs", "vc_reflog", "vc_visibility", "vc_materialized_state", "vc_working_changes", "vc_staging_sets", "vc_staged_entries", "vc_divergence", "vc_idempotency", "vc_ref_quarantine", "vc_checkouts", "vc_stashes", "vc_recovery_expirations"], cancellationToken);
-        counts[RecoveryDataClass.LibraryMetadata] = await CountTableAsync(database, transaction,
-            "SELECT count(*), coalesce(sum(pg_column_size(p)),0) FROM asset_paths p WHERE p.owner_id=$1", ownerId, null, cancellationToken);
+            VersionGraphTables, cancellationToken);
+        counts[RecoveryDataClass.LibraryMetadata] = await SumTablesAsync(database, transaction, ownerId, libraryId,
+            LibraryMetadataTables, cancellationToken);
         counts[RecoveryDataClass.AuditRecord] = await CountTableAsync(database, transaction,
             "SELECT count(*), coalesce(sum(pg_column_size(a)),0) FROM audit_events a WHERE a.owner_id=$1", ownerId, null, cancellationToken);
         counts[RecoveryDataClass.RecoveryEvidence] = await SumTablesAsync(database, transaction, ownerId, libraryId,
-            ["recovery_change_ledger", "recovery_audit_events", "recovery_audit_checkpoints", "recovery_holds"], cancellationToken);
+            RecoveryEvidenceTables, cancellationToken);
         return counts;
     }
+
+    internal static IReadOnlyList<string> VersionGraphTables =>
+    [
+        "vc_commits", "vc_commit_parents", "vc_commit_entries", "vc_refs", "vc_reflog", "vc_visibility",
+        "vc_materialized_state", "vc_working_changes", "vc_staging_sets", "vc_staged_entries", "vc_divergence",
+        "vc_idempotency", "vc_ref_quarantine", "vc_checkouts", "vc_stashes", "vc_recovery_expirations",
+        "vc_lineage_reachable", "lineage_merge_content"
+    ];
+
+    internal static IReadOnlyList<string> LibraryMetadataTables =>
+    [
+        "assets", "edit_identities", "asset_paths", "lifecycle_holds", "import_batches", "idempotency_results",
+        "upload_sessions", "import_batch_items", "publication_intents", "publication_intent_items",
+        "ingest_publications", "asset_mutations", "reconstruction_manifests", "rendering_compatibility",
+        "rendering_compatibility_candidates", "render_requests", "render_attempts", "renditions",
+        "render_provenance", "render_events", "render_intake_control", "windows_sync_devices",
+        "windows_sync_content_ids", "windows_sync_device_content", "windows_sync_owner_revisions",
+        "gallery_generations", "gallery_projection", "gallery_facet_values", "gallery_refresh",
+        "gallery_preferences", "gallery_web_overlay_revisions", "gallery_web_content", "gallery_edit_idempotency",
+        "gallery_preference_idempotency", "export_baskets", "export_basket_items", "export_requests",
+        "export_results", "export_purge_tombstones", "export_write_intents", "export_download_sessions",
+        "export_download_grants", "export_download_admissions", "export_operations"
+    ];
+
+    internal static IReadOnlyList<string> RecoveryEvidenceTables =>
+    [
+        "recovery_points", "recovery_point_attestations", "recovery_cycle_statuses", "recovery_point_components",
+        "recovery_point_objects", "recovery_observations", "recovery_observation_rejections", "recovery_write_intents",
+        "recovery_change_watermarks", "recovery_change_ledger", "recovery_sessions", "recovery_validation_revisions",
+        "recovery_materialization_receipts", "recovery_holds", "media_purge_tombstones", "recovery_purge_proposals",
+        "recovery_purge_journals", "recovery_purge_completions", "recovery_purge_objects", "recovery_identity_mappings",
+        "recovery_audit_state", "recovery_audit_events", "recovery_audit_checkpoints"
+    ];
+
+    internal static IReadOnlyList<IReadOnlyList<string>> ProtectedRelationalTableClasses =>
+    [
+        VersionGraphTables,
+        LibraryMetadataTables,
+        ["audit_events"],
+        RecoveryEvidenceTables
+    ];
 
     private static async Task<CountBytes> SumTablesAsync(
         NpgsqlConnection database,
@@ -432,10 +517,38 @@ internal static class CaptureRunner
         {
             var query = table switch
             {
+                "assets" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM assets t WHERE t.owner_id=$1",
+                "edit_identities" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM edit_identities t JOIN assets a ON a.id=t.asset_id WHERE a.owner_id=$1",
+                "asset_paths" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM asset_paths t WHERE t.owner_id=$1",
+                "lifecycle_holds" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM lifecycle_holds t JOIN assets a ON a.id=t.asset_id WHERE a.owner_id=$1",
+                "import_batches" or "idempotency_results" or "upload_sessions" or "asset_mutations" => $"SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM {table} t WHERE t.owner_id=$1",
+                "import_batch_items" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM import_batch_items t JOIN import_batches b ON b.id=t.batch_id WHERE b.owner_id=$1",
+                "ingest_publications" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM ingest_publications t JOIN import_batches b ON b.id=t.batch_id WHERE b.owner_id=$1",
+                "publication_intents" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM publication_intents t WHERE EXISTS (SELECT 1 FROM publication_intent_items i JOIN assets a ON a.id=i.asset_id WHERE i.intent_id=t.id AND a.owner_id=$1)",
+                "publication_intent_items" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM publication_intent_items t JOIN assets a ON a.id=t.asset_id WHERE a.owner_id=$1",
+                "reconstruction_manifests" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM reconstruction_manifests t WHERE t.owner_id=$1 OR t.owner_id IS NULL",
+                "rendering_compatibility" or "rendering_compatibility_candidates" or "render_intake_control" or "export_operations" or "recovery_audit_state" or "recovery_observation_rejections" =>
+                    $"SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM {table} t WHERE $1::text IS NOT NULL",
+                "render_attempts" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM render_attempts t JOIN render_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "renditions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM renditions t JOIN render_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "render_provenance" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM render_provenance t JOIN renditions d ON d.id=t.rendition_id JOIN render_requests r ON r.id=d.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "windows_sync_content_ids" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM windows_sync_content_ids t WHERE EXISTS (SELECT 1 FROM windows_sync_device_content d WHERE d.content_id=t.content_id AND d.owner_id=$1 AND d.library_id=$2)",
+                "windows_sync_owner_revisions" or "gallery_preferences" or "export_download_sessions" or "recovery_identity_mappings" =>
+                    $"SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM {table} t WHERE t.owner_id=$1",
+                "export_basket_items" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM export_basket_items t JOIN export_baskets b ON b.id=t.basket_id WHERE b.owner_id=$1 AND b.library_id=$2",
+                "export_results" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM export_results t JOIN export_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "export_write_intents" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM export_write_intents t JOIN export_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "export_download_grants" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM export_download_grants t JOIN export_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "recovery_point_attestations" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_point_attestations t JOIN recovery_points p ON p.point_id=t.point_id WHERE p.owner_id=$1 AND p.library_id=$2",
+                "recovery_point_components" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_point_components t JOIN recovery_points p ON p.point_id=t.point_id WHERE p.owner_id=$1 AND p.library_id=$2",
+                "recovery_validation_revisions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_validation_revisions t JOIN recovery_sessions s ON s.session_id=t.session_id WHERE s.owner_id=$1 AND s.library_id=$2",
+                "recovery_materialization_receipts" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_materialization_receipts t JOIN recovery_sessions s ON s.session_id=t.session_id WHERE s.owner_id=$1 AND s.library_id=$2",
+                "recovery_purge_objects" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_purge_objects t JOIN recovery_purge_journals j ON j.operation_id=t.operation_id WHERE j.owner_id=$1 AND j.library_id=$2",
                 "vc_commit_parents" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_commit_parents t JOIN vc_commits c ON c.id=t.commit_id WHERE c.owner_id=$1 AND c.library_id=$2",
                 "vc_commit_entries" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_commit_entries t JOIN vc_commits c ON c.id=t.commit_id WHERE c.owner_id=$1 AND c.library_id=$2",
                 "vc_staged_entries" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_staged_entries t JOIN vc_staging_sets s ON s.id=t.staging_set_id WHERE s.owner_id=$1 AND s.library_id=$2",
                 "vc_recovery_expirations" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_recovery_expirations t JOIN vc_reflog r ON r.id=t.reflog_id WHERE r.owner_id=$1 AND r.library_id=$2",
+                "recovery_audit_checkpoints" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_audit_checkpoints t JOIN recovery_audit_events e ON e.sequence=t.sequence AND e.event_sha256=t.event_sha256 WHERE e.owner_id=$1 AND e.library_id=$2",
                 _ => $"SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM {table} t WHERE t.owner_id=$1 AND t.library_id=$2"
             };
             var value = await CountTableAsync(database, transaction, query, ownerId, libraryId, cancellationToken);
@@ -480,7 +593,7 @@ internal static class CaptureRunner
     private static RecoveryComponentReference Component(string name, RecoveryDataClass dataClass, PublishedS3Object item, string bucket) =>
         new(name, dataClass, $"s3://{bucket}/{item.Key}", item.VersionId, item.Sha256, item.ByteLength);
 
-    private static async Task CreateDatabaseDumpAsync(
+    internal static async Task CreateDatabaseDumpAsync(
         RecoveryWorkerConfiguration configuration,
         DatabaseConnection connection,
         string snapshotId,
@@ -593,13 +706,13 @@ internal static class CaptureRunner
         return parts.Length == 2 && parts.All(part => part.Length is > 0 and <= 8 && part.All(Uri.IsHexDigit));
     }
 
-    private sealed record RecoveryScope(string OwnerId, string LibraryId);
-    private sealed record CapturedScope(RecoveryScope Scope, RecoveryChangeWatermark Watermark,
+    internal sealed record RecoveryScope(string OwnerId, string LibraryId);
+    internal sealed record CapturedScope(RecoveryScope Scope, RecoveryChangeWatermark Watermark,
         IReadOnlyList<RecoveryObjectReference> Objects, Dictionary<RecoveryDataClass, CountBytes> Counts);
     internal sealed record CountBytes(long ItemCount, long ByteLength);
     private sealed record ObjectRow(RecoveryDataClass DataClass, string OwnerId, string LibraryId, Guid AssetId,
         Guid? EditId, string? CommitId, string Sha256, long ByteLength, string SourceKey, string SourceVersionId);
-    private sealed record DatabaseConnection(string ConnectionString, string Password, string Host, int Port, string Database, string Username, string RootCertificatePath);
+    internal sealed record DatabaseConnection(string ConnectionString, string Password, string Host, int Port, string Database, string Username, string RootCertificatePath);
     private sealed record CaptureBuildBinding(string Environment, string SourceRevision, string SourceAccountId, string SourceRegion,
         string ApiBuildDigest, string IngestWorkerBuildDigest, string RecoveryWorkerBuildDigest, string RendererBuildDigest,
         string MigrationDigest, string ConfigurationDigest);
