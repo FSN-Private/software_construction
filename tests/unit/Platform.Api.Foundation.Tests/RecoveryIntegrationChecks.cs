@@ -114,10 +114,92 @@ internal static class RecoveryIntegrationChecks
 
         await IdentityChecksAsync(db, storage, clock, now);
         await RestoreSessionChecksAsync(db, trust, evidenceRsa, evidenceKeyId, evidenceFingerprint, now);
+        await PurgeProposalChecksAsync(db, configuration, clock, now);
         await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint);
         if (Environment.GetEnvironmentVariable("RECOVERY_CAPACITY") == "1")
             await RecoveryHealthCapacityChecks.RunAsync(db, health, "test-owner");
         Console.WriteLine("Recovery integration checks passed: signed compact catalogs, queue ordering/replay, health, cycle failure and identity binding.");
+    }
+
+    private static async Task PurgeProposalChecksAsync(NpgsqlDataSource db, IConfiguration configuration,
+        FixedTimeProvider clock, DateTimeOffset now)
+    {
+        const string owner = "purge-proposal-owner";
+        var assetId = Guid.NewGuid();
+        const string payload = "purge proposal source bytes";
+        var payloadBytes = Encoding.UTF8.GetBytes(payload);
+        var contentSha = RecoveryEvidenceCodec.Hash(payloadBytes);
+        await using (var insert = db.CreateCommand("""
+            INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
+            VALUES($1,$2,'jpeg',$3,'source-version','authoritative')
+            """))
+        {
+            insert.Parameters.AddWithValue(contentSha);
+            insert.Parameters.AddWithValue(payloadBytes.LongLength);
+            insert.Parameters.AddWithValue("sha256/" + contentSha);
+            await insert.ExecuteNonQueryAsync();
+        }
+        await using (var insert = db.CreateCommand("""
+            INSERT INTO assets(id,owner_id,original_sha256,state,lifecycle_version,deleted_until,format)
+            VALUES($1,$2,$3,'recoverable-deleted',5,$4,'jpeg')
+            """))
+        {
+            insert.Parameters.AddWithValue(assetId);
+            insert.Parameters.AddWithValue(owner);
+            insert.Parameters.AddWithValue(contentSha);
+            insert.Parameters.AddWithValue(now.AddDays(-100));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var configValues = configuration.AsEnumerable().ToDictionary(pair => pair.Key, pair => pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+        var proposed = await RecoveryPurgeHttpChecks.RunAsync(db, configValues, clock, assetId);
+        Check(proposed.Phase == "awaiting_independent_approval" && proposed.Proposal.EligibleAtUtc == clock.GetUtcNow() &&
+            RecoveryPurgeProposalV1.ParseCanonical(RecoveryEvidenceCodec.SerializeCanonical(proposed.Proposal)) == proposed.Proposal,
+            "The owner API creates a canonical proposal only after retention eligibility and starts its approval window at request time.");
+        Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_purge_proposals WHERE operation_id=$1", proposed.Proposal.OperationId))! == 1 &&
+            (long)(await ScalarAsync(db, "SELECT count(*) FROM media_purge_tombstones WHERE event_id=$1", proposed.Proposal.EventId))! == 0 &&
+            (long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_purge_journals WHERE operation_id=$1", proposed.Proposal.OperationId))! == 0,
+            "A primary proposal is reversible and installs neither the permanent tombstone nor an execution journal.");
+        var service = new RecoveryPurgeService(db, configuration, clock);
+        Check((await service.GetProposalAsync(owner, proposed.Proposal.OperationId, default))?.Proposal == proposed.Proposal &&
+            await service.GetProposalAsync("foreign-owner", proposed.Proposal.OperationId, default) is null,
+            "Proposal reads are constrained to the canonical owner and configured library.");
+
+        await using (var hold = db.CreateCommand("INSERT INTO lifecycle_holds(id,asset_id,reason,source_reference) VALUES($1,$2,'legal_hold','test')"))
+        {
+            hold.Parameters.AddWithValue(Guid.NewGuid());
+            hold.Parameters.AddWithValue(assetId);
+            await hold.ExecuteNonQueryAsync();
+        }
+        var rejectedByHold = false;
+        try
+        {
+            await service.ProposeAsync(owner, new RecoveryPurgeProposalRequest(assetId, null, "original"),
+                "purge-proposal-held", default);
+        }
+        catch (RecoveryPurgeException error) when (error.Code == "purge_active_lifecycle_hold" && error.StatusCode == 409)
+        {
+            rejectedByHold = true;
+        }
+        Check(rejectedByHold && (long)(await ScalarAsync(db,
+                "SELECT count(*) FROM recovery_purge_proposals WHERE asset_id=$1", assetId))! == 1,
+            "An active lifecycle hold blocks a later purge proposal without leaving an extra proposal row.");
+        await using (var cleanup = db.CreateCommand("DELETE FROM lifecycle_holds WHERE asset_id=$1"))
+        {
+            cleanup.Parameters.AddWithValue(assetId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+        await using (var cleanup = db.CreateCommand("DELETE FROM assets WHERE id=$1"))
+        {
+            cleanup.Parameters.AddWithValue(assetId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+        await using (var cleanup = db.CreateCommand("DELETE FROM content_objects WHERE sha256=$1"))
+        {
+            cleanup.Parameters.AddWithValue(contentSha);
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     private static async Task RestoreSessionChecksAsync(

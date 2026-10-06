@@ -587,31 +587,46 @@ internal static class CopyRunner
         var itemKey = ControlKey("POINT#" + manifest.RecoveryPointId.ToString("D"), "COPY");
         try
         {
-            await dynamo.UpdateItemAsync(new UpdateItemRequest
+            var indexItems = await RecoveryPointIndexBootstrapRunner.BuildNewPointAdmissionAsync(dynamo,
+                table, manifest.OwnerId, manifest.LibraryId, manifest.RecoveryPointId,
+                sourceManifestSha256, cancellationToken);
+            await dynamo.TransactWriteItemsAsync(new TransactWriteItemsRequest
             {
-                TableName = table,
-                Key = itemKey,
-                UpdateExpression = "SET #state=:copying, captureId=:capture, ownerId=:owner, libraryId=:library, sourceManifestSha256=:manifest, workerId=:worker, leaseToken=:token, leaseUntilUtc=:lease",
-                ConditionExpression = "attribute_not_exists(pk) OR ((attribute_not_exists(#state) OR (#state <> :copied AND (#state <> :copying OR attribute_not_exists(leaseUntilUtc) OR leaseUntilUtc < :now))) AND (attribute_not_exists(sourceManifestSha256) OR sourceManifestSha256=:manifest))",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                TransactItems = BuildPointLeaseAdmissionTransactionItems(new Update
                 {
-                    [":copying"] = S("copying"),
-                    [":copied"] = S("copied"),
-                    [":capture"] = S(captureId.ToString("D")),
-                    [":owner"] = S(manifest.OwnerId),
-                    [":library"] = S(manifest.LibraryId),
-                    [":worker"] = S(workerId),
-                    [":manifest"] = S(sourceManifestSha256),
-                    [":token"] = S(leaseToken),
-                    [":lease"] = S(now.Add(TimeSpan.Parse(LeaseDuration, CultureInfo.InvariantCulture)).ToString("O", CultureInfo.InvariantCulture)),
-                    [":now"] = S(now.ToString("O", CultureInfo.InvariantCulture))
-                }
+                    TableName = table,
+                    Key = itemKey,
+                    UpdateExpression = "SET #state=:copying, captureId=:capture, ownerId=:owner, libraryId=:library, sourceManifestSha256=:manifest, workerId=:worker, leaseToken=:token, leaseUntilUtc=:lease",
+                    ConditionExpression = "attribute_not_exists(pk) OR ((attribute_not_exists(#state) OR (#state <> :copied AND (#state <> :copying OR attribute_not_exists(leaseUntilUtc) OR leaseUntilUtc < :now))) AND (attribute_not_exists(sourceManifestSha256) OR sourceManifestSha256=:manifest))",
+                    ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":copying"] = S("copying"),
+                        [":copied"] = S("copied"),
+                        [":capture"] = S(captureId.ToString("D")),
+                        [":owner"] = S(manifest.OwnerId),
+                        [":library"] = S(manifest.LibraryId),
+                        [":worker"] = S(workerId),
+                        [":manifest"] = S(sourceManifestSha256),
+                        [":token"] = S(leaseToken),
+                        [":lease"] = S(now.Add(TimeSpan.Parse(LeaseDuration, CultureInfo.InvariantCulture)).ToString("O", CultureInfo.InvariantCulture)),
+                        [":now"] = S(now.ToString("O", CultureInfo.InvariantCulture))
+                    }
+                }, indexItems)
             }, cancellationToken);
             return leaseToken;
         }
-        catch (ConditionalCheckFailedException)
+        catch (Exception exception) when (exception is ConditionalCheckFailedException or TransactionCanceledException)
         {
+            var indexed = await dynamo.GetItemAsync(new GetItemRequest
+            {
+                TableName = table,
+                Key = RecoveryPointIndexBootstrapRunner.OwnerPointKey(manifest.OwnerId, manifest.LibraryId,
+                    manifest.RecoveryPointId),
+                ConsistentRead = true
+            }, cancellationToken);
+            if (indexed.Item is { Count: > 0 } indexItem && GetString(indexItem, "sourceManifestSha256") != sourceManifestSha256)
+                throw new RecoveryWorkerException("recovery_point_id_conflict", exception);
             var existing = await dynamo.GetItemAsync(new GetItemRequest
             {
                 TableName = table,
@@ -627,6 +642,19 @@ internal static class CopyRunner
             }
             return null;
         }
+    }
+
+    internal static List<TransactWriteItem> BuildPointLeaseAdmissionTransactionItems(
+        Update copyLease, IReadOnlyList<TransactWriteItem> indexActions)
+    {
+        ArgumentNullException.ThrowIfNull(copyLease);
+        ArgumentNullException.ThrowIfNull(indexActions);
+        var items = new List<TransactWriteItem>(indexActions.Count + 1)
+        {
+            new() { Update = copyLease }
+        };
+        items.AddRange(indexActions);
+        return items;
     }
 
     private static async Task CompletePointAsync(IAmazonDynamoDB dynamo, string table,

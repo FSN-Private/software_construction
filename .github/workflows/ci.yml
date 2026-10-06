@@ -38,6 +38,8 @@ jobs:
       - run: npm run test:backup
       - run: npm run package:recovery-worker
       - run: npm run test:backup-cli
+      - name: Rehearse native PostgreSQL18 capture and restore with verified TLS
+        run: npm run test:backup-native
       - run: npm run test:exports
       - name: Start isolated ingest dependencies
         run: docker compose -f tests/integration/ingest/compose.yml -p feature005 up -d --wait
