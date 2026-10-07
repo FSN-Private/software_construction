@@ -57,7 +57,7 @@ internal static class RecoveryVerifierRunner
             foreach (var candidate in new[] { latest })
             {
                 var point = await VerifyPointAsync(configuration, s3, candidate.Pointer, signer.Trust,
-                    cancellationToken, verifyDatabaseSnapshotBytes: false);
+                    cancellationToken, verifyDatabaseSnapshotBytes: false, forceFullMediaRead: false);
                 await VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
                 verifiedItems = checked(verifiedItems + point.Receipts.Count);
                 var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
@@ -243,7 +243,8 @@ internal static class RecoveryVerifierRunner
         CopyPointer pointer,
         RecoverySigningTrust signerTrust,
         CancellationToken cancellationToken,
-        bool verifyDatabaseSnapshotBytes = true)
+        bool verifyDatabaseSnapshotBytes = true,
+        bool forceFullMediaRead = true)
     {
         var sourceAccount = configuration.RequiredAccountId("SourceAccountId");
         var recoveryAccount = configuration.RequiredAccountId("DestinationAccountId");
@@ -326,8 +327,8 @@ internal static class RecoveryVerifierRunner
                 if (metadata.VersionId != receipt.DestinationVersionId || metadata.ContentLength != receipt.ByteLength)
                     throw new RecoveryWorkerException("database_snapshot_identity_mismatch");
             }
-            else if (receipt.DataClass == RecoveryDataClass.XmpSidecar.ToString())
-                await RecoveryXmpContentVerifier.VerifyExactAsync(s3, receipt, cancellationToken);
+            else if (receipt.DataClass is nameof(RecoveryDataClass.OriginalImage) or nameof(RecoveryDataClass.XmpSidecar))
+                await RecoveryMediaVerification.VerifyAsync(s3, receipt, forceFullMediaRead, DateTimeOffset.UtcNow, cancellationToken);
             else
                 await S3ArtifactWriter.VerifyExactAsync(s3, receipt.DestinationBucket, receipt.DestinationKey,
                     receipt.DestinationVersionId, receipt.Sha256, receipt.ByteLength, cancellationToken);
@@ -417,7 +418,9 @@ internal static class RecoveryVerifierRunner
         {
             var key = ReceiptIdentity.From(receipt);
             if (!unmatched.TryGetValue(key, out var count) || count <= 0 || string.IsNullOrWhiteSpace(receipt.DestinationVersionId) ||
-                receipt.DestinationVersionId == "null" || receipt.VerifiedAtUtc.Offset != TimeSpan.Zero)
+                receipt.DestinationVersionId == "null" || receipt.VerifiedAtUtc.Offset != TimeSpan.Zero ||
+                receipt.VerifiedAtUtc > DateTimeOffset.UtcNow || receipt.FullByteVerifiedAtUtc is { } full &&
+                (full.Offset != TimeSpan.Zero || full > receipt.VerifiedAtUtc))
                 throw new RecoveryWorkerException("copy_receipt_binding_invalid");
             if (count == 1) unmatched.Remove(key);
             else unmatched[key] = count - 1;

@@ -316,12 +316,14 @@ internal static class CopyRunner
                     throw new RecoveryWorkerException("settled_intent_version_mismatch");
                 var receiptIdentity = RecoveryCopyReceiptReuse.ReceiptIdentity.From(admitted.Plan.SourceBucket,
                     admitted.Plan.Source, admitted.Plan.DestinationBucket, admitted.Plan.DestinationKey);
+                reusableReceipts.TryGetValue(receiptIdentity, out var previousReceipt);
+                var reused = settledVersions.Length == 0 && admitted.Plan.IsMedia && previousReceipt is not null;
                 var receipt = settledVersions.Length == 1
                     ? await store.VerifyExistingAsync(admitted.Plan.Source, admitted.Plan.DestinationKey,
                         settledVersions[0]!, representative.AdmittedAtUtc, cancellationToken)
-                    : admitted.Plan.IsMedia && reusableReceipts.TryGetValue(receiptIdentity, out var previousReceipt)
+                    : reused
                         ? await store.ReuseVerifiedReceiptAsync(admitted.Plan.Source, admitted.Plan.DestinationKey,
-                            new RecoveryCopyReceipt(admitted.Plan.Source, previousReceipt.DestinationBucket,
+                            new RecoveryCopyReceipt(admitted.Plan.Source, previousReceipt!.DestinationBucket,
                                 previousReceipt.DestinationKey, previousReceipt.DestinationVersionId,
                                 configuration.Required("DestinationAccountAlias"), destinationRegion,
                                 previousReceipt.VerifiedAtUtc, previousReceipt.VerifiedAtUtc,
@@ -354,7 +356,23 @@ internal static class CopyRunner
                     admitted.Plan.Source.SourceVersionId, admitted.Plan.Source.Sha256,
                     admitted.Plan.Source.ByteLength, admitted.Plan.DestinationBucket,
                     admitted.Plan.DestinationKey, receipt.DestinationVersionId,
-                    admitted.Plan.Source.DataClass.ToString(), receipt.VerifiedAtUtc);
+                    admitted.Plan.Source.DataClass.ToString(), DateTimeOffset.UtcNow);
+                if (admitted.Plan.IsMedia)
+                {
+                    var preserveFullTime = reused && !RecoveryMediaVerification.FullReadRequired(previousReceipt!, DateTimeOffset.UtcNow);
+                    var fullTime = preserveFullTime ? previousReceipt!.FullByteVerifiedAtUtc : receipt.VerifiedAtUtc;
+                    if (!preserveFullTime && (reused || admitted.Plan.Source.DataClass == RecoveryDataClass.XmpSidecar))
+                    {
+                        await RecoveryMediaVerification.VerifyAsync(destinationS3, pointReceipt, forceFullRead: true,
+                            DateTimeOffset.UtcNow, cancellationToken);
+                        fullTime = DateTimeOffset.UtcNow;
+                    }
+                    pointReceipt = pointReceipt with
+                    {
+                        VerifiedAtUtc = DateTimeOffset.UtcNow,
+                        FullByteVerifiedAtUtc = fullTime
+                    };
+                }
                 pointReceipts.Add(pointReceipt);
                 await receiptJournal.AppendAsync(pointReceipt, cancellationToken);
             }

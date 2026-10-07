@@ -178,6 +178,15 @@ assert.ok(!bootstrapPolicies.some(policy => values(policy).match(/s3:|kms:|secre
 
 const purgePolicies = policiesForRole(purgeRole);
 const drillRole = resourceOf('AWS::IAM::Role', value => values(value.Properties.Description).includes('Verify and drill using recovery resources only'));
+for (const role of [drillRole, resourceOf('AWS::IAM::Role', value => values(value.Properties.Description).includes('Recovery-side copy identity'))]) {
+  const retentionReads = policiesForRole(role).flatMap(policy => policy.Statement)
+    .filter(statement => values(statement.Action).includes('s3:GetObjectRetention'));
+  assert.equal(retentionReads.length, 1);
+  assert.equal(retentionReads[0].Resource.length, 4);
+  assert.deepEqual(retentionReads[0].Action, 's3:GetObjectRetention');
+  for (const prefix of ['payload/sha256/*', 'snapshots/*', 'points/*', 'evidence/*'])
+    assert.ok(values(retentionReads[0].Resource).includes(prefix));
+}
 const drillIntentWrites = policiesForRole(drillRole).flatMap(policy => policy.Statement)
   .filter(statement => values(statement.Resource).includes(Object.entries(recovery.Resources).find(([, value]) => value === intentTable)?.[0]))
   .filter(statement => values(statement.Action).includes('dynamodb:PutItem') || values(statement.Action).includes('dynamodb:UpdateItem'));

@@ -371,6 +371,11 @@ export class RecoveryStack extends Stack {
     ];
     for (const role of [copyRole, recoveryOnlyRole]) {
       role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+        actions: ['s3:GetObjectRetention'],
+        resources: [bucket.arnForObjects('payload/sha256/*'), bucket.arnForObjects('snapshots/*'),
+          evidenceBucket.arnForObjects('points/*'), evidenceBucket.arnForObjects('evidence/*')],
+      }));
+      role.addToPrincipalPolicy(new aws_iam.PolicyStatement({
         actions: destinationBucketMetadataActions,
         resources: [bucket.bucketArn, evidenceBucket.bucketArn],
       }));

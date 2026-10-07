@@ -7,7 +7,9 @@ namespace Platform.Recovery.Worker;
 
 internal sealed record PrivateCopyReceiptV1(string SourceBucket, string SourceKey, string SourceVersionId,
     string Sha256, long ByteLength, string DestinationBucket, string DestinationKey,
-    string DestinationVersionId, string DataClass, DateTimeOffset VerifiedAtUtc);
+    string DestinationVersionId, string DataClass, DateTimeOffset VerifiedAtUtc,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    DateTimeOffset? FullByteVerifiedAtUtc = null);
 
 internal sealed record PrivateArtifactReceiptV1(string SourceBucket, string SourceKey, string SourceVersionId,
     string DestinationBucket, string DestinationKey, string DestinationVersionId, string Sha256, long ByteLength);
