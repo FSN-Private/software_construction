@@ -488,7 +488,9 @@ internal static class CaptureRunner
 
     internal static IReadOnlyList<string> RecoveryEvidenceTables =>
     [
-        "recovery_points", "recovery_point_attestations", "recovery_cycle_statuses", "recovery_point_components",
+        "platform_schema_migrations",
+        "recovery_points", "recovery_point_attestations", "recovery_cycle_statuses", "recovery_purge_freezes",
+        "recovery_point_components",
         "recovery_point_objects", "recovery_observations", "recovery_observation_rejections", "recovery_write_intents",
         "recovery_change_watermarks", "recovery_change_ledger", "recovery_sessions", "recovery_validation_revisions",
         "recovery_materialization_receipts", "recovery_holds", "media_purge_tombstones", "recovery_purge_proposals",
@@ -527,7 +529,7 @@ internal static class CaptureRunner
                 "publication_intents" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM publication_intents t WHERE EXISTS (SELECT 1 FROM publication_intent_items i JOIN assets a ON a.id=i.asset_id WHERE i.intent_id=t.id AND a.owner_id=$1)",
                 "publication_intent_items" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM publication_intent_items t JOIN assets a ON a.id=t.asset_id WHERE a.owner_id=$1",
                 "reconstruction_manifests" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM reconstruction_manifests t WHERE t.owner_id=$1 OR t.owner_id IS NULL",
-                "rendering_compatibility" or "rendering_compatibility_candidates" or "render_intake_control" or "export_operations" or "recovery_audit_state" or "recovery_observation_rejections" =>
+                "rendering_compatibility" or "rendering_compatibility_candidates" or "render_intake_control" or "export_operations" or "recovery_audit_state" or "recovery_observation_rejections" or "platform_schema_migrations" =>
                     $"SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM {table} t WHERE $1::text IS NOT NULL",
                 "render_attempts" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM render_attempts t JOIN render_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",
                 "renditions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM renditions t JOIN render_requests r ON r.id=t.request_id WHERE r.owner_id=$1 AND r.library_id=$2",

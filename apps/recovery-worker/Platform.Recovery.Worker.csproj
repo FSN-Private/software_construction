@@ -8,6 +8,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../packages/contracts/Platform.Contracts.csproj" />
     <ProjectReference Include="../../packages/recovery/Platform.Recovery.csproj" />
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="[4.0.107]" />
     <PackageReference Include="AWSSDK.KeyManagementService" Version="[4.0.100.15]" />
