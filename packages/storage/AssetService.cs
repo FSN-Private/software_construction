@@ -55,7 +55,20 @@ public sealed class AssetService(NpgsqlDataSource db, S3ObjectStore storage, Tim
         try { bytes = await storage.ReadVerifiedAsync(address.AuthoritativeKey, version, address, ct); }
         catch (Exception e) when (e is InvalidDataException || e is Amazon.S3.AmazonS3Exception { StatusCode: System.Net.HttpStatusCode.NotFound })
         {
-            await ExecuteAsync(connection, "UPDATE content_objects SET integrity_state='integrity-error' WHERE sha256=$1; UPDATE assets SET state='integrity-error',lifecycle_version=lifecycle_version+1 WHERE original_sha256=$1 AND state IN ('active','restored'); UPDATE edit_identities SET state='integrity-error',lifecycle_version=lifecycle_version+1 WHERE xmp_sha256=$1 AND state IN ('active','restored')", ct, address.Sha256);
+            // Keep the same digest-before-assets order as freeze and version-control writers.
+            _ = await ScalarAsync(connection,
+                "SELECT sha256 FROM content_objects WHERE sha256=$1 FOR UPDATE", ct, address.Sha256);
+            await EnsureIntegrityMutationNotFrozenAsync(connection, address.Sha256, ct);
+            await ExecuteAsync(connection, """
+                UPDATE content_objects SET integrity_state='integrity-error' WHERE sha256=$1;
+                UPDATE assets SET state='integrity-error',lifecycle_version=lifecycle_version+1
+                 WHERE original_sha256=$1 AND state IN ('active','restored')
+                   AND NOT EXISTS (SELECT 1 FROM recovery_purge_proposals p WHERE p.asset_id=assets.id AND p.phase IN ('executing','primary_cleanup'));
+                UPDATE edit_identities SET state='integrity-error',lifecycle_version=lifecycle_version+1
+                 WHERE xmp_sha256=$1 AND state IN ('active','restored')
+                   AND NOT EXISTS (SELECT 1 FROM recovery_purge_proposals p WHERE p.asset_id=edit_identities.asset_id
+                                     AND p.edit_id=edit_identities.id AND p.phase IN ('executing','primary_cleanup'))
+                """, ct, address.Sha256);
             await AuditAsync(connection, owner, operation, "integrity.drift", id, "integrity-error", ct, "checksum_mismatch");
             await RecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
                 "content.integrity-error", "content", address.Sha256, [address.Sha256], Now, ct);
@@ -99,6 +112,12 @@ public sealed class AssetService(NpgsqlDataSource db, S3ObjectStore storage, Tim
             if (!await r.ReadAsync(ct)) throw new IngestException("not_found", 404);
             state = r.GetString(0); current = r.GetInt64(1); deadline = r.IsDBNull(2) ? null : r.GetDateTime(2); asset = r.GetGuid(3); parentState = r.GetString(4);
         }
+        if (await ScalarAsync(connection, """
+            SELECT 1 FROM recovery_purge_proposals
+             WHERE asset_id=$1 AND ($2::uuid IS NULL OR edit_id IS NOT DISTINCT FROM $2)
+               AND phase IN ('executing','primary_cleanup') LIMIT 1
+            """, ct, asset, edit ? id : null) is not null)
+            throw new IngestException("recovery_purge_frozen", 409);
         if (current != version || edit && parentState is not ("active" or "restored")) throw new IngestException("lifecycle_conflict");
         var contentSha = (string?)await ScalarAsync(connection,
             edit ? "SELECT e.xmp_sha256 FROM edit_identities e JOIN assets a ON a.id=e.asset_id WHERE e.id=$1 AND a.owner_id=$2"
@@ -141,6 +160,27 @@ public sealed class AssetService(NpgsqlDataSource db, S3ObjectStore storage, Tim
 
     private static Task<int> AddPathAsync(NpgsqlConnection connection, string owner, Guid asset, string path, DateTime now, CancellationToken ct) =>
         ExecuteAsync(connection, "INSERT INTO asset_paths(id,asset_id,owner_id,display_path,collision_key,active,effective_from) VALUES($1,$2,$3,$4,$5,true,$6)", ct, Guid.NewGuid(), asset, owner, path, LibraryPath.CollisionKey(path), now);
+
+    private static async Task EnsureIntegrityMutationNotFrozenAsync(NpgsqlConnection connection,
+        string sha256, CancellationToken ct)
+    {
+        var assetIds = new List<Guid>();
+        await using (var command = Command(connection, """
+            SELECT a.id FROM assets a
+             WHERE a.original_sha256=$1 OR EXISTS (
+                 SELECT 1 FROM edit_identities e WHERE e.asset_id=a.id AND e.xmp_sha256=$1)
+             ORDER BY a.id FOR UPDATE
+            """, sha256))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) assetIds.Add(reader.GetGuid(0));
+        if (assetIds.Count == 0) return;
+        if (await ScalarAsync(connection, """
+            SELECT 1 FROM recovery_purge_proposals
+             WHERE asset_id=ANY($1) AND content_sha256=$2
+               AND phase IN ('executing','primary_cleanup') LIMIT 1
+            """, ct, assetIds.ToArray(), sha256) is not null)
+            throw new IngestException("recovery_purge_frozen", 409);
+    }
 }
 
 public sealed record AssetView(Guid Id, string State, long LifecycleVersion, DateTime? DeletedUntil, string Path, string Sha256, string Format);

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Npgsql;
 using Platform.Api.Features.Gallery.Browse;
 using Platform.Api.Features.VersionControl.Refs;
+using Platform.Api.Features.VersionControl.Adapters;
 using Platform.Api.Features.VersionControl.Working;
 using Platform.Contracts.VersionControl;
 using Platform.Storage;
@@ -53,6 +54,7 @@ public sealed class GalleryEditService(NpgsqlDataSource db, S3ObjectStore storag
         await using (var transaction = await connection.BeginTransactionAsync(ct))
         {
             await LockOwnerAsync(connection, owner, ct);
+            await VersionControlAdapters.LockAndCheckRecoveryPurgeDigestsAsync(connection, [digest], ct);
             var replay = await ReplayAsync(connection, owner, library, idempotencyKey, fingerprint, ct);
             if (replay is not null) return replay;
             var latest = await ReadSourceAsync(connection, owner, library, branch, asset, request.EditId, ct);

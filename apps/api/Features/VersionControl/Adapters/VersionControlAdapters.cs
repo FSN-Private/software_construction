@@ -8,8 +8,10 @@ namespace Platform.Api.Features.VersionControl.Adapters;
 
 public static class VersionControlAdapters
 {
-    public static async Task ValidateEntriesAsync(NpgsqlConnection connection, string owner, IReadOnlyList<VersionControlEntry> entries, S3ObjectStore? storage, CancellationToken cancellationToken)
+    public static async Task ValidateEntriesAsync(NpgsqlConnection connection, string owner, string library,
+        IReadOnlyList<VersionControlEntry> entries, S3ObjectStore? storage, CancellationToken cancellationToken)
     {
+        await LockAndCheckRecoveryPurgeScopeAsync(connection, owner, library, entries, cancellationToken);
         var requested = JsonSerializer.Serialize(entries.Select(entry => new
         {
             asset_id = entry.AssetId,
@@ -60,10 +62,69 @@ public static class VersionControlAdapters
             catch (Exception error) when (error is Amazon.S3.AmazonS3Exception or InvalidDataException or ArgumentException) { throw new VersionControlProblem("content_not_authoritative"); }
     }
 
+    private static async Task LockAndCheckRecoveryPurgeScopeAsync(NpgsqlConnection connection, string owner,
+        string library, IReadOnlyList<VersionControlEntry> entries, CancellationToken cancellationToken)
+    {
+        var digests = entries.SelectMany(entry => new[] { entry.BaseContentSha256, entry.ContentSha256 })
+            .OfType<string>().Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var assets = entries.Select(entry => entry.AssetId).Distinct().Order().ToArray();
+
+        // A frozen payload is global by digest, even when a new logical reference belongs to
+        // another owner. Lock content before assets everywhere in this path. The exclusive
+        // digest lock is intentional: weaker key-share locks do not make an old RR snapshot
+        // fail after the freeze's MVCC update.
+        await LockAndCheckRecoveryPurgeDigestsAsync(connection, digests, cancellationToken);
+
+        if (assets.Length > 0)
+            await using (var lockAssets = Command(connection,
+                "SELECT id FROM assets WHERE id=ANY($1) ORDER BY id FOR UPDATE", assets))
+            await using (var reader = await lockAssets.ExecuteReaderAsync(cancellationToken))
+                while (await reader.ReadAsync(cancellationToken)) { }
+
+        if (await ScalarAsync(connection, """
+            SELECT 1 FROM recovery_purge_proposals
+             WHERE owner_id=$1 AND library_id=$2 AND phase IN ('executing','primary_cleanup')
+               AND (asset_id=ANY($3) OR content_sha256=ANY($4::char(64)[]))
+             LIMIT 1
+            """, cancellationToken, owner, library, (object)assets, (object)digests) is not null)
+            throw new VersionControlProblem("recovery_purge_frozen", 409);
+    }
+
+    public static async Task LockAndCheckRecoveryPurgeDigestsAsync(NpgsqlConnection connection,
+        IEnumerable<string> requestedDigests, CancellationToken cancellationToken)
+    {
+        if (await Platform.Storage.IngestDb.LockAndCheckRecoveryPurgeDigestsAsync(
+                connection, requestedDigests, cancellationToken))
+            throw new VersionControlProblem("recovery_purge_frozen", 409);
+    }
+
     public static async Task PublishHoldsAsync(NpgsqlConnection connection, string commitId, IEnumerable<Guid> assets, DateTime? expiresAt, CancellationToken cancellationToken)
     {
         var assetIds = assets.Distinct().ToArray();
         if (assetIds.Length == 0) return;
+        var digests = new List<string>();
+        await using (var affected = Command(connection, """
+            SELECT DISTINCT digest FROM (
+                SELECT base_content_sha256 AS digest FROM vc_commit_entries WHERE commit_id=$1
+                UNION ALL
+                SELECT content_sha256 AS digest FROM vc_commit_entries WHERE commit_id=$1
+            ) entries WHERE digest IS NOT NULL ORDER BY digest
+            """, commitId))
+        await using (var reader = await affected.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken)) digests.Add(reader.GetString(0).Trim());
+        if (await Platform.Storage.IngestDb.LockAndCheckRecoveryPurgeDigestsAsync(
+                connection, digests, cancellationToken))
+            throw new VersionControlProblem("recovery_purge_frozen", 409);
+
+        await using (var lockAssets = Command(connection,
+            "SELECT id FROM assets WHERE id=ANY($1) ORDER BY id FOR UPDATE", assetIds))
+        await using (var reader = await lockAssets.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken)) { }
+        if (await ScalarAsync(connection, """
+            SELECT 1 FROM recovery_purge_proposals
+             WHERE asset_id=ANY($1) AND phase IN ('executing','primary_cleanup') LIMIT 1
+            """, cancellationToken, assetIds) is not null)
+            throw new VersionControlProblem("recovery_purge_frozen", 409);
         var holdIds = assetIds.Select(_ => Guid.NewGuid()).ToArray();
         await ExecuteAsync(connection, """
             DELETE FROM lifecycle_holds WHERE asset_id=ANY($1) AND source_reference=$3;

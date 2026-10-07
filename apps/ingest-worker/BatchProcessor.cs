@@ -189,6 +189,11 @@ public sealed class BatchProcessor(NpgsqlDataSource db, S3ObjectStore storage, I
             if (await ScalarAsync(connection, "SELECT 1 FROM asset_paths WHERE owner_id=$1 AND collision_key=$2 AND active", ct, owner, LibraryPath.CollisionKey(item.Path)) is not null) throw new IngestException("path_collision");
             asset = Guid.NewGuid();
         }
+        // This also rejects new references to the same SHA from a different owner. The
+        // digest-row lock serializes admission with the freeze transaction.
+        if (await IngestDb.LockAndCheckRecoveryPurgeDigestsAsync(
+                connection, [item.Address.Sha256], ct))
+            throw new IngestException("recovery_purge_frozen", 409);
         var version = await storage.PublishVerifiedAsync(item.Address, bytes, ct);
         var recorded = await ExecuteAsync(connection, "INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state) VALUES($1,$2,$3,$4,$5,'authoritative') ON CONFLICT(sha256) DO UPDATE SET storage_version=EXCLUDED.storage_version WHERE content_objects.byte_length=EXCLUDED.byte_length AND content_objects.integrity_state='authoritative'", ct, item.Address.Sha256, item.Address.Length, category, item.Address.AuthoritativeKey, version);
         if (recorded != 1) throw new IngestException("integrity_error");
