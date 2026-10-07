@@ -4,10 +4,13 @@ using NpgsqlTypes;
 
 namespace Platform.Recovery;
 
-public sealed record RecoveryRestoreScopeV1(string Kind, Guid? AssetId, Guid? EditId)
+public sealed record RecoveryRestoreScopeV1(string Kind, Guid? AssetId, Guid? EditId,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Reason = null)
 {
     public void Validate()
     {
+        if (Reason is not null && (Reason.Length is < 1 or > 1000 || Reason.Any(char.IsControl)))
+            throw new InvalidDataException("restore_reason_invalid");
         if (Kind == "full_library" && AssetId is null && EditId is null) return;
         if (Kind == "asset" && AssetId is { } asset && asset != Guid.Empty && EditId is null) return;
         if (Kind == "edit" && AssetId is { } editAsset && editAsset != Guid.Empty && EditId is { } edit && edit != Guid.Empty) return;

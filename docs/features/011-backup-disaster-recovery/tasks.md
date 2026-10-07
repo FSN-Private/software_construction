@@ -155,6 +155,8 @@ The initial owner request authorized parallel implementation agents. On 2026-10-
 
 ## Phase 7: Convergence
 
+Implementation resumed after convergence. T029 is IN PROGRESS: bounded signed point listing, owner-scoped session status and transactional idempotent restore requests pass real PostgreSQL/S3/API service and HTTP checks. Independent retrieval/validation and promotion remain open. T030 is IN PROGRESS: mounted-input mapping/runtime/probe wiring and native restricted-login tests pass; exact-secret IAM, durable unknown-outcome reconciliation, completed-run replay and independent attestation remain open.
+
 2026-10-07 root assessment: 49 FR/AC/NFR/SC IDs, nine architecture decisions and all five constitution principles checked. Eight actionable findings: one missing and seven partial; three critical baseline-workflow gaps and five high gaps. No external qualification is counted as local implementation success. Existing task IDs and requirements remain unchanged. This phase records concrete remaining work under T010–T028 rather than treating tested helpers as complete workflows.
 
 - [ ] T029 Complete owner-scoped point listing, isolated restore request/status, resumable retrieval, validation and explicit promotion commands/API contracts in `apps/api/Features/Recovery/`, `packages/recovery/Restore/` and `apps/recovery-worker/`. Reuse `RestoreSessionStore`; test recent authentication, idempotency, immutable validation revisions, target/lifecycle mutation, purge exclusion, rollback and foreign ownership against real PostgreSQL. Update the recovery runbook with executable commands. Critical; FR-009, FR-010, FR-013, FR-016; AC-005, AC-006, AC-010; T014/T016/T017 (missing).

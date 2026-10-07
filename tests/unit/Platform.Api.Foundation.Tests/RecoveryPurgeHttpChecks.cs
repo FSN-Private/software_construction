@@ -35,6 +35,8 @@ internal static class RecoveryPurgeHttpChecks
         builder.Services.AddSingleton(clock);
         builder.Services.AddSingleton<RecoveryPurgeService>();
         builder.Services.AddSingleton<RecoveryHealthService>();
+        builder.Services.AddSingleton<RecoveryOperationQueryService>();
+        builder.Services.AddSingleton<RecoveryRestoreRequestService>();
         builder.Services.AddSingleton<RecoveryOwnerResolver>();
         builder.Services.AddAuthentication("recovery-purge-test")
             .AddScheme<AuthenticationSchemeOptions, RecoveryPurgeTestAuthenticationHandler>("recovery-purge-test", _ => { });
@@ -64,10 +66,43 @@ internal static class RecoveryPurgeHttpChecks
             new RecoveryPurgeProposalRequest(assetId, null, "original"));
         Check(anonymous.StatusCode == HttpStatusCode.Unauthorized,
             "The purge proposal route requires authenticated owner authorization.");
+        Check((await client.GetAsync("/v1/recovery/points")).StatusCode == HttpStatusCode.Unauthorized &&
+            (await client.GetAsync($"/v1/recovery/sessions/{Guid.NewGuid():D}")).StatusCode == HttpStatusCode.Unauthorized,
+            "Point and session status routes require authentication.");
 
         client.DefaultRequestHeaders.Add("X-Test-Owner", "purge-proposal-owner");
         client.DefaultRequestHeaders.Add("X-Test-Auth-Time", DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             .ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var pointsResponse = await client.GetAsync("/v1/recovery/points");
+        Check(pointsResponse.StatusCode == HttpStatusCode.OK && pointsResponse.Headers.CacheControl?.Private == true &&
+            pointsResponse.Headers.CacheControl.NoStore &&
+            (await client.GetAsync($"/v1/recovery/sessions/{Guid.NewGuid():D}")).StatusCode == HttpStatusCode.NotFound,
+            "Authenticated operation status is private/no-store and unknown sessions fail closed.");
+        client.DefaultRequestHeaders.Remove("X-Test-Owner");
+        client.DefaultRequestHeaders.Add("X-Test-Owner","test-owner");
+        var available=await client.GetFromJsonAsync<RecoveryPointPage>("/v1/recovery/points")
+            ?? throw new InvalidOperationException("Expected signed point listing.");
+        var restoreRequest=new RecoveryRestoreRequest(available.Items.First().RecoveryPointId,new("library",null,null),"HTTP fixture request");
+        Check((await client.PostAsJsonAsync("/v1/recovery/sessions",restoreRequest)).StatusCode==HttpStatusCode.BadRequest,
+            "Restore requests require a bounded idempotency key.");
+        client.DefaultRequestHeaders.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+        var requested=await client.PostAsJsonAsync("/v1/recovery/sessions",restoreRequest);
+        var restoreSession=await requested.Content.ReadFromJsonAsync<RecoverySessionView>()
+            ?? throw new InvalidOperationException("Expected pending restore session.");
+        Check(requested.StatusCode==HttpStatusCode.Accepted && restoreSession.State=="requested" &&
+            requested.Headers.CacheControl?.Private==true && requested.Headers.CacheControl.NoStore,
+            "Recently authenticated restore requests enter private isolated pending state.");
+        var replay=await client.PostAsJsonAsync("/v1/recovery/sessions",restoreRequest);
+        Check(replay.StatusCode==HttpStatusCode.Accepted &&
+            (await replay.Content.ReadFromJsonAsync<RecoverySessionView>())?.SessionId==restoreSession.SessionId &&
+            (await client.PostAsJsonAsync("/v1/recovery/sessions",restoreRequest with { Reason="changed request" })).StatusCode==HttpStatusCode.Conflict &&
+            (await client.GetAsync($"/v1/recovery/sessions/{restoreSession.SessionId:D}")).StatusCode==HttpStatusCode.OK,
+            "HTTP retries preserve the original session and reject changed payloads.");
+        client.DefaultRequestHeaders.Remove("Idempotency-Key");
+        client.DefaultRequestHeaders.Remove("X-Test-Owner");
+        client.DefaultRequestHeaders.Add("X-Test-Owner","purge-proposal-owner");
+        Check((await client.GetAsync($"/v1/recovery/sessions/{restoreSession.SessionId:D}")).StatusCode==HttpStatusCode.NotFound,
+            "Foreign HTTP principals cannot discover another owner's restore session.");
         var created = await client.PostAsJsonAsync("/v1/recovery/purge/proposals",
             new RecoveryPurgeProposalRequest(assetId, null, "original"));
         Check(created.StatusCode == HttpStatusCode.Created,
@@ -152,7 +187,8 @@ internal static class RecoveryPurgeHttpChecks
                 "foreign-owner-working", default);
         }
         catch (Platform.Contracts.VersionControl.VersionControlProblem error)
-            when (error.Code == "recovery_purge_frozen") { foreignWorkingBlocked = true; }
+            when (error.Code == "recovery_purge_frozen")
+        { foreignWorkingBlocked = true; }
         Check(foreignWorkingBlocked,
             "A different owner cannot add a new version-graph reference to the frozen digest.");
 

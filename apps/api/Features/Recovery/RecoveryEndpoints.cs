@@ -9,6 +9,70 @@ public static class RecoveryEndpoints
 {
     public static void Map(WebApplication app)
     {
+        app.MapPost("/v1/recovery/sessions", async (HttpContext context, RecoveryRestoreRequest? request,
+            IServiceProvider services, CancellationToken cancellationToken) =>
+        {
+            context.Response.Headers.CacheControl = "private, no-store";
+            var service = services.GetService<RecoveryRestoreRequestService>();
+            var resolver = services.GetService<RecoveryOwnerResolver>();
+            if (service is null || resolver is null)
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            if (!HasRecentAuthentication(context.User, DateTimeOffset.UtcNow))
+                return Problem(context, StatusCodes.Status403Forbidden, "recent_authentication_required");
+            try
+            {
+                var owner = await resolver.ResolveAsync(context.User, cancellationToken);
+                if (owner is null) return Problem(context, StatusCodes.Status403Forbidden, "recovery_identity_unavailable");
+                var session = await service.RequestAsync(owner, request, context.Request.Headers["Idempotency-Key"].ToString(),
+                    context.Items[Platform.Api.Telemetry.PlatformTelemetry.OperationIdItemKey]?.ToString() ?? "op_unavailable",
+                    cancellationToken);
+                return Results.Accepted($"/v1/recovery/sessions/{session.SessionId:D}", session);
+            }
+            catch (RecoveryRestoreRequestException error) { return Problem(context, error.StatusCode, error.Code); }
+            catch (RecoveryUnavailableException) { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+            catch (Exception error) when (error is NpgsqlException or TimeoutException)
+            { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+        }).RequireAuthorization();
+
+        app.MapGet("/v1/recovery/points", async (HttpContext context, Guid? afterPointId,
+            IServiceProvider services, CancellationToken cancellationToken) =>
+        {
+            context.Response.Headers.CacheControl = "private, no-store";
+            var query = services.GetService<RecoveryOperationQueryService>();
+            var resolver = services.GetService<RecoveryOwnerResolver>();
+            if (query is null || resolver is null)
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            try
+            {
+                var owner = await resolver.ResolveAsync(context.User, cancellationToken);
+                if (owner is null) return Problem(context, StatusCodes.Status403Forbidden, "recovery_identity_unavailable");
+                return Results.Ok(await query.ListPointsAsync(owner, afterPointId, cancellationToken));
+            }
+            catch (RecoveryUnavailableException) { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+            catch (Exception error) when (error is NpgsqlException or TimeoutException)
+            { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+        }).RequireAuthorization();
+
+        app.MapGet("/v1/recovery/sessions/{sessionId:guid}", async (HttpContext context, Guid sessionId,
+            IServiceProvider services, CancellationToken cancellationToken) =>
+        {
+            context.Response.Headers.CacheControl = "private, no-store";
+            var query = services.GetService<RecoveryOperationQueryService>();
+            var resolver = services.GetService<RecoveryOwnerResolver>();
+            if (query is null || resolver is null)
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            try
+            {
+                var owner = await resolver.ResolveAsync(context.User, cancellationToken);
+                if (owner is null) return Problem(context, StatusCodes.Status403Forbidden, "recovery_identity_unavailable");
+                var session = await query.GetSessionAsync(owner, sessionId, cancellationToken);
+                return session is null ? Problem(context, StatusCodes.Status404NotFound, "recovery_session_not_found") : Results.Ok(session);
+            }
+            catch (RecoveryUnavailableException) { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+            catch (Exception error) when (error is NpgsqlException or TimeoutException)
+            { return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable"); }
+        }).RequireAuthorization();
+
         app.MapGet("/v1/recovery/health", async (HttpContext context, IConfiguration configuration,
             IServiceProvider services, CancellationToken cancellationToken) =>
         {
