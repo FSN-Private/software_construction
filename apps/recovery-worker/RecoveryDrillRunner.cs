@@ -42,6 +42,13 @@ internal static class RecoveryDrillRunner
         using var kms = new AmazonKeyManagementServiceClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
+        var approvalSha256 = accessInputs is null ? null : RecoveryEvidenceCodec.Hash(accessInputs.Approval);
+        var completion = await RecoveryDrillCompletion.ReadAsync(s3, configuration, runId, signer.Trust, cancellationToken, approvalSha256);
+        if (completion is not null)
+        {
+            Console.WriteLine($"recovery_drill_completed_replay run={runId:D} point={completion.PointId:D} state=restore_validated_unqualified");
+            return;
+        }
         var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
             configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
             configuration.Required("LibraryId"), signer.Trust, cancellationToken);
@@ -150,6 +157,10 @@ internal static class RecoveryDrillRunner
                 }
             }
 
+            // Sign completion only after API stop and clone discard both succeed.
+            // Its deterministic retained key also survives an unknown control write.
+            await RecoveryDrillCompletion.PersistAsync(s3, configuration, runId, latest.Pointer.PointId,
+                candidateEvidence ?? throw new RecoveryWorkerException("candidate_evidence_missing"), signer, cancellationToken, approvalSha256);
             // This marker records completed restore work, never a healthy qualification.
             await dynamo.PutItemAsync(new PutItemRequest
             {
