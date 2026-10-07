@@ -495,6 +495,7 @@ internal static class CaptureRunner
         "recovery_change_watermarks", "recovery_change_ledger", "recovery_sessions", "recovery_validation_revisions",
         "recovery_materialization_receipts", "recovery_holds", "media_purge_tombstones", "recovery_purge_proposals",
         "recovery_purge_journals", "recovery_purge_completions", "recovery_purge_objects", "recovery_identity_mappings",
+        "recovery_candidate_sessions", "recovery_candidate_materialization_receipts", "recovery_candidate_validation_revisions",
         "recovery_audit_state", "recovery_audit_events", "recovery_audit_checkpoints"
     ];
 
@@ -545,6 +546,9 @@ internal static class CaptureRunner
                 "recovery_point_components" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_point_components t JOIN recovery_points p ON p.point_id=t.point_id WHERE p.owner_id=$1 AND p.library_id=$2",
                 "recovery_validation_revisions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_validation_revisions t JOIN recovery_sessions s ON s.session_id=t.session_id WHERE s.owner_id=$1 AND s.library_id=$2",
                 "recovery_materialization_receipts" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_materialization_receipts t JOIN recovery_sessions s ON s.session_id=t.session_id WHERE s.owner_id=$1 AND s.library_id=$2",
+                "recovery_candidate_sessions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_candidate_sessions t WHERE t.owner_id=$1 AND t.library_id=$2",
+                "recovery_candidate_materialization_receipts" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_candidate_materialization_receipts t JOIN recovery_candidate_sessions c ON c.candidate_id=t.candidate_id WHERE c.owner_id=$1 AND c.library_id=$2",
+                "recovery_candidate_validation_revisions" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_candidate_validation_revisions t JOIN recovery_candidate_sessions c ON c.candidate_id=t.candidate_id WHERE c.owner_id=$1 AND c.library_id=$2",
                 "recovery_purge_objects" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM recovery_purge_objects t JOIN recovery_purge_journals j ON j.operation_id=t.operation_id WHERE j.owner_id=$1 AND j.library_id=$2",
                 "vc_commit_parents" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_commit_parents t JOIN vc_commits c ON c.id=t.commit_id WHERE c.owner_id=$1 AND c.library_id=$2",
                 "vc_commit_entries" => "SELECT count(*),coalesce(sum(pg_column_size(t)),0) FROM vc_commit_entries t JOIN vc_commits c ON c.id=t.commit_id WHERE c.owner_id=$1 AND c.library_id=$2",

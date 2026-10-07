@@ -9,18 +9,6 @@ using Platform.Recovery;
 
 namespace Platform.Api.Features.Recovery;
 
-/// <summary>The exact recovery-owner mapping fields independently approved by the recovery MFA role.</summary>
-public sealed record RecoveryIdentityApprovalV1(
-    int SchemaVersion,
-    Guid MappingId,
-    string Issuer,
-    string Audience,
-    string Subject,
-    string PreservedOwnerId,
-    string ApprovedBy,
-    string ApprovalKeyId,
-    DateTimeOffset ApprovedAtUtc);
-
 public sealed class RecoveryOwnerResolver(NpgsqlDataSource source, IConfiguration configuration, TimeProvider? clock = null)
 {
     private readonly ConditionalWeakTable<ClaimsPrincipal, VerifiedOwner> verifiedPrincipals = new();

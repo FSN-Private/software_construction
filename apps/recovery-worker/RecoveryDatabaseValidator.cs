@@ -19,11 +19,29 @@ internal static class RecoveryDatabaseValidator
         VerifiedRecoveryAuditGenesis auditGenesis,
         CancellationToken cancellationToken)
     {
+        _ = await ValidateSchemaAndGraphWithAuditHeadAsync(connection, transaction, ownerId, libraryId,
+            migrationDirectory, expectedMigrationDigest, recoveryAccountId, auditTrust, auditGenesis,
+            expectedAuditHead: null, cancellationToken);
+    }
+
+    internal static async Task<RecoveryAuditHeadV1> ValidateSchemaAndGraphWithAuditHeadAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string ownerId,
+        string libraryId,
+        string migrationDirectory,
+        string expectedMigrationDigest,
+        string recoveryAccountId,
+        RecoverySigningTrust auditTrust,
+        VerifiedRecoveryAuditGenesis auditGenesis,
+        RecoveryAuditHeadRequirementV1? expectedAuditHead,
+        CancellationToken cancellationToken)
+    {
         await ValidateSchemaAsync(connection, transaction, cancellationToken);
         await ValidateMigrationLedgerAsync(connection, transaction, migrationDirectory, expectedMigrationDigest,
             cancellationToken);
-        await ValidateAuditChainAsync(connection, transaction, recoveryAccountId, auditTrust, auditGenesis,
-            cancellationToken);
+        var auditHead = await ValidateAuditChainAsync(connection, transaction, recoveryAccountId, auditTrust,
+            auditGenesis, expectedAuditHead, cancellationToken);
         await ValidateCanonicalCommitsAsync(connection, transaction, ownerId, libraryId, cancellationToken);
         await RequireNoRowsAsync(connection, transaction, """
             SELECT 1
@@ -96,6 +114,8 @@ internal static class RecoveryDatabaseValidator
               AND (o.sha256 IS NULL OR o.category<>'xmp' OR o.integrity_state<>'authoritative')
             LIMIT 1
             """, ownerId, libraryId, "restored_version_graph_invalid", cancellationToken);
+
+        return auditHead;
     }
 
     private static async Task ValidateSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
@@ -142,13 +162,16 @@ internal static class RecoveryDatabaseValidator
             throw new RecoveryWorkerException("restored_migration_ledger_mismatch");
     }
 
-    private static async Task ValidateAuditChainAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+    private static async Task<RecoveryAuditHeadV1> ValidateAuditChainAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         string recoveryAccountId, RecoverySigningTrust trust, VerifiedRecoveryAuditGenesis genesis,
+        RecoveryAuditHeadRequirementV1? expectedHead,
         CancellationToken cancellationToken)
     {
         if (genesis.Payload.Sequence != 0 || genesis.Payload.HeadEventSha256 != new string('0', 64) ||
             genesis.SigningKeyId != trust.KeyId || genesis.SigningPublicKeySha256 != trust.PublicKeySha256)
             throw new RecoveryWorkerException("recovery_audit_genesis_invalid");
+        try { expectedHead?.Validate(); }
+        catch (InvalidDataException exception) { throw new RecoveryWorkerException("recovery_audit_head_requirement_invalid", exception); }
 
         long stateSequence;
         string stateHash;
@@ -166,6 +189,7 @@ internal static class RecoveryDatabaseValidator
 
         long expectedSequence = 1;
         var previousHash = new string('0', 64);
+        var verifiedHeads = new Dictionary<long, string> { [0] = previousHash };
         await using (var eventsCommand = new NpgsqlCommand("""
             SELECT sequence,event_id,owner_id,library_id,event_type,outcome,safe_resource_id,
                    occurred_at_utc,previous_sha256,canonical_event,event_sha256,signing_key_id,signature
@@ -207,12 +231,27 @@ internal static class RecoveryDatabaseValidator
                 catch (InvalidDataException exception) { throw new RecoveryWorkerException("recovery_audit_signature_invalid", exception); }
 
                 previousHash = rowEventHash;
+                verifiedHeads.Add(sequence, rowEventHash);
                 expectedSequence = checked(expectedSequence + 1);
             }
         }
         var finalSequence = expectedSequence - 1;
         if (stateSequence != finalSequence || stateHash != previousHash)
             throw new RecoveryWorkerException("recovery_audit_state_head_mismatch");
+        if (expectedHead is { } requirement)
+        {
+            try { requirement.RequireHeadsInChain(verifiedHeads); }
+            catch (InvalidDataException exception)
+            {
+                var code = exception.Message switch
+                {
+                    "recovery_audit_minimum_not_in_chain" => "recovery_audit_minimum_not_in_chain",
+                    "recovery_audit_previous_head_not_in_chain" => "recovery_audit_previous_head_not_in_chain",
+                    _ => "recovery_audit_head_requirement_invalid"
+                };
+                throw new RecoveryWorkerException(code, exception);
+            }
+        }
 
         await using var checkpoints = new NpgsqlCommand("""
             SELECT c.checkpoint_id,c.sequence,c.event_sha256,c.signer_key_id,c.signature,
@@ -258,6 +297,8 @@ internal static class RecoveryDatabaseValidator
                 throw new RecoveryWorkerException("recovery_audit_checkpoint_signature_invalid", exception);
             }
         }
+
+        return new RecoveryAuditHeadV1(finalSequence, previousHash);
     }
 
     private static async Task ValidateCanonicalCommitsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,

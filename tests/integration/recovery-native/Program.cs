@@ -230,7 +230,7 @@ var manifest = new RecoveryPointManifestV1(1, Guid.NewGuid(), Guid.NewGuid(), ow
     [], objects, counts.Select(pair => new RecoveryClassCoverage(pair.Key, pair.Value.ItemCount, pair.Value.ByteLength)).ToArray());
 var recovery = new RecoveryDrillRunner.RecoveryDatabaseConnection("recovery-postgres", 5432, "postgres", password,
     "/fixtures/ca.pem", connectionString);
-const string targetName = "native_recovered";
+const string targetName = "recovery_drill_native";
 Task ValidateRecovered() => RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, targetName, manifest,
     auditTrust, genesis, migrationDigest, "/migrations", recoveryAccountId, ct);
 await RecoveryDrillRunner.CreateDatabaseAsync(recovery, targetName, ct);
@@ -249,6 +249,12 @@ try
     var originalEventSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_events WHERE sequence=1", ct))!;
     var originalCheckpointSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_checkpoints WHERE sequence=2", ct))!;
     var originalHead = (string)(await Scalar(target, "SELECT last_event_sha256 FROM recovery_audit_state WHERE singleton=true", ct))!;
+    var firstEventHead = (string)(await Scalar(target, "SELECT event_sha256 FROM recovery_audit_events WHERE sequence=1", ct))!;
+    var trustedAuditHeads = new RecoveryAuditHeadRequirementV1(new(1, firstEventHead.Trim()), new(2, originalHead.Trim()));
+    Task ValidateTrustedAuditHeads() => RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(recovery,
+        targetName, manifest, auditTrust, genesis, migrationDigest, "/migrations", recoveryAccountId,
+        trustedAuditHeads, configuration: null, ct);
+    await ValidateTrustedAuditHeads();
     var originalMigrationSha = (string)(await Scalar(target, "SELECT sha256 FROM platform_schema_migrations WHERE id='022_backup_recovery.sql'", ct))!;
     await Execute(target, "ALTER TABLE recovery_audit_events DISABLE TRIGGER ALL; ALTER TABLE recovery_audit_checkpoints DISABLE TRIGGER ALL", ct);
     foreach (var (badSql, resetSql, originalValue, safeCode) in new (string, string, object, string)[]
@@ -268,7 +274,40 @@ try
         await using var reset = IngestDb.Command(target, resetSql, originalValue);
         await reset.ExecuteNonQueryAsync(ct);
     }
-    await Execute(target, "ALTER TABLE recovery_audit_events ENABLE TRIGGER ALL; ALTER TABLE recovery_audit_checkpoints ENABLE TRIGGER ALL", ct);
+    // Remove a valid signed tail and replace the database's self-reported head with
+    // its valid signed prefix. A separately trusted recovery head must still reject it.
+    await Execute(target, """
+        CREATE TEMP TABLE saved_audit_tail AS SELECT * FROM recovery_audit_events WHERE sequence=2;
+        CREATE TEMP TABLE saved_audit_checkpoint AS SELECT * FROM recovery_audit_checkpoints WHERE sequence=2;
+        DELETE FROM recovery_audit_checkpoints WHERE sequence=2;
+        DELETE FROM recovery_audit_events WHERE sequence=2;
+        UPDATE recovery_audit_state SET last_sequence=1,
+            last_event_sha256=(SELECT event_sha256 FROM recovery_audit_events WHERE sequence=1) WHERE singleton=true;
+        """, ct);
+    await RejectCode(ValidateTrustedAuditHeads, "recovery_audit_previous_head_not_in_chain");
+    await Execute(target, """
+        INSERT INTO recovery_audit_events SELECT * FROM saved_audit_tail;
+        INSERT INTO recovery_audit_checkpoints SELECT * FROM saved_audit_checkpoint;
+        UPDATE recovery_audit_state SET last_sequence=2,
+            last_event_sha256=(SELECT event_sha256 FROM recovery_audit_events WHERE sequence=2) WHERE singleton=true;
+        DROP TABLE saved_audit_tail,saved_audit_checkpoint;
+        ALTER TABLE recovery_audit_events ENABLE TRIGGER ALL;
+        ALTER TABLE recovery_audit_checkpoints ENABLE TRIGGER ALL;
+        """, ct);
+    await ValidateTrustedAuditHeads();
+    await ValidateRecovered();
+
+    await using (var originalVersion = IngestDb.Command(target, "SELECT storage_version FROM content_objects WHERE sha256=$1", sha))
+    {
+        var storedVersion = (string)(await originalVersion.ExecuteScalarAsync(ct))!;
+        await using var corruptVersion = IngestDb.Command(target,
+            "UPDATE content_objects SET storage_version=$1 WHERE sha256=$2", "tampered-version", sha);
+        await corruptVersion.ExecuteNonQueryAsync(ct);
+        await RejectCode(ValidateRecovered, "restored_object_closure_mismatch");
+        await using var resetVersion = IngestDb.Command(target,
+            "UPDATE content_objects SET storage_version=$1 WHERE sha256=$2", storedVersion, sha);
+        await resetVersion.ExecuteNonQueryAsync(ct);
+    }
     await ValidateRecovered();
 
     foreach (var (table, column, badValue) in new[]
@@ -292,6 +331,8 @@ try
         await Execute(target, $"ALTER TABLE {table} ENABLE TRIGGER ALL", ct);
     }
     await ValidateRecovered();
+
+    await CandidateChecks(target, manifest, auditRsa, auditTrust, genesis, trustedAuditHeads, migrationDigest, recoveryAccountId, ct);
 
     await using (var corruption = new NpgsqlCommand("UPDATE vc_commit_parents SET parent_id=$1 WHERE commit_id=$2", target))
     {
@@ -378,6 +419,185 @@ static async Task RejectCode(Func<Task> action, string safeCode)
     catch (RecoveryWorkerException exception) when (exception.SafeCode == safeCode) { return; }
     throw new InvalidOperationException("Expected native rejection: " + safeCode);
 }
+static async Task CandidateChecks(NpgsqlConnection connection, RecoveryPointManifestV1 manifest,
+    RSA auditRsa, RecoverySigningTrust auditTrust, VerifiedRecoveryAuditGenesis genesis, RecoveryAuditHeadRequirementV1 heads,
+    string migrationDigest, string recoveryAccountId, CancellationToken ct)
+{
+    var id = Guid.NewGuid();
+    var fixtureHash = new string('a', 64);
+    manifest = manifest with { Components = [
+        new("database.dump",RecoveryDataClass.DatabaseSnapshot,"s3://native-capture/database.dump","dump-v1",fixtureHash,1),
+        new("objects.json",RecoveryDataClass.ObjectInventory,"s3://native-capture/objects.json","inventory-v1",fixtureHash,1),
+        new("release-bindings.json",RecoveryDataClass.ReleaseArtifact,"s3://native-capture/release.json","release-v1",fixtureHash,1)] };
+    var digest = manifest.Digest();
+    var settings = new Dictionary<string,string>
+    {
+        ["RecoveryOnly"]="true",["TargetBucket"]="isolated-native-target",["SourceBucket"]="native-source",
+        ["DestinationBucket"]="recovery-payload",["EvidenceBucket"]="recovery-evidence",
+        ["SourceAccountId"]="111122223333",["SourceRegion"]="ap-southeast-1",
+        ["DestinationAccountId"]=recoveryAccountId,["DestinationRegion"]="ap-southeast-2",
+        ["ConfigurationDigest"]=fixtureHash,["ApiBuildDigest"]=fixtureHash,
+        ["OwnerUserPoolIssuer"]="https://native-pool.example/issuer",["OwnerUserPoolClientId"]="native-client"
+    };
+    var old = settings.Keys.ToDictionary(key=>key,key=>Environment.GetEnvironmentVariable("Recovery__"+key));
+    foreach(var (key,value) in settings) Environment.SetEnvironmentVariable("Recovery__"+key,value);
+    try
+    {
+    var configuration = new RecoveryWorkerConfiguration("drill");
+    var now = DateTimeOffset.UtcNow;
+    var pointer = new CopyPointer(manifest.RecoveryPointId,manifest.CaptureId,manifest.OwnerId,manifest.LibraryId,
+        "111122223333","ap-southeast-1",recoveryAccountId,"ap-southeast-2","native-capture","manifest","v1",digest,
+        "recovery-evidence","manifest","v1",digest,"checkpoint","v1",digest,1,now,"access_incomplete");
+    var point = new VerifiedCopiedPoint(pointer,manifest,null,null!,[],digest,digest,null);
+    var auditPayload = new RecoveryAuditHeadProofPayloadV1(1,manifest.RecoveryPointId,manifest.CaptureId,manifest.OwnerId,
+        manifest.LibraryId,digest,digest,manifest.SnapshotCutoffUtc,manifest.SnapshotLsn,heads.PreviouslyVerified!,
+        heads.Minimum,null,genesis.ArtifactSha256,now,configuration.WorkerBuildDigest);
+    var auditBytes = RecoveryAuditLedgerCodec.SerializeAuditHeadProofPayload(auditPayload);
+    var auditEnvelope = RecoveryAuditLedgerCodec.CreateAuditHeadProofEnvelope(auditPayload,"native-fixture",
+        new(auditTrust.KeyId,auditTrust.PublicKeySha256,auditRsa.SignHash(SHA256.HashData(auditBytes),
+            HashAlgorithmName.SHA256,RSASignaturePadding.Pss)));
+    var proof = RecoveryAuditLedgerCodec.VerifyAuditHeadProof(auditEnvelope,auditTrust);
+    await RecoveryCandidateStore.CreateAsync(connection,id,connection.Database!,configuration,point,proof,ct);
+    await RecoveryCandidateStore.CreateAsync(connection,id,connection.Database!,configuration,point,proof,ct);
+    Environment.SetEnvironmentVariable("Recovery__ConfigurationDigest",new string('b',64));
+    await RejectCode(()=>RecoveryCandidateStore.CreateAsync(connection,id,connection.Database!,configuration,point,proof,ct),
+        "candidate_replay_binding_mismatch");
+    Environment.SetEnvironmentVariable("Recovery__ConfigurationDigest",fixtureHash);
+    async Task RejectSql(string sql)
+    {
+        try { await Execute(connection, sql, ct); }
+        catch (PostgresException exception) when (exception.SqlState == "P0001") { return; }
+        throw new InvalidOperationException("Candidate mutation was accepted: " + sql);
+    }
+    await RejectSql($"UPDATE recovery_candidate_sessions SET owner_id='foreign' WHERE candidate_id='{id:D}'");
+    await RejectSql($"UPDATE recovery_candidate_sessions SET state='owner_access_verified' WHERE candidate_id='{id:D}'");
+    var receipts = manifest.Objects.Select(item => new RecoveryMaterializedObjectV1("native-source", item.SourceKey,
+        item.SourceVersionId, item.Sha256, item.ByteLength, "isolated-native-target", "sha256/" + item.Sha256,
+        "target-version-" + item.Sha256)).ToArray();
+    await RecoveryCandidateStore.RebindAsync(connection, id, receipts, ct);
+    await RecoveryCandidateStore.RebindAsync(connection, id, receipts, ct);
+    var validation = await RecoveryDrillRunner.ValidateMaterializedCandidateAsync(connection, manifest, receipts,
+        "native-source", "isolated-native-target", auditTrust, genesis, "/migrations", migrationDigest,
+        recoveryAccountId, heads, configuration: null, ct);
+    await using (var corrupt = IngestDb.Command(connection,
+        "UPDATE content_objects SET storage_version='wrong-target-version' WHERE sha256=$1", receipts[0].Sha256))
+        await corrupt.ExecuteNonQueryAsync(ct);
+    await RejectCode(() => RecoveryDrillRunner.ValidateMaterializedCandidateAsync(connection, manifest, receipts,
+        "native-source", "isolated-native-target", auditTrust, genesis, "/migrations", migrationDigest,
+        recoveryAccountId, heads, configuration: null, ct), "candidate_materialized_closure_mismatch");
+    await using (var reset = IngestDb.Command(connection,
+        "UPDATE content_objects SET storage_version=$1 WHERE sha256=$2", receipts[0].DestinationVersionId, receipts[0].Sha256))
+        await reset.ExecuteNonQueryAsync(ct);
+    await RejectCode(() => RecoveryCandidateStore.RebindAsync(connection, id,
+        receipts.Select((item, index) => index == 0 ? item with { DestinationVersionId = "substituted" } : item).ToArray(), ct),
+        "candidate_receipt_replay_mismatch");
+    await RejectSql($"UPDATE recovery_candidate_sessions SET state='owner_access_pending' WHERE candidate_id='{id:D}'");
+    await RecoveryCandidateStore.RecordValidationAsync(connection, id, digest, digest, validation, ct);
+    await RecoveryCandidateStore.RecordValidationAsync(connection, id, digest, digest, validation, ct);
+    await RejectCode(() => RecoveryCandidateStore.RecordValidationAsync(connection, id, digest, digest, new string('f', 64), ct),
+        "candidate_validation_replay_mismatch");
+    await RejectSql($"DELETE FROM recovery_candidate_materialization_receipts WHERE candidate_id='{id:D}'");
+    await RejectSql($"DELETE FROM recovery_candidate_validation_revisions WHERE candidate_id='{id:D}'");
+    Check((string?)await Scalar(connection, $"SELECT state FROM recovery_candidate_sessions WHERE candidate_id='{id:D}'", ct)
+        == "owner_access_pending", "Candidate must remain unqualified without signed owner proof.");
+    var approvedAt = now.AddTicks(-(now.Ticks%10));
+    var identity = new RecoveryIdentityApprovalV1(1,Guid.NewGuid(),settings["OwnerUserPoolIssuer"],settings["OwnerUserPoolClientId"],
+        "native-recovery-subject",manifest.OwnerId,"native-independent-owner",auditTrust.KeyId,approvedAt);
+    var identityArtifact = RecoveryEvidenceCodec.SerializeCanonical(new RecoveryIdentityApprovalArtifactV1(identity,
+        Convert.ToBase64String(auditRsa.SignData(RecoveryEvidenceCodec.SerializeCanonical(identity),HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pss))));
+    await RecoveryCandidateIdentity.InstallAsync(connection,id,identityArtifact,auditTrust,configuration,ct);
+    await RecoveryCandidateIdentity.InstallAsync(connection,id,identityArtifact,auditTrust,configuration,ct);
+    Check(Convert.ToInt64(await Scalar(connection,$"SELECT count(*) FROM recovery_identity_mappings WHERE mapping_id='{identity.MappingId:D}'",ct))==1,
+        "Signed identity installation must replay without duplication.");
+    await CandidateArtifactChecks.RunAsync(connection,configuration,id,point,receipts,auditRsa,auditTrust,ct);
+    await CandidateRuntimeChecks(connection,id,ct);
+    await using var restore = IngestDb.Command(connection, """
+        UPDATE content_objects c SET storage_key=r.source_key,storage_version=r.source_version_id
+        FROM recovery_candidate_materialization_receipts r WHERE r.candidate_id=$1 AND c.sha256=r.sha256
+        """, id);
+    await restore.ExecuteNonQueryAsync(ct);
+    await FrozenCaptureChecks(connection,configuration,manifest,ct);
+    }
+    finally { foreach(var (key,value) in old) Environment.SetEnvironmentVariable("Recovery__"+key,value); }
+}
+
+static async Task CandidateRuntimeChecks(NpgsqlConnection connection, Guid candidateId, CancellationToken ct)
+{
+    const string runtimePassword = "NativeFixturePasswordOnly1234567890";
+    await RecoveryCandidateRuntimeDatabase.ProvisionAsync(connection,candidateId,"platform_runtime",runtimePassword,ct);
+    await RecoveryCandidateRuntimeDatabase.ProvisionAsync(connection,candidateId,"platform_runtime",runtimePassword,ct);
+    var runtimeString = new NpgsqlConnectionStringBuilder(connection.ConnectionString)
+        { Username="platform_runtime",Password=runtimePassword }.ConnectionString;
+    await using var runtime = new NpgsqlConnection(runtimeString);
+    await runtime.OpenAsync(ct);
+    Check((string?)await Scalar(runtime,"SHOW default_transaction_read_only",ct)=="on",
+        "Every API login must start read-only.");
+    Check(Convert.ToInt64(await Scalar(runtime,"SELECT count(*) FROM recovery_identity_mappings",ct))>0,
+        "Runtime login must read installed mappings.");
+    await using(var set = new NpgsqlCommand("SET default_transaction_read_only=off",runtime))
+        await set.ExecuteNonQueryAsync(ct);
+    foreach(var sql in new[] { "UPDATE assets SET state=state", "CREATE TABLE public.runtime_escape(id integer)",
+        "SET ROLE postgres", "DELETE FROM recovery_candidate_sessions" })
+    {
+        try { await using var denied=new NpgsqlCommand(sql,runtime); await denied.ExecuteNonQueryAsync(ct); }
+        catch(PostgresException error) when(error.SqlState=="42501") { continue; }
+        throw new InvalidOperationException("Runtime privilege escape accepted: "+sql);
+    }
+    await using(var unsafeGrant=new NpgsqlCommand("GRANT UPDATE ON assets TO platform_runtime",connection))
+        await unsafeGrant.ExecuteNonQueryAsync(ct);
+    await RejectCode(()=>RecoveryCandidateRuntimeDatabase.ProvisionAsync(connection,candidateId,
+        "platform_runtime",runtimePassword,ct),"candidate_runtime_role_unsafe");
+    await using(var revoke=new NpgsqlCommand("REVOKE UPDATE ON assets FROM platform_runtime",connection))
+        await revoke.ExecuteNonQueryAsync(ct);
+}
+
+static async Task FrozenCaptureChecks(NpgsqlConnection connection, RecoveryWorkerConfiguration configuration,
+    RecoveryPointManifestV1 manifest, CancellationToken ct)
+{
+    var original=manifest.Objects.First(item=>item.DataClass==RecoveryDataClass.OriginalImage);
+    var asset=original.LogicalReferences.First(item=>item.AssetId is not null).AssetId!.Value;
+    var now=DateTimeOffset.UtcNow;
+    now=now.AddTicks(-(now.Ticks%10));
+    var proposal=RecoveryPurgeProposalV1.Create(Guid.NewGuid(),Guid.NewGuid(),manifest.OwnerId,manifest.LibraryId,
+        asset,null,"original",original.Sha256,1,1,now,now,now.AddHours(1));
+    var freeze=new RecoveryPurgeFreezeAcknowledgementV1(1,proposal.OperationId,proposal.EventId,proposal.OwnerId,
+        proposal.LibraryId,asset,null,"original",original.Sha256,1,1,proposal.PlanDigest,proposal.OwnerId,now,now);
+    var freezeBytes=RecoveryEvidenceCodec.SerializeCanonical(freeze);
+    await using var transaction=await connection.BeginTransactionAsync(ct);
+    await using (var seed=IngestDb.Command(connection,"""
+        INSERT INTO recovery_purge_proposals(operation_id,event_id,owner_id,library_id,asset_id,category,content_sha256,
+            expected_lifecycle_version,lifecycle_generation,proposed_at_utc,eligible_at_utc,expires_at_utc,proposal_digest,
+            canonical_proposal,phase,primary_actor,reason_code)
+        VALUES($1,$2,$3,$4,$5,'original',$6,1,1,$7,$7,$8,$9,$10,'executing',$3,'native-freeze');
+        INSERT INTO recovery_purge_freezes(operation_id,event_id,owner_id,library_id,asset_id,category,content_sha256,
+            expected_lifecycle_version,lifecycle_generation,proposal_digest,freeze_ack_sha256,canonical_freeze_ack,
+            frozen_by,auth_time_utc,frozen_at_utc)
+        VALUES($1,$2,$3,$4,$5,'original',$6,1,1,$9,$11,$12,$3,$7,$7)
+        """,proposal.OperationId,proposal.EventId,proposal.OwnerId,proposal.LibraryId,asset,original.Sha256,now,
+        proposal.ExpiresAtUtc,proposal.PlanDigest,RecoveryEvidenceCodec.SerializeCanonical(proposal),
+        RecoveryEvidenceCodec.Hash(freezeBytes),freezeBytes))
+    {
+        seed.Transaction=transaction;
+        await seed.ExecuteNonQueryAsync(ct);
+    }
+    var omissions=await RecoveryPurgeCapture.ReadAuthorizedOmissionsAsync(connection,transaction,configuration,
+        manifest.OwnerId,manifest.LibraryId,DateTimeOffset.UtcNow,ct);
+    Check(omissions.Count==0,"Reversible freeze must permit a full post-freeze capture without authorizing omissions.");
+    var closure=await CaptureRunner.ReadObjectClosureAsync(connection,transaction,"native-source",manifest.OwnerId,
+        manifest.LibraryId,omissions,ct);
+    RecoveryObjectClosureValidator.RequireExactMatch(manifest.Objects,closure);
+    await using (var corrupt=IngestDb.Command(connection,"UPDATE recovery_purge_freezes SET freeze_ack_sha256=repeat('f',64) WHERE operation_id=$1",
+        proposal.OperationId))
+    {
+        corrupt.Transaction=transaction;
+        await corrupt.ExecuteNonQueryAsync(ct);
+    }
+    await RejectCode(()=>RecoveryPurgeCapture.ReadAuthorizedOmissionsAsync(connection,transaction,configuration,
+        manifest.OwnerId,manifest.LibraryId,DateTimeOffset.UtcNow,ct),"purge_freeze_ack_binding_invalid");
+    await transaction.RollbackAsync(ct);
+}
+
 static async Task RejectTls(string connectionString, CancellationToken ct)
 {
     await using var connection = new NpgsqlConnection(connectionString);

@@ -6,6 +6,8 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.KeyManagementService;
 using Amazon.S3;
+using Amazon.SecretsManager;
+using Amazon.SQS;
 using Platform.Recovery;
 
 namespace Platform.Recovery.Worker;
@@ -28,41 +30,134 @@ internal static class RecoveryVerifierRunner
         using var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(region));
         using var dynamo = new AmazonDynamoDBClient(Amazon.RegionEndpoint.GetBySystemName(region));
         using var kms = new AmazonKeyManagementServiceClient(Amazon.RegionEndpoint.GetBySystemName(region));
+        using var sqs = new AmazonSQSClient(Amazon.RegionEndpoint.GetBySystemName(configuration.RequiredRegion("SourceRegion")));
+        using var secrets = new AmazonSecretsManagerClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
-        var copies = await ReadCopiedPointsAsync(dynamo, configuration.Required("ControlTableName"),
+        var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
+            configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
+            configuration.Required("LibraryId"), signer.Trust, cancellationToken);
+
+        var latestMarker = await RecoveryVerificationPublisher.ReadOwnerMarkerAsync(dynamo, configuration,
             configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
-        if (copies.Count == 0) throw new RecoveryWorkerException("recovery_copy_missing");
-
-        // Copy completion can arrive out of order. Load the signed source manifests
-        // before selecting a point so selection follows the database snapshot order,
-        // not the wall clock at which S3 copying happened to finish.
-        var candidates = new List<(CopyPointer Pointer, RecoveryPointManifestV1 Manifest)>();
-        foreach (var copy in copies)
+        var auditRequirement = RecoveryVerificationPublisher.ReadAuditHeadRequirement(configuration, latestMarker);
+        var auditGenesis = await ReadAuditGenesisAsync(configuration, s3, signer.Trust, cancellationToken);
+        var scratchDirectory = configuration.Optional("ScratchDirectory") ?? Path.Combine(Path.GetTempPath(), "recovery-verify");
+        Directory.CreateDirectory(scratchDirectory);
+        var runDirectory = Path.Combine(scratchDirectory, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(runDirectory);
+        try
         {
-            var source = await ReadSourceManifestAsync(s3, copy, signer.Trust, cancellationToken);
-            candidates.Add((copy, source));
-        }
-        var latestByScope = candidates
-            .Where(item => (configuration.Optional("OwnerId") is null || item.Pointer.OwnerId == configuration.Optional("OwnerId")) &&
-                           (configuration.Optional("LibraryId") is null || item.Pointer.LibraryId == configuration.Optional("LibraryId")))
-            .GroupBy(item => ScopeHash(item.Pointer.OwnerId, item.Pointer.LibraryId), StringComparer.Ordinal)
-            .Select(group => SelectLatest(group))
-            .ToArray();
-        if (latestByScope.Length == 0) throw new RecoveryWorkerException("recovery_copy_scope_missing");
+            var database = await RecoveryDrillRunner.ReadRecoveryDatabaseAsync(configuration, secrets,
+                runDirectory, cancellationToken);
+            var pgRestore = configuration.Optional("PgRestorePath") ?? "pg_restore";
+            await CaptureRunner.RequirePostgres18Async(pgRestore, cancellationToken);
+            var completed = 0;
+            long verifiedItems = 0;
+            foreach (var candidate in new[] { latest })
+            {
+                var point = await VerifyPointAsync(configuration, s3, candidate.Pointer, signer.Trust,
+                    cancellationToken, verifyDatabaseSnapshotBytes: false);
+                await VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
+                verifiedItems = checked(verifiedItems + point.Receipts.Count);
+                var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
+                    receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString())
+                    ?? throw new RecoveryWorkerException("database_snapshot_receipt_missing");
+                var dumpPath = Path.Combine(runDirectory, $"{point.Pointer.PointId:N}.dump");
+                await RecoveryDrillRunner.DownloadExactFileAsync(s3, dumpReceipt, dumpPath, cancellationToken);
+                await RecoveryDrillRunner.RunPostgresToolAsync(pgRestore, ["--list", dumpPath], database, cancellationToken);
 
-        long verifiedItems = 0;
-        foreach (var point in latestByScope)
+                var scratchDatabase = "recovery_verify_" + point.Pointer.PointId.ToString("N");
+                await RecoveryDrillRunner.CreateDatabaseAsync(database, scratchDatabase, cancellationToken);
+                try
+                {
+                    var restoreArgs = new[]
+                    {
+                        "--exit-on-error", "--no-owner", "--no-acl", "--dbname", scratchDatabase,
+                        "--host", database.Host, "--port", database.Port.ToString(CultureInfo.InvariantCulture),
+                        "--username", database.Username, dumpPath
+                    };
+                    await RecoveryDrillRunner.RunPostgresToolAsync(pgRestore, restoreArgs, database, cancellationToken);
+                    var auditHead = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database,
+                        scratchDatabase, point.SourceManifest, signer.Trust, auditGenesis,
+                        configuration.RequiredHash("MigrationDigest"),
+                        configuration.Optional("MigrationDirectory") ?? "/app/migrations", expectedAccount,
+                        auditRequirement, configuration, cancellationToken);
+                    await RecoveryAuditHeadProofStore.PersistAsync(dynamo, configuration, signer, point,
+                        auditHead, auditRequirement, auditGenesis, cancellationToken);
+                    completed++;
+                    if (point.OwnerAccess is null)
+                    {
+                        Console.WriteLine($"recovery_verification_validated_unqualified point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} reason=owner_access_pending");
+                        continue;
+                    }
+                    await RecoveryVerificationPublisher.PublishAsync(dynamo, sqs, configuration, signer,
+                        point, auditHead, cancellationToken);
+                    Console.WriteLine($"recovery_verification_published point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} receipts={point.Receipts.Count}");
+                }
+                finally
+                {
+                    await RecoveryDrillRunner.DropDatabaseAsync(database, scratchDatabase, cancellationToken);
+                }
+            }
+            RecoveryWorkerMetrics.Emit("VerifiedRestoreChecks", completed, configuration);
+            RecoveryWorkerMetrics.Emit("VerifiedRestoreObjects", verifiedItems, configuration);
+            await EmitVerifiedPointAgeAsync(dynamo, configuration, cancellationToken);
+        }
+        finally
         {
-            var verified = await VerifyPointAsync(configuration, s3, point.Pointer, signer.Trust, cancellationToken);
-            verifiedItems = checked(verifiedItems + verified.Receipts.Count);
-            Console.WriteLine($"recovery_copy_integrity_passed point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} receipts={verified.Receipts.Count}");
+            try { Directory.Delete(runDirectory, recursive: true); }
+            catch { }
         }
+    }
 
-        // Object-level checks do not prove restored database consistency or owner access.
-        // Only the isolated drill can publish a healthy point catalog.
-        RecoveryWorkerMetrics.Emit("CopyIntegrityChecks", latestByScope.Length, configuration);
-        RecoveryWorkerMetrics.Emit("CopyIntegrityObjects", verifiedItems, configuration);
+    private static async Task EmitVerifiedPointAgeAsync(IAmazonDynamoDB dynamo,
+        RecoveryWorkerConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var marker = await RecoveryVerificationPublisher.ReadOwnerMarkerAsync(dynamo, configuration,
+            configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
+        var age = 365d * 24 * 60 * 60;
+        if (marker is not null && GetString(marker, "ownerId") == configuration.Required("OwnerId") &&
+            GetString(marker, "libraryId") == configuration.Required("LibraryId") &&
+            GetString(marker, "safeStatus") == "healthy" &&
+            DateTimeOffset.TryParse(GetString(marker, "verifiedAtUtc"), CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind, out var verifiedAt) && verifiedAt.Offset == TimeSpan.Zero &&
+            verifiedAt <= DateTimeOffset.UtcNow && GetString(marker, "pointId") is { } pointId &&
+            Guid.TryParseExact(pointId, "D", out var parsedPointId) && parsedPointId != Guid.Empty)
+            age = Math.Max(0, (DateTimeOffset.UtcNow - verifiedAt).TotalSeconds);
+
+        RecoveryWorkerMetrics.Emit("VerifiedPointAgeSeconds", age, configuration);
+    }
+
+    internal static async Task VerifyReleaseBindingsAsync(RecoveryWorkerConfiguration configuration,
+        IAmazonS3 s3, VerifiedCopiedPoint point, CancellationToken cancellationToken)
+    {
+        var release = await ReadCopiedComponentAsync<CaptureReleaseBindingV1>(s3, point,
+            "release-bindings.json", RecoveryDataClass.ReleaseArtifact, cancellationToken);
+        var captureConfiguration = await ReadCopiedComponentAsync<CaptureConfigurationV1>(s3, point,
+            "configuration.json", RecoveryDataClass.Configuration, cancellationToken);
+        CopyRunner.ValidateBuildBinding(configuration, point.SourceManifest, release, captureConfiguration);
+    }
+
+    private static async Task<T> ReadCopiedComponentAsync<T>(IAmazonS3 s3, VerifiedCopiedPoint point,
+        string name, RecoveryDataClass expectedClass, CancellationToken cancellationToken)
+    {
+        var component = point.SourceManifest.Components.SingleOrDefault(item => item.Name == name && item.DataClass == expectedClass)
+            ?? throw new RecoveryWorkerException("capture_component_missing");
+        var source = ParseS3Uri(component.SourceKey);
+        var receipt = point.Receipts.SingleOrDefault(item => item.DataClass == expectedClass.ToString() &&
+            item.SourceBucket == source.Bucket && item.SourceKey == source.Key &&
+            item.SourceVersionId == component.SourceVersionId && item.Sha256 == component.Sha256 &&
+            item.ByteLength == component.ByteLength)
+            ?? throw new RecoveryWorkerException("capture_component_receipt_missing");
+        var bytes = await ReadExactBytesAsync(s3, receipt.DestinationBucket, receipt.DestinationKey,
+            receipt.DestinationVersionId, receipt.Sha256, receipt.ByteLength, 4 * 1024 * 1024, cancellationToken);
+        try
+        {
+            return JsonSerializer.Deserialize<T>(bytes, ArtifactJson)
+                ?? throw new RecoveryWorkerException("capture_component_invalid");
+        }
+        catch (JsonException exception) { throw new RecoveryWorkerException("capture_component_invalid", exception); }
     }
 
     internal static (CopyPointer Pointer, RecoveryPointManifestV1 Manifest) SelectLatest(
@@ -80,7 +175,7 @@ internal static class RecoveryVerifierRunner
         return ordered[0];
     }
 
-    internal static async Task<RecoveryPointManifestV1> ReadSourceManifestAsync(
+    internal static async Task<(RecoveryPointManifestV1 Manifest, DateTimeOffset CheckpointVerifiedAtUtc)> ReadSourceManifestAsync(
         IAmazonS3 s3,
         CopyPointer pointer,
         RecoverySigningTrust signerTrust,
@@ -90,6 +185,18 @@ internal static class RecoveryVerifierRunner
             pointer.CheckpointVersionId, pointer.CheckpointSha256, pointer.CheckpointByteLength,
             1024 * 1024, cancellationToken);
         var checkpoint = WorkerArtifactCodec.VerifyCheckpoint(checkpointBytes, signerTrust);
+        var payload = checkpoint.Payload;
+        if (payload.RecoveryPointId != pointer.PointId || payload.CaptureId != pointer.CaptureId ||
+            payload.OwnerId != pointer.OwnerId || payload.LibraryId != pointer.LibraryId ||
+            (pointer.State == "copied" && (payload.FinalManifest is null || payload.OwnerAccessProof is null ||
+                payload.FinalManifest.DestinationBucket != pointer.EvidenceBucket ||
+                payload.FinalManifest.DestinationKey != pointer.ManifestKey ||
+                payload.FinalManifest.DestinationVersionId != pointer.ManifestVersionId ||
+                payload.FinalManifest.Sha256 != pointer.ManifestSha256 ||
+                payload.FinalManifestSha256 != pointer.ManifestSha256)) ||
+            (pointer.State == "access_incomplete" &&
+                (payload.FinalManifest is not null || payload.OwnerAccessProof is not null)))
+            throw new RecoveryWorkerException("recovery_copy_checkpoint_binding_invalid");
         var receipt = checkpoint.Payload.SourceManifest;
         if (checkpoint.Payload.RecoveryPointId != pointer.PointId || checkpoint.Payload.CaptureId != pointer.CaptureId ||
             checkpoint.Payload.OwnerId != pointer.OwnerId || checkpoint.Payload.LibraryId != pointer.LibraryId ||
@@ -104,7 +211,9 @@ internal static class RecoveryVerifierRunner
             manifest.OwnerId != pointer.OwnerId || manifest.LibraryId != pointer.LibraryId ||
             manifest.SourceRegion != pointer.SourceRegion)
             throw new RecoveryWorkerException("source_manifest_binding_invalid");
-        return manifest;
+        RecoveryLatestPointDiscovery.ValidateCheckpointTimeBinding(manifest,
+            checkpoint.Payload.VerifiedAtUtc, DateTimeOffset.UtcNow);
+        return (manifest, checkpoint.Payload.VerifiedAtUtc);
     }
 
     internal static async Task<VerifiedRecoveryAuditGenesis> ReadAuditGenesisAsync(
@@ -133,7 +242,8 @@ internal static class RecoveryVerifierRunner
         IAmazonS3 s3,
         CopyPointer pointer,
         RecoverySigningTrust signerTrust,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool verifyDatabaseSnapshotBytes = true)
     {
         var sourceAccount = configuration.RequiredAccountId("SourceAccountId");
         var recoveryAccount = configuration.RequiredAccountId("DestinationAccountId");
@@ -173,6 +283,8 @@ internal static class RecoveryVerifierRunner
             sourceManifest.OwnerId != pointer.OwnerId || sourceManifest.LibraryId != pointer.LibraryId ||
             sourceManifest.SourceRegion != sourceRegion)
             throw new RecoveryWorkerException("source_manifest_binding_invalid");
+        RecoveryLatestPointDiscovery.ValidateCheckpointTimeBinding(sourceManifest,
+            payload.VerifiedAtUtc, DateTimeOffset.UtcNow);
 
         RecoveryPointManifestV1? finalManifest = null;
         if (payload.FinalManifest is { } finalReceipt)
@@ -202,8 +314,24 @@ internal static class RecoveryVerifierRunner
         var expected = BuildExpectedReceipts(sourceManifest, finalManifest, pointer, configuration);
         ValidateReceiptSet(receiptRows, expected);
         foreach (var receipt in receiptRows)
-            await S3ArtifactWriter.VerifyExactAsync(s3, receipt.DestinationBucket, receipt.DestinationKey,
-                receipt.DestinationVersionId, receipt.Sha256, receipt.ByteLength, cancellationToken);
+        {
+            if (receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString() && !verifyDatabaseSnapshotBytes)
+            {
+                var metadata = await s3.GetObjectMetadataAsync(new Amazon.S3.Model.GetObjectMetadataRequest
+                {
+                    BucketName = receipt.DestinationBucket,
+                    Key = receipt.DestinationKey,
+                    VersionId = receipt.DestinationVersionId
+                }, cancellationToken);
+                if (metadata.VersionId != receipt.DestinationVersionId || metadata.ContentLength != receipt.ByteLength)
+                    throw new RecoveryWorkerException("database_snapshot_identity_mismatch");
+            }
+            else if (receipt.DataClass == RecoveryDataClass.XmpSidecar.ToString())
+                await RecoveryXmpContentVerifier.VerifyExactAsync(s3, receipt, cancellationToken);
+            else
+                await S3ArtifactWriter.VerifyExactAsync(s3, receipt.DestinationBucket, receipt.DestinationKey,
+                    receipt.DestinationVersionId, receipt.Sha256, receipt.ByteLength, cancellationToken);
+        }
 
         var ownerAccess = payload.OwnerAccessProof is null ? null : await VerifyOwnerAccessProofAsync(configuration, s3,
             payload.OwnerAccessProof, pointer.OwnerId, pointer.LibraryId, cancellationToken);
@@ -379,10 +507,11 @@ internal static class RecoveryVerifierRunner
                 ConsistentRead = true,
                 Limit = 1000,
                 ExclusiveStartKey = startKey,
-                KeyConditionExpression = "pk=:pk",
+                KeyConditionExpression = "pk=:pk AND begins_with(sk,:point)",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":pk"] = S(RecoveryOwnerPointIndex.PartitionKey(ownerId, libraryId))
+                    [":pk"] = S(RecoveryOwnerPointIndex.PartitionKey(ownerId, libraryId)),
+                    [":point"] = S("POINT#")
                 }
             }, timeout.Token);
             foreach (var item in page.Items)

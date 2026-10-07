@@ -11,6 +11,15 @@
           "AWSSDK.Core": "[4.0.102.8, 5.0.0)"
         }
       },
+      "AWSSDK.ECS": {
+        "type": "Direct",
+        "requested": "[4.0.106, 4.0.106]",
+        "resolved": "4.0.106",
+        "contentHash": "pZve5VF3tmEGrJObv/ecpuJ9XGvS7VxPaj2alnD0qpw2bd2JBfAe9s/Jubv7kRnQhS7K+2CP0LFKsSAFKvpPSg==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.102.8, 5.0.0)"
+        }
+      },
       "AWSSDK.KeyManagementService": {
         "type": "Direct",
         "requested": "[4.0.100.15, 4.0.100.15]",

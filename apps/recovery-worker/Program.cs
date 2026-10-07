@@ -3,13 +3,18 @@ using Platform.Recovery.Worker;
 if (args.Length > 0 && args[0] == "verify-qualification")
     return OfflineQualificationVerifier.Run(args[1..]);
 
-if (args.Length != 1 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "bootstrap-index"))
+if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "bootstrap-index" or "purge"))
 {
-    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index> | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
+    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index> | recovery-worker purge <proposal> <plan|execute> <output> [approval <receipt>] | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
     return 2;
 }
 
 var mode = args[0];
+if (mode != "purge" && args.Length != 1 || mode == "purge" && args.Length is not (4 or 6))
+{
+    Console.Error.WriteLine("usage: recovery-worker purge <proposal> plan <plan-output> | recovery-worker purge <proposal> execute <plan> <approval> <receipt-output>");
+    return 2;
+}
 try
 {
     var configuration = RecoveryWorkerConfiguration.Load(mode);
@@ -29,6 +34,9 @@ try
             break;
         case "bootstrap-index":
             await RecoveryPointIndexBootstrapRunner.RunAsync(configuration, CancellationToken.None);
+            break;
+        case "purge":
+            await RecoveryPurgeRunner.RunAsync(configuration, args[1..], CancellationToken.None);
             break;
     }
 

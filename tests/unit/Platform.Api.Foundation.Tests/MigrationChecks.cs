@@ -66,6 +66,12 @@ internal static class MigrationChecks
             var recovery = await File.ReadAllTextAsync("apps/api/Database/Migrations/022_backup_recovery.sql");
             await ExecuteAsync(connection, recovery, default);
             await ExecuteAsync(connection, recovery, default);
+            var recoveryFreeze = await File.ReadAllTextAsync("apps/api/Database/Migrations/023_recovery_purge_freeze.sql");
+            await ExecuteAsync(connection, recoveryFreeze, default);
+            await ExecuteAsync(connection, recoveryFreeze, default);
+            var candidates = await File.ReadAllTextAsync("apps/api/Database/Migrations/024_recovery_candidates.sql");
+            await ExecuteAsync(connection, candidates, default);
+            await ExecuteAsync(connection, candidates, default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, """
@@ -95,6 +101,8 @@ internal static class MigrationChecks
         Check(await ScalarAsync(connection, "SELECT to_regclass('gallery_projection') IS NOT NULL AND to_regclass('gallery_facet_values') IS NOT NULL AND to_regclass('gallery_refresh') IS NOT NULL AND to_regclass('gallery_preferences') IS NOT NULL AND to_regclass('gallery_web_overlay_revisions') IS NOT NULL", default) is true, "Gallery schema expands beside source and version-control state");
         Check(await ScalarAsync(connection, "SELECT to_regclass('lineage_merge_content') IS NOT NULL AND to_regclass('vc_lineage_reachable') IS NOT NULL", default) is true, "Lineage provenance and derived reachability expand beside immutable history");
         Check(await ScalarAsync(connection, "SELECT to_regclass('recovery_points') IS NOT NULL AND to_regclass('recovery_point_components') IS NOT NULL AND to_regclass('recovery_point_objects') IS NOT NULL AND to_regclass('recovery_change_ledger') IS NOT NULL AND to_regclass('media_purge_tombstones') IS NOT NULL", default) is true, "Recovery evidence and purge fences are added without replacing legacy source identity tables");
+        Check(await ScalarAsync(connection, "SELECT to_regclass('recovery_candidate_sessions') IS NOT NULL AND to_regclass('recovery_candidate_materialization_receipts') IS NOT NULL AND to_regclass('recovery_candidate_validation_revisions') IS NOT NULL", default) is true,
+            "024 candidate schema applies twice beside healthy catalog and restore sessions");
         Check(await ScalarAsync(connection, "SELECT state FROM assets WHERE id=$1 AND owner_id='migration-fixture' AND original_sha256 IS NULL AND lifecycle_version=1", default, id) as string == "prepared", "Old readers retain original columns and identity after recovery schema expansion");
         await ExecuteAsync(connection, "INSERT INTO gallery_generations(owner_id,library_id,branch_name,generation,schema_version,state) VALUES('migration-fixture','default','main',1,1,'active'),('migration-fixture','default','main',2,1,'building')", default);
         await using (var rollout = await connection.BeginTransactionAsync())
