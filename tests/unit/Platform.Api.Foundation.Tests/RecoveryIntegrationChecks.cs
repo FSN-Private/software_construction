@@ -64,6 +64,29 @@ internal static class RecoveryIntegrationChecks
         Check(healthy.Status == "healthy" && healthy.Classes.Count == 7 && healthy.Classes.All(item => item.State == "verified" && item.Integrity == "verified"),
             "Health re-verifies the compact catalog and all seven independent signed observations.");
         var publicHealth = JsonSerializer.Serialize(healthy);
+        var operationQuery = new RecoveryOperationQueryService(db, configuration, clock);
+        await RestoreRequestChecksAsync(db, configuration, clock, first);
+        var points = await operationQuery.ListPointsAsync("test-owner", null, default);
+        Check(points.Items.Any(item => item.RecoveryPointId == first.RecoveryPointId) &&
+            (await operationQuery.ListPointsAsync("foreign-owner", null, default)).Items.Count == 0 &&
+            (await operationQuery.ListPointsAsync("test-owner", Guid.NewGuid(), default)).Items.Count == 0,
+            "Point listing verifies signed catalogs and scopes both rows and pagination boundaries to the owner.");
+        Check(!JsonSerializer.Serialize(points).Contains("sourceKey", StringComparison.Ordinal) &&
+            !JsonSerializer.Serialize(points).Contains("test-owner", StringComparison.Ordinal),
+            "Point listing excludes private identities and object locators.");
+        for (var index = 0; index < 101; index++)
+        {
+            var pagePoint = Catalog("pagination-owner", "main", now.AddMilliseconds(-index), Guid.NewGuid(), Guid.NewGuid());
+            await importer.ImportAsync(Encoding.UTF8.GetString(RecoveryCatalogCodec.SerializeEnvelope(
+                SignCatalog(pagePoint, evidenceRsa, evidenceKeyId, evidenceFingerprint))), default);
+        }
+        var pageOne = await operationQuery.ListPointsAsync("pagination-owner", null, default);
+        var pageTwo = await operationQuery.ListPointsAsync("pagination-owner", pageOne.NextAfterPointId, default);
+        Check(pageOne.Items.Count == 100 && pageOne.NextAfterPointId is not null && pageTwo.Items.Count == 1 &&
+            pageTwo.NextAfterPointId is null && !pageOne.Items.Select(item => item.RecoveryPointId)
+                .Intersect(pageTwo.Items.Select(item => item.RecoveryPointId)).Any() &&
+            (await operationQuery.ListPointsAsync("test-owner", pageOne.NextAfterPointId, default)).Items.Count == 0,
+            "Bounded point pagination covers every attested row without duplicates or foreign cursor disclosure.");
         Check(!publicHealth.Contains("test-owner", StringComparison.Ordinal) && !publicHealth.Contains("main", StringComparison.Ordinal) &&
             !publicHealth.Contains("sourceKey", StringComparison.Ordinal),
             "Owner health response excludes identities and object locators.");
@@ -115,7 +138,7 @@ internal static class RecoveryIntegrationChecks
         await IdentityChecksAsync(db, storage, clock, now);
         await RestoreSessionChecksAsync(db, trust, evidenceRsa, evidenceKeyId, evidenceFingerprint, now);
         await PurgeProposalChecksAsync(db, storage, configuration, clock, now);
-        await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint);
+        await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint, operationQuery);
         if (Environment.GetEnvironmentVariable("RECOVERY_CAPACITY") == "1")
             await RecoveryHealthCapacityChecks.RunAsync(db, health, "test-owner");
         Console.WriteLine("Recovery integration checks passed: signed compact catalogs, queue ordering/replay, health, cycle failure and identity binding.");
@@ -239,6 +262,37 @@ internal static class RecoveryIntegrationChecks
         }
     }
 
+    private static async Task RestoreRequestChecksAsync(NpgsqlDataSource db, IConfiguration configuration,
+        TimeProvider clock, RecoveryCatalogPayloadV1 point)
+    {
+        var service = new RecoveryRestoreRequestService(db, configuration, clock);
+        var request = new RecoveryRestoreRequest(point.RecoveryPointId, new("library", null, null), "fixture recovery request");
+        var key = Guid.NewGuid().ToString("N");
+        var requests = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => service.RequestAsync(point.OwnerId,
+            request, key, "restore-request-fixture", default)));
+        Check(requests.Select(item => item.SessionId).Distinct().Count() == 1 && requests.All(item => item.State == "requested"),
+            "Concurrent idempotent requests create exactly one isolated pending session.");
+        var session = requests[0];
+        var laterService = new RecoveryRestoreRequestService(db, configuration, new FixedTimeProvider(clock.GetUtcNow().AddMinutes(5)));
+        var laterReplay = await laterService.RequestAsync(point.OwnerId, request, key, "later-fixture", default);
+        Check(laterReplay.SessionId == session.SessionId && laterReplay.ExpiresAtUtc == session.ExpiresAtUtc,
+            "A later retry reuses the persisted expiry instead of refreshing request authority.");
+        Check((long)(await ScalarAsync(db, "SELECT count(*) FROM audit_events WHERE resource_id=$1 AND event_type='restore_requested'", session.SessionId))! == 1 &&
+            (long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_change_ledger WHERE entity_type='restore-session' AND entity_id=$1", session.SessionId.ToString("D")))! == 1,
+            "The restore request and its audit/change evidence commit once in the same transaction.");
+        await Reject(() => service.RequestAsync(point.OwnerId, request with { Reason = "changed reason" }, key, "fixture", default), "restore_request_conflict");
+        await Reject(() => service.RequestAsync("foreign-owner", request, key, "fixture", default), "recovery_point_not_found");
+        await Reject(() => service.RequestAsync(point.OwnerId, request, "", "fixture", default), "restore_request_invalid");
+        Check(!System.Text.Encoding.UTF8.GetString(RecoveryEvidenceCodec.SerializeCanonical(new RecoveryRestoreScopeV1("full_library", null, null)))
+            .Contains("reason", StringComparison.Ordinal), "Legacy null-reason scope bytes remain compatible.");
+        async Task Reject(Func<Task<RecoverySessionView>> action, string code)
+        {
+            try { await action(); }
+            catch (RecoveryRestoreRequestException error) when (error.Code == code) { return; }
+            throw new InvalidOperationException("Expected restore request rejection: " + code);
+        }
+    }
+
     private static async Task RestoreSessionChecksAsync(
         NpgsqlDataSource db,
         RecoverySigningTrust trust,
@@ -290,6 +344,16 @@ internal static class RecoveryIntegrationChecks
             "A recovery-only restore hydrates exactly one signed compact point before the session FK is written.");
         Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_sessions WHERE session_id=$1 AND state='ready' AND validation_digest IS NOT NULL", proposal.SessionId))! == 1,
             "The restored database owns the durable ready session and bound validation digest.");
+        var queryConfiguration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Recovery:Enabled"] = "true", ["Recovery:LibraryId"] = point.LibraryId }).Build();
+        var status = new RecoveryOperationQueryService(db, queryConfiguration);
+        Check((await status.GetSessionAsync(point.OwnerId, proposal.SessionId, default))?.State == "ready" &&
+            await status.GetSessionAsync("foreign-owner", proposal.SessionId, default) is null &&
+            await status.GetSessionAsync(point.OwnerId, Guid.NewGuid(), default) is null,
+            "Session status is owner scoped and reveals no existence to foreign principals.");
+        Check((await new RecoveryOperationQueryService(db, queryConfiguration, new FixedTimeProvider(now.AddHours(2)))
+            .GetSessionAsync(point.OwnerId, proposal.SessionId, default))?.State == "expired",
+            "Expired session status never displays ready even before asynchronous expiry reconciliation.");
         Check((string)(await ScalarAsync(db, "SELECT storage_version FROM content_objects WHERE sha256=$1", sha))! == "target-exact-version",
             "Only the isolated content locator is rebound to the materialized target object version.");
         Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_materialization_receipts WHERE session_id=$1 AND source_version_id='source-exact-version' AND destination_version_id='target-exact-version'", proposal.SessionId))! == 1,
@@ -371,7 +435,7 @@ internal static class RecoveryIntegrationChecks
     }
 
     private static async Task TamperChecksAsync(NpgsqlDataSource db, RecoveryHealthService health,
-        RecoveryCatalogPayloadV1 catalog, RSA rsa, string keyId, string fingerprint)
+        RecoveryCatalogPayloadV1 catalog, RSA rsa, string keyId, string fingerprint, RecoveryOperationQueryService operationQuery)
     {
         var original = await ScalarAsync(db,
             "SELECT signature FROM recovery_point_attestations WHERE point_id=$1", catalog.RecoveryPointId) as byte[]
@@ -385,6 +449,8 @@ internal static class RecoveryIntegrationChecks
             update.Parameters.AddWithValue(new byte[256]);
             await update.ExecuteNonQueryAsync();
             var invalid = await health.GetAsync("test-owner", default);
+            Check(!(await operationQuery.ListPointsAsync("test-owner", null, default)).Items.Any(item => item.RecoveryPointId == catalog.RecoveryPointId),
+                "A tampered catalog must disappear from selectable point listings.");
             Check(invalid.Status == "degraded" && invalid.Exceptions.Contains("catalog_invalid", StringComparer.Ordinal) &&
                 invalid.Classes.Any(item => item.State == "integrity_failed"),
                 "Health detects a database operator changing the persisted compact catalog signature.");
