@@ -105,7 +105,7 @@ assert.ok(!JSON.stringify(proposal.policyDocument).includes('OWNER_APPROVAL_KEY_
 assert.ok(!JSON.stringify(proposal.policyDocument).includes('kms:GenerateDataKey'));
 
 const payloadRead = bySid('ReadExactRecoveryPayloadVersions');
-assert.deepEqual(payloadRead.Action, 's3:GetObjectVersion');
+assert.deepEqual(payloadRead.Action, ['s3:GetObjectVersion', 's3:GetObjectRetention']);
 assert.deepEqual(payloadRead.Resource, [
   '__RECOVERY_PAYLOAD_BUCKET_ARN__/payload/sha256/*',
   '__RECOVERY_PAYLOAD_BUCKET_ARN__/snapshots/*',
