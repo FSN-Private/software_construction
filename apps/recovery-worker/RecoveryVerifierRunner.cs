@@ -65,19 +65,15 @@ internal static class RecoveryVerifierRunner
                     ?? throw new RecoveryWorkerException("database_snapshot_receipt_missing");
                 var dumpPath = Path.Combine(runDirectory, $"{point.Pointer.PointId:N}.dump");
                 await RecoveryDrillRunner.DownloadExactFileAsync(s3, dumpReceipt, dumpPath, cancellationToken);
-                await RecoveryDrillRunner.RunPostgresToolAsync(pgRestore, ["--list", dumpPath], database, cancellationToken);
 
                 var scratchDatabase = "recovery_verify_" + point.Pointer.PointId.ToString("N");
                 await RecoveryDrillRunner.CreateDatabaseAsync(database, scratchDatabase, cancellationToken);
                 try
                 {
-                    var restoreArgs = new[]
-                    {
-                        "--exit-on-error", "--no-owner", "--no-acl", "--dbname", scratchDatabase,
-                        "--host", database.Host, "--port", database.Port.ToString(CultureInfo.InvariantCulture),
-                        "--username", database.Username, dumpPath
-                    };
-                    await RecoveryDrillRunner.RunPostgresToolAsync(pgRestore, restoreArgs, database, cancellationToken);
+                    await RecoveryTrustedDumpRestore.RestoreAsync(database, scratchDatabase, dumpPath,
+                        configuration.Optional("MigrationDirectory") ?? "/app/migrations",
+                        configuration.RequiredHash("MigrationDigest"), configuration.Optional("PgDumpPath") ?? "pg_dump",
+                        pgRestore, cancellationToken);
                     var auditHead = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database,
                         scratchDatabase, point.SourceManifest, signer.Trust, auditGenesis,
                         configuration.RequiredHash("MigrationDigest"),

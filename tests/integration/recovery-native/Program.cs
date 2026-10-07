@@ -236,7 +236,7 @@ Task ValidateRecovered() => RecoveryDrillRunner.ValidateRestoredPointAsync(recov
 await RecoveryDrillRunner.CreateDatabaseAsync(recovery, targetName, ct);
 try
 {
-    await RecoveryDrillRunner.RunPostgresToolAsync("pg_restore", ["--exit-on-error", "--no-owner", "--no-acl", "--dbname", targetName, dump], recovery, ct);
+    await RecoveryTrustedDumpRestore.RestoreAsync(recovery,targetName,dump,"/migrations",migrationDigest,"pg_dump","pg_restore",ct);
     var targetString = new NpgsqlConnectionStringBuilder(connectionString) { Database = targetName }.ConnectionString;
     await using var target = new NpgsqlConnection(targetString);
     await target.OpenAsync(ct);
@@ -349,6 +349,44 @@ try
 finally
 {
     await RecoveryDrillRunner.DropDatabaseAsync(recovery, targetName, ct);
+}
+
+// Captured schema is producer-controlled. A trigger that would execute during
+// a conventional restore must be rejected before any captured data is loaded.
+const string maliciousTarget = "recovery_verify_malicious";
+await Execute(source, """
+    CREATE FUNCTION public.producer_restore_trap() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'producer_sql_executed'; END;
+    $$;
+    CREATE TRIGGER producer_restore_trap BEFORE INSERT ON public.assets
+        FOR EACH ROW EXECUTE FUNCTION public.producer_restore_trap();
+    """, ct);
+try
+{
+    await using var maliciousSnapshot = await source.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
+    var maliciousExport = await CaptureRunner.ExportSnapshotAsync(source, maliciousSnapshot, ct);
+    await CaptureRunner.CreateDatabaseDumpAsync(configuration, credentials, maliciousExport.SnapshotId,
+        "/tmp/malicious-recovery.dump", ct);
+    await maliciousSnapshot.CommitAsync(ct);
+    await RecoveryDrillRunner.CreateDatabaseAsync(recovery, maliciousTarget, ct);
+    try
+    {
+        await RejectCode(() => RecoveryTrustedDumpRestore.RestoreAsync(recovery, maliciousTarget,
+            "/tmp/malicious-recovery.dump", "/migrations", migrationDigest, "pg_dump", "pg_restore", ct),
+            "recovery_dump_schema_untrusted");
+        await using var isolated = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(connectionString)
+            { Database = maliciousTarget }.ConnectionString);
+        await isolated.OpenAsync(ct);
+        Check(Convert.ToInt64(await Scalar(isolated, "SELECT count(*) FROM assets", ct)) == 0,
+            "Rejected archive loaded captured rows.");
+        Check(await Scalar(isolated, "SELECT to_regprocedure('public.producer_restore_trap()')::text", ct) is DBNull,
+            "Producer function entered trusted schema.");
+    }
+    finally { await RecoveryDrillRunner.DropDatabaseAsync(recovery, maliciousTarget, ct); }
+}
+finally
+{
+    await Execute(source, "DROP TRIGGER producer_restore_trap ON public.assets; DROP FUNCTION public.producer_restore_trap()", ct);
 }
 
 await using (var orphanTransaction = await source.BeginTransactionAsync(ct))
