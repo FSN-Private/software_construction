@@ -186,6 +186,8 @@ public sealed class WindowsSyncService(NpgsqlDataSource dataSource, S3ObjectStor
         }
         catch (XmlException) { throw new VersionControlProblem("invalid_xmp", 400); }
         bytes.Position = 0;
+        await VersionControlAdapters.LockAndCheckRecoveryPurgeDigestsAsync(
+            connection, [address.Sha256], cancellationToken);
         var storageVersion = await storage.PublishVerifiedAsync(address, bytes, cancellationToken);
 
         var batch = StableId("batch:" + idempotencyKey);

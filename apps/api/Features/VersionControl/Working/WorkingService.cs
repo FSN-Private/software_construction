@@ -26,7 +26,7 @@ public sealed class WorkingService(NpgsqlDataSource dataSource, S3ObjectStore? s
         _ = VersionControlManifestCodec.Write(new(library, [], owner, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "validate", [entry]));
         await LockClientAsync(connection, owner, library, client, cancellationToken);
         await RefNames.LockAsync(connection, owner, library, branch, cancellationToken);
-        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, [entry], storage, cancellationToken);
+        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, library, [entry], storage, cancellationToken);
 
         var id = Guid.NewGuid();
         if (request.ExpectedVersion == 0)

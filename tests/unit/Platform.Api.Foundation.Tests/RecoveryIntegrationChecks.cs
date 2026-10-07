@@ -114,29 +114,36 @@ internal static class RecoveryIntegrationChecks
 
         await IdentityChecksAsync(db, storage, clock, now);
         await RestoreSessionChecksAsync(db, trust, evidenceRsa, evidenceKeyId, evidenceFingerprint, now);
-        await PurgeProposalChecksAsync(db, configuration, clock, now);
+        await PurgeProposalChecksAsync(db, storage, configuration, clock, now);
         await TamperChecksAsync(db, health, next, evidenceRsa, evidenceKeyId, evidenceFingerprint);
         if (Environment.GetEnvironmentVariable("RECOVERY_CAPACITY") == "1")
             await RecoveryHealthCapacityChecks.RunAsync(db, health, "test-owner");
         Console.WriteLine("Recovery integration checks passed: signed compact catalogs, queue ordering/replay, health, cycle failure and identity binding.");
     }
 
-    private static async Task PurgeProposalChecksAsync(NpgsqlDataSource db, IConfiguration configuration,
-        FixedTimeProvider clock, DateTimeOffset now)
+    private static async Task PurgeProposalChecksAsync(NpgsqlDataSource db, S3ObjectStore storage,
+        IConfiguration configuration, FixedTimeProvider clock, DateTimeOffset now)
     {
         const string owner = "purge-proposal-owner";
         var assetId = Guid.NewGuid();
-        const string payload = "purge proposal source bytes";
-        var payloadBytes = Encoding.UTF8.GetBytes(payload);
+        var sharedAssetId = Guid.NewGuid();
+        var payloadBytes = File.ReadAllBytes("tests/fixtures/ingest/sample.jpg");
         var contentSha = RecoveryEvidenceCodec.Hash(payloadBytes);
+        string storageVersion;
+        await using (var bytes = new MemoryStream(payloadBytes, writable: false))
+            storageVersion = await storage.PublishVerifiedAsync(new(contentSha, payloadBytes.LongLength), bytes, default);
         await using (var insert = db.CreateCommand("""
             INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
-            VALUES($1,$2,'jpeg',$3,'source-version','authoritative')
+            VALUES($1,$2,'jpeg',$3,$4,'authoritative')
+            ON CONFLICT(sha256) DO UPDATE SET storage_key=EXCLUDED.storage_key,
+                storage_version=EXCLUDED.storage_version,integrity_state='authoritative'
+             WHERE content_objects.byte_length=EXCLUDED.byte_length AND content_objects.category=EXCLUDED.category
             """))
         {
             insert.Parameters.AddWithValue(contentSha);
             insert.Parameters.AddWithValue(payloadBytes.LongLength);
             insert.Parameters.AddWithValue("sha256/" + contentSha);
+            insert.Parameters.AddWithValue(storageVersion);
             await insert.ExecuteNonQueryAsync();
         }
         await using (var insert = db.CreateCommand("""
@@ -150,10 +157,29 @@ internal static class RecoveryIntegrationChecks
             insert.Parameters.AddWithValue(now.AddDays(-100));
             await insert.ExecuteNonQueryAsync();
         }
+        await using (var insert = db.CreateCommand("""
+            INSERT INTO assets(id,owner_id,original_sha256,state,lifecycle_version,format)
+            VALUES($1,'legitimate-foreign-owner',$2,'active',1,'jpeg')
+            """))
+        {
+            insert.Parameters.AddWithValue(sharedAssetId);
+            insert.Parameters.AddWithValue(contentSha);
+            await insert.ExecuteNonQueryAsync();
+        }
+        await using (var insertPath = db.CreateCommand("""
+            INSERT INTO asset_paths(id,asset_id,owner_id,display_path,collision_key,active)
+            VALUES($1,$2,'legitimate-foreign-owner','shared.jpg','shared.jpg',true)
+            """))
+        {
+            insertPath.Parameters.AddWithValue(Guid.NewGuid());
+            insertPath.Parameters.AddWithValue(sharedAssetId);
+            await insertPath.ExecuteNonQueryAsync();
+        }
 
         var configValues = configuration.AsEnumerable().ToDictionary(pair => pair.Key, pair => pair.Value,
             StringComparer.OrdinalIgnoreCase);
-        var proposed = await RecoveryPurgeHttpChecks.RunAsync(db, configValues, clock, assetId);
+        var proposed = await RecoveryPurgeHttpChecks.RunAsync(db, storage, configValues, clock, assetId,
+            sharedAssetId, contentSha, payloadBytes);
         Check(proposed.Phase == "awaiting_independent_approval" && proposed.Proposal.EligibleAtUtc == clock.GetUtcNow() &&
             RecoveryPurgeProposalV1.ParseCanonical(RecoveryEvidenceCodec.SerializeCanonical(proposed.Proposal)) == proposed.Proposal,
             "The owner API creates a canonical proposal only after retention eligibility and starts its approval window at request time.");
@@ -166,16 +192,27 @@ internal static class RecoveryIntegrationChecks
             await service.GetProposalAsync("foreign-owner", proposed.Proposal.OperationId, default) is null,
             "Proposal reads are constrained to the canonical owner and configured library.");
 
+        // Exercise the hold rejection with a different identity because the HTTP check above
+        // has now frozen the first proposal and duplicate active proposals are rejected first.
+        var heldAssetId = Guid.NewGuid();
+        await using (var insertHeldAsset = db.CreateCommand("INSERT INTO assets(id,owner_id,original_sha256,state,lifecycle_version,deleted_until,format) VALUES($1,$2,$3,'recoverable-deleted',5,$4,'jpeg')"))
+        {
+            insertHeldAsset.Parameters.AddWithValue(heldAssetId);
+            insertHeldAsset.Parameters.AddWithValue(owner);
+            insertHeldAsset.Parameters.AddWithValue(contentSha);
+            insertHeldAsset.Parameters.AddWithValue(now.AddDays(-100));
+            await insertHeldAsset.ExecuteNonQueryAsync();
+        }
         await using (var hold = db.CreateCommand("INSERT INTO lifecycle_holds(id,asset_id,reason,source_reference) VALUES($1,$2,'legal_hold','test')"))
         {
             hold.Parameters.AddWithValue(Guid.NewGuid());
-            hold.Parameters.AddWithValue(assetId);
+            hold.Parameters.AddWithValue(heldAssetId);
             await hold.ExecuteNonQueryAsync();
         }
         var rejectedByHold = false;
         try
         {
-            await service.ProposeAsync(owner, new RecoveryPurgeProposalRequest(assetId, null, "original"),
+            await service.ProposeAsync(owner, new RecoveryPurgeProposalRequest(heldAssetId, null, "original"),
                 "purge-proposal-held", default);
         }
         catch (RecoveryPurgeException error) when (error.Code == "purge_active_lifecycle_hold" && error.StatusCode == 409)
@@ -183,21 +220,21 @@ internal static class RecoveryIntegrationChecks
             rejectedByHold = true;
         }
         Check(rejectedByHold && (long)(await ScalarAsync(db,
-                "SELECT count(*) FROM recovery_purge_proposals WHERE asset_id=$1", assetId))! == 1,
+                "SELECT count(*) FROM recovery_purge_proposals WHERE asset_id=$1", heldAssetId))! == 0,
             "An active lifecycle hold blocks a later purge proposal without leaving an extra proposal row.");
-        await using (var cleanup = db.CreateCommand("DELETE FROM lifecycle_holds WHERE asset_id=$1"))
+        await using (var cleanup = db.CreateCommand("DELETE FROM lifecycle_holds WHERE asset_id=ANY($1)"))
         {
-            cleanup.Parameters.AddWithValue(assetId);
+            cleanup.Parameters.AddWithValue(new[] { assetId, heldAssetId });
             await cleanup.ExecuteNonQueryAsync();
         }
-        await using (var cleanup = db.CreateCommand("DELETE FROM assets WHERE id=$1"))
+        await using (var cleanup = db.CreateCommand("DELETE FROM asset_paths WHERE asset_id=ANY($1)"))
         {
-            cleanup.Parameters.AddWithValue(assetId);
+            cleanup.Parameters.AddWithValue(new[] { assetId, sharedAssetId, heldAssetId });
             await cleanup.ExecuteNonQueryAsync();
         }
-        await using (var cleanup = db.CreateCommand("DELETE FROM content_objects WHERE sha256=$1"))
+        await using (var cleanup = db.CreateCommand("DELETE FROM assets WHERE id=ANY($1)"))
         {
-            cleanup.Parameters.AddWithValue(contentSha);
+            cleanup.Parameters.AddWithValue(new[] { assetId, sharedAssetId, heldAssetId });
             await cleanup.ExecuteNonQueryAsync();
         }
     }

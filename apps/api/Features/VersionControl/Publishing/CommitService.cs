@@ -123,6 +123,9 @@ public sealed class CommitService
         {
             if (mergeEvidence?.SourceBranch is null || preparedEntries is null)
                 throw new VersionControlProblem("invalid_request", 400);
+            await VersionControlAdapters.LockAndCheckRecoveryPurgeDigestsAsync(connection,
+                staged.Entries.SelectMany(entry => new[] { entry.BaseContentSha256, entry.ContentSha256 })
+                    .OfType<string>().Concat(generatedContent.Select(content => content.Sha256)), cancellationToken);
             foreach (var content in generatedContent)
             {
                 if (!staged.Entries.Any(entry => entry.AssetId == content.AssetId && entry.EditId == content.EditId && entry.ContentSha256 == content.Sha256))
@@ -145,7 +148,7 @@ public sealed class CommitService
                     mergeEvidence.TargetCommitId, mergeEvidence.SourceCommitId, content.PolicyVersion, operationId);
             }
         }
-        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, staged.Entries, storage, cancellationToken);
+        await VersionControlAdapters.ValidateEntriesAsync(connection, owner, library, staged.Entries, storage, cancellationToken);
         await ValidateBaseStateAsync(connection, owner, library, branch, refState.Value.Head, staged.Entries, cancellationToken);
         checkpoint("content-validated");
         var parents = new List<string>();

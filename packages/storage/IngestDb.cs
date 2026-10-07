@@ -30,6 +30,26 @@ public static class IngestDb
     public static Task<int> LockOwnerAsync(NpgsqlConnection connection, string owner, CancellationToken ct) =>
         ExecuteAsync(connection, "SELECT pg_advisory_xact_lock(hashtextextended($1, 5))", ct, owner);
 
+    public static async Task<bool> LockAndCheckRecoveryPurgeDigestsAsync(
+        NpgsqlConnection connection, IEnumerable<string> requestedDigests, CancellationToken ct)
+    {
+        var digests = requestedDigests.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        if (digests.Length == 0) return false;
+
+        await using (var lockContent = Command(connection,
+            "SELECT sha256 FROM content_objects WHERE sha256=ANY($1::char(64)[]) ORDER BY sha256 FOR UPDATE",
+            (object)digests))
+        await using (var reader = await lockContent.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) { }
+
+        return await ScalarAsync(connection, """
+            SELECT 1 FROM recovery_purge_proposals
+             WHERE phase IN ('executing','primary_cleanup')
+               AND content_sha256=ANY($1::char(64)[])
+             LIMIT 1
+            """, ct, (object)digests) is not null;
+    }
+
     public static Task<int> AuditAsync(NpgsqlConnection connection, string owner, string operation, string type, Guid resource, string outcome, CancellationToken ct, string? code = null) =>
         ExecuteAsync(connection, "INSERT INTO audit_events(id,owner_id,operation_id,event_type,resource_id,outcome,reason_code) VALUES($1,$2,$3,$4,$5,$6,$7)", ct, Guid.NewGuid(), owner, operation, type, resource, outcome, code);
 

@@ -155,7 +155,7 @@ public sealed class LineageMergeService(NpgsqlDataSource dataSource, S3ObjectSto
                   AND ($3::uuid IS NULL OR e.id IS NOT NULL)
                 """, ct, owner, change.AssetId, change.EditId) is null)
                 throw new VersionControlProblem("cross_library_reference", 403);
-            await VersionControlAdapters.ValidateEntriesAsync(connection, owner,
+            await VersionControlAdapters.ValidateEntriesAsync(connection, owner, library,
                 [new VersionControlEntry(change.AssetId, change.EditId, "deleted", change.BaseContentSha256,
                     change.OursContentSha256, null, null),
                  new VersionControlEntry(change.AssetId, change.EditId, "deleted", change.TheirsContentSha256,

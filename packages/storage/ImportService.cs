@@ -16,6 +16,9 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
         await LockOwnerAsync(connection, owner, ct);
         var existing = await ScalarAsync(connection, "SELECT id FROM import_batches WHERE owner_id=$1 AND idempotency_key=$2", ct, owner, key);
         if (existing is Guid existingId) { await transaction.CommitAsync(ct); return await StatusAsync(owner, existingId, ct); }
+        if (await LockAndCheckRecoveryPurgeDigestsAsync(connection,
+                request.Items.Select(item => item.Sha256), ct))
+            throw new IngestException("recovery_purge_frozen", 409);
         var used = (decimal)(await ScalarAsync(connection, "SELECT COALESCE(sum(expected_length),0) FROM upload_sessions WHERE owner_id=$1 AND (state NOT IN ('failed','cancelled') OR quarantine_until>now() OR expires_at>now())", ct, owner))!;
         if (used + request.Items.Sum(i => (decimal)i.Length) > quotaBytes) throw new IngestException("quota_exceeded", 413);
         var id = Guid.NewGuid();
@@ -59,6 +62,8 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
         await using var connection = await db.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var session = await LoadLockedAsync(connection, owner, id, ct);
+        if (await LockAndCheckRecoveryPurgeDigestsAsync(connection, [session.Address.Sha256], ct))
+            throw new IngestException("recovery_purge_frozen", 409);
         if (session.Version != version || session.State != "uploading" || session.Expires <= DateTime.UtcNow) throw new IngestException("lifecycle_conflict");
         if (session.TransferAuthorizedUntil is null || session.TransferAuthorizedUntil <= DateTime.UtcNow) throw new IngestException("transfer_authorization_required", 403);
         var requiredLength = Math.Min(S3ObjectStore.PartSize, session.Length - (number - 1L) * S3ObjectStore.PartSize);
@@ -86,6 +91,9 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
         await using var connection = await db.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var session = await LoadLockedAsync(connection, owner, id, ct);
+        if ((session.State is "uploading" or "verifying") &&
+            await LockAndCheckRecoveryPurgeDigestsAsync(connection, [session.Address.Sha256], ct))
+            throw new IngestException("recovery_purge_frozen", 409);
         if (session.State is "verifying" or "completed") { await transaction.CommitAsync(ct); return (await StatusAsync(owner, session.BatchId, ct)).Items.Single(i => i.Id == id); }
         if (session.Version != version || session.State != "uploading" || session.Expires <= DateTime.UtcNow) throw new IngestException("lifecycle_conflict");
         if (session.MultipartId is null || session.Parts.Sum(p => p.Length) != session.Length) throw new IngestException("upload_incomplete");
@@ -114,10 +122,10 @@ public sealed class ImportService(NpgsqlDataSource db, S3ObjectStore storage, lo
     private static async Task<UploadSession> LoadLockedAsync(NpgsqlConnection connection, string owner, Guid id, CancellationToken ct)
     {
         await LockOwnerAsync(connection, owner, ct);
-        await using var command = Command(connection, "SELECT batch_id,state,lifecycle_version,expected_length,expires_at,multipart_id,received_parts::text,transfer_authorized_until FROM upload_sessions WHERE id=$1 AND owner_id=$2 FOR UPDATE", id, owner);
+        await using var command = Command(connection, "SELECT batch_id,state,lifecycle_version,expected_length,expires_at,multipart_id,received_parts::text,transfer_authorized_until,expected_sha256 FROM upload_sessions WHERE id=$1 AND owner_id=$2 FOR UPDATE", id, owner);
         await using var r = await command.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) throw new IngestException("not_found", 404);
-        return new(r.GetGuid(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetDateTime(4), r.IsDBNull(5) ? null : r.GetString(5), JsonSerializer.Deserialize<ReceivedPart[]>(r.GetString(6)) ?? [], r.IsDBNull(7) ? null : r.GetDateTime(7));
+        return new(r.GetGuid(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetDateTime(4), r.IsDBNull(5) ? null : r.GetString(5), JsonSerializer.Deserialize<ReceivedPart[]>(r.GetString(6)) ?? [], r.IsDBNull(7) ? null : r.GetDateTime(7), r.GetString(8).Trim());
     }
 }
 
@@ -125,4 +133,7 @@ public sealed record ImportRequest(bool Atomic, IReadOnlyList<ImportItem> Items)
 public sealed record ImportItem(string Path, string Sha256, long Length);
 public sealed record BatchStatus(Guid Id, string State, bool Atomic, int PartSize, IReadOnlyList<SessionStatus> Items, decimal StoredBytes, long ObjectCount);
 public sealed record SessionStatus(Guid Id, string Path, string State, long LifecycleVersion, long Length, IReadOnlyList<ReceivedPart> Parts, string? Code, Guid? AssetId, Guid? EditId, DateTime? QuarantineUntil);
-internal sealed record UploadSession(Guid BatchId, string State, long Version, long Length, DateTime Expires, string? MultipartId, ReceivedPart[] Parts, DateTime? TransferAuthorizedUntil);
+internal sealed record UploadSession(Guid BatchId, string State, long Version, long Length, DateTime Expires, string? MultipartId, ReceivedPart[] Parts, DateTime? TransferAuthorizedUntil, string ExpectedSha256)
+{
+    public ContentAddress Address => new(ExpectedSha256, Length);
+}

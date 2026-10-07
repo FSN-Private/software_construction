@@ -101,6 +101,43 @@ public static class RecoveryEndpoints
                 return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
             }
         }).RequireAuthorization();
+
+        app.MapPost("/v1/recovery/purge/proposals/{operationId:guid}/freeze", async (HttpContext context,
+            Guid operationId, IConfiguration configuration, IServiceProvider services,
+            CancellationToken cancellationToken) =>
+        {
+            context.Response.Headers.CacheControl = "private, no-store";
+            if (!TryGetOwner(context, out var owner))
+                return Problem(context, context.User.Identity?.IsAuthenticated is true
+                    ? StatusCodes.Status403Forbidden : StatusCodes.Status401Unauthorized,
+                    context.User.Identity?.IsAuthenticated is true ? "recovery_identity_unavailable" : "unauthenticated");
+            var now = DateTimeOffset.UtcNow;
+            if (!TryGetRecentAuthentication(context.User, now, out var authenticatedAt))
+                return Problem(context, StatusCodes.Status403Forbidden, "recent_authentication_required");
+            if (!RecoveryHealthService.IsEnabled(configuration) || configuration.GetValue<bool>("Recovery:RecoveryOnly"))
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            var service = services.GetService<RecoveryPurgeService>();
+            if (service is null) return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            try
+            {
+                var result = await service.FreezeAsync(owner, operationId, authenticatedAt,
+                    context.Items[Platform.Api.Telemetry.PlatformTelemetry.OperationIdItemKey]?.ToString() ?? "op_unavailable",
+                    cancellationToken);
+                return Results.Ok(result);
+            }
+            catch (RecoveryPurgeException error)
+            {
+                return Problem(context, error.StatusCode, error.Code);
+            }
+            catch (RecoveryUnavailableException)
+            {
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            }
+            catch (Exception error) when (error is NpgsqlException or TimeoutException)
+            {
+                return Problem(context, StatusCodes.Status503ServiceUnavailable, "recovery_unavailable");
+            }
+        }).RequireAuthorization();
     }
 
     private static bool TryGetOwner(HttpContext context, out string owner) =>
@@ -108,10 +145,17 @@ public static class RecoveryEndpoints
 
     private static bool HasRecentAuthentication(System.Security.Claims.ClaimsPrincipal principal, DateTimeOffset nowUtc)
     {
+        if (!TryGetRecentAuthentication(principal, nowUtc, out _)) return false;
+        return true;
+    }
+
+    private static bool TryGetRecentAuthentication(System.Security.Claims.ClaimsPrincipal principal,
+        DateTimeOffset nowUtc, out DateTimeOffset authenticatedAt)
+    {
+        authenticatedAt = default;
         var value = principal.FindFirst("auth_time")?.Value;
         if (!long.TryParse(value, System.Globalization.NumberStyles.None,
                 System.Globalization.CultureInfo.InvariantCulture, out var seconds)) return false;
-        DateTimeOffset authenticatedAt;
         try { authenticatedAt = DateTimeOffset.FromUnixTimeSeconds(seconds); }
         catch (ArgumentOutOfRangeException) { return false; }
         var age = nowUtc - authenticatedAt;
