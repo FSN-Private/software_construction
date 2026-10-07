@@ -2,6 +2,8 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Npgsql;
+using Platform.Contracts.VersionControl;
+using Platform.Ingest.Worker;
 using Platform.Recovery;
 using Platform.Recovery.Worker;
 using Platform.Storage;
@@ -34,16 +36,39 @@ await using var source = new NpgsqlConnection(connectionString);
 await source.OpenAsync(ct);
 Check((await Scalar(source, "SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()", ct)) is true, "TLS was not negotiated.");
 Check(Convert.ToInt32(await Scalar(source, "SHOW server_version_num", ct)) / 10000 == 18, "PostgreSQL major is not 18.");
-foreach (var migration in Directory.EnumerateFiles("/migrations", "*.sql").Order(StringComparer.Ordinal))
-    await Execute(source, await File.ReadAllTextAsync(migration, ct), ct);
+await using (var migrationSource = NpgsqlDataSource.Create(connectionString))
+    await DatabaseMigrator.ApplyAsync(migrationSource, ct);
+var migrationDigest = await RecoveryWorkerConfiguration.ComputeMigrationDigestAsync("/migrations", ct);
 
 const string owner = "native-owner";
 const string library = "native-library";
 var asset = Guid.NewGuid();
 var sha = new string('1', 64);
-var child = new string('2', 64);
-var parent = new string('3', 64);
-var foreign = new string('4', 64);
+var foreignAsset = Guid.NewGuid();
+var commitAt = DateTimeOffset.UtcNow;
+commitAt = commitAt.AddTicks(-(commitAt.Ticks % 10));
+var parentManifest = new VersionControlManifest(library, [], owner, commitAt, commitAt, "parent",
+    [new VersionControlEntry(asset, null, "added", null, sha, "before.dng", "active")]);
+var parent = VersionControlManifestCodec.Digest(parentManifest);
+var childManifest = new VersionControlManifest(library, [parent], owner, commitAt, commitAt, "child",
+    [new VersionControlEntry(asset, null, "modified", sha, sha, "before.dng", "active")]);
+var child = VersionControlManifestCodec.Digest(childManifest);
+var foreignManifest = new VersionControlManifest(library, [], "foreign-owner", commitAt, commitAt, "foreign",
+    [new VersionControlEntry(foreignAsset, null, "added", null, sha, "foreign.dng", "active")]);
+var foreign = VersionControlManifestCodec.Digest(foreignManifest);
+using var auditRsa = RSA.Create(2048);
+const string auditKeyId = "native-independent-audit-key";
+const string recoveryAccountId = "444455556666";
+var auditSpki = auditRsa.ExportSubjectPublicKeyInfo();
+var auditFingerprint = RecoveryEvidenceCodec.Hash(auditSpki);
+var auditTrust = new RecoverySigningTrust(auditKeyId, Convert.ToBase64String(auditSpki), auditFingerprint);
+var genesisPayload = new RecoveryAuditGenesisPayloadV1(1, 0, new string('0', 64), commitAt.AddSeconds(-1));
+var genesisPayloadBytes = RecoveryAuditLedgerCodec.SerializeGenesisPayload(genesisPayload);
+var genesisEnvelope = RecoveryAuditLedgerCodec.CreateGenesisEnvelope(genesisPayload, "native-fixture",
+    new RecoveryEvidenceSignature(auditKeyId, auditFingerprint,
+        auditRsa.SignHash(SHA256.HashData(genesisPayloadBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)));
+var genesisBytes = RecoveryAuditLedgerCodec.SerializeGenesisArtifact(genesisEnvelope);
+var genesis = RecoveryAuditLedgerCodec.VerifyGenesisArtifact(genesisBytes, auditTrust, DateTimeOffset.UtcNow);
 var edit = Guid.NewGuid();
 var generated = new string('5', 64);
 var lineageBase = new string('6', 64);
@@ -54,19 +79,36 @@ await using (var seed = await source.BeginTransactionAsync(ct))
     await using var command = IngestDb.Command(source, """
         INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
         VALUES($1,1,'original','sha256/'||$1,'fixture-version-1','authoritative');
-        INSERT INTO assets(id,owner_id,original_sha256,state,format) VALUES($2,$3,$1,'active','dng');
+        INSERT INTO assets(id,owner_id,original_sha256,state,format)
+        VALUES($2,$3,$1,'active','dng'),($4,'foreign-owner',$1,'active','dng');
         INSERT INTO asset_paths(id,asset_id,owner_id,display_path,collision_key,active)
         VALUES(gen_random_uuid(),$2,$3,'before.dng','BEFORE.DNG',true);
-        INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes)
-        VALUES($4,$3,$5,$3,now(),now(),'child',1,1,convert_to(jsonb_build_object('parents',jsonb_build_array($6::text),'receivedAt',now())::text,'UTF8')),
-              ($6,$3,$5,$3,now(),now(),'parent',1,1,convert_to(jsonb_build_object('parents','[]'::jsonb,'receivedAt',now())::text,'UTF8')),
-              ($7,'foreign-owner',$5,'foreign-owner',now(),now(),'foreign',1,1,convert_to(jsonb_build_object('parents','[]'::jsonb,'receivedAt',now())::text,'UTF8'));
-        INSERT INTO vc_commit_parents(commit_id,ordinal,parent_id) VALUES($4,0,$6);
-        INSERT INTO vc_commit_entries(commit_id,ordinal,asset_id,change_kind,content_sha256,display_path,lifecycle_state)
-        VALUES($4,0,$2,'added',$1,'before.dng','active');
-        """, sha, asset, owner, child, library, parent, foreign);
+        """, sha, asset, owner, foreignAsset);
     command.Transaction = seed;
     await command.ExecuteNonQueryAsync(ct);
+    foreach (var (commitOwner, commit) in new[] { (owner, parentManifest), (owner, childManifest), ("foreign-owner", foreignManifest) })
+    {
+        var commitId = VersionControlManifestCodec.Digest(commit);
+        await using var insertCommit = IngestDb.Command(source, """
+            INSERT INTO vc_commits(id,owner_id,library_id,author_id,authored_at,received_at,message,contract_version,policy_version,manifest_bytes)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            """, commitId, commitOwner, commit.LibraryId, commit.AuthorId, commit.AuthoredAt,
+            commit.ReceivedAt, commit.Message, commit.ContractVersion, commit.PolicyVersion, VersionControlManifestCodec.Write(commit));
+        insertCommit.Transaction = seed;
+        await insertCommit.ExecuteNonQueryAsync(ct);
+        var entry = commit.Entries.Single();
+        await using var insertEntry = IngestDb.Command(source, """
+            INSERT INTO vc_commit_entries(commit_id,ordinal,asset_id,edit_id,change_kind,base_content_sha256,content_sha256,display_path,lifecycle_state)
+            VALUES($1,0,$2,$3,$4,$5,$6,$7,$8)
+            """, commitId, entry.AssetId, entry.EditId, entry.Change, entry.BaseContentSha256,
+            entry.ContentSha256, entry.Path, entry.Lifecycle);
+        insertEntry.Transaction = seed;
+        await insertEntry.ExecuteNonQueryAsync(ct);
+    }
+    await using var insertParent = IngestDb.Command(source,
+        "INSERT INTO vc_commit_parents(commit_id,ordinal,parent_id) VALUES($1,0,$2)", child, parent);
+    insertParent.Transaction = seed;
+    await insertParent.ExecuteNonQueryAsync(ct);
     await using var metadata = IngestDb.Command(source, """
         INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
         SELECT digest,1,'xmp','sha256/'||digest,'fixture-version-'||digest,'authoritative'
@@ -80,8 +122,40 @@ await using (var seed = await source.BeginTransactionAsync(ct))
         """, generated, lineageBase, lineageTarget, lineageSource, edit, asset, owner, library, child, parent);
     metadata.Transaction = seed;
     await metadata.ExecuteNonQueryAsync(ct);
+    var previousEventSha = new string('0', 64);
+    long auditSequence = 0;
+    foreach (var (eventOwner, eventAsset) in new[] { (owner, asset), ("foreign-owner", foreignAsset) })
+    {
+        var auditEvent = new RecoveryAuditEventPayloadV1(1, "native-audit-" + eventOwner, ++auditSequence,
+            Guid.NewGuid(), eventOwner, library, "fixture_created", "success", eventAsset.ToString("D"),
+            commitAt, previousEventSha);
+        var eventBytes = RecoveryAuditLedgerCodec.SerializeEvent(auditEvent);
+        var eventSha = RecoveryEvidenceCodec.Hash(eventBytes);
+        await using var insertAudit = IngestDb.Command(source, """
+            INSERT INTO recovery_audit_events(sequence,event_id,owner_id,library_id,event_type,outcome,safe_resource_id,
+                occurred_at_utc,previous_sha256,canonical_event,event_sha256,signing_key_id,signature)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            """, auditSequence, auditEvent.EventId, eventOwner, library, auditEvent.EventType, auditEvent.Outcome,
+            auditEvent.SafeResourceId, commitAt, previousEventSha, eventBytes, eventSha, auditKeyId,
+            auditRsa.SignHash(SHA256.HashData(eventBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss));
+        insertAudit.Transaction = seed;
+        await insertAudit.ExecuteNonQueryAsync(ct);
+        previousEventSha = eventSha;
+    }
+    var checkpointPayload = new RecoveryAuditLedgerCheckpointPayloadV1(1, Guid.NewGuid(), auditSequence,
+        previousEventSha, auditKeyId, recoveryAccountId, commitAt, genesis.ArtifactSha256);
+    var checkpointBytes = RecoveryAuditLedgerCodec.SerializeLedgerCheckpoint(checkpointPayload);
+    await using var checkpoint = IngestDb.Command(source, """
+        INSERT INTO recovery_audit_checkpoints(checkpoint_id,sequence,event_sha256,signer_key_id,signature,
+            recovery_account,created_at_utc,offline_pin_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+        UPDATE recovery_audit_state SET last_sequence=$2,last_event_sha256=$3 WHERE singleton=true;
+        """, checkpointPayload.CheckpointId, auditSequence, previousEventSha, auditKeyId,
+        auditRsa.SignHash(SHA256.HashData(checkpointBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss),
+        recoveryAccountId, commitAt, genesis.ArtifactSha256);
+    checkpoint.Transaction = seed;
+    await checkpoint.ExecuteNonQueryAsync(ct);
     await IngestDb.RecordRecoveryChangeAsync(source, seed, owner, library, "native-seed", "fixture_seed",
-        "asset", asset.ToString(), [sha], DateTimeOffset.UtcNow, ct);
+        "asset", asset.ToString(), [sha, generated, lineageBase, lineageTarget, lineageSource], DateTimeOffset.UtcNow, ct);
     await seed.CommitAsync(ct);
 }
 
@@ -104,6 +178,15 @@ Check(counts[RecoveryDataClass.LibraryMetadata].ItemCount >= 4 && counts[Recover
 var classifiedTables = CaptureRunner.ProtectedRelationalTableClasses.SelectMany(tables => tables).ToArray();
 Check(classifiedTables.Distinct(StringComparer.Ordinal).Count() == classifiedTables.Length,
     "A protected relational table is counted in multiple data classes.");
+var declaredTables = classifiedTables.Append("content_objects").ToHashSet(StringComparer.Ordinal);
+await using (var schema = new NpgsqlCommand("SELECT tablename FROM pg_tables WHERE schemaname='public'", source, snapshot))
+await using (var reader = await schema.ExecuteReaderAsync(ct))
+{
+    var actualTables = new HashSet<string>(StringComparer.Ordinal);
+    while (await reader.ReadAsync(ct)) actualTables.Add(reader.GetString(0));
+    Check(actualTables.SetEquals(declaredTables),
+        "Current database schema and protected-table classification differ; classify new tables before capture.");
+}
 
 await using (var writer = new NpgsqlConnection(connectionString))
 {
@@ -143,11 +226,13 @@ Check(Convert.ToInt64(await Scalar(source, "SELECT last_sequence FROM recovery_c
     "Concurrent source mutation did not commit.");
 
 var manifest = new RecoveryPointManifestV1(1, Guid.NewGuid(), Guid.NewGuid(), owner, library, "ap-southeast-1",
-    DateTimeOffset.UtcNow, exported.CutoffUtc, exported.SnapshotId, exported.Lsn, new string('a', 64), watermark,
+    DateTimeOffset.UtcNow, exported.CutoffUtc, exported.SnapshotId, exported.Lsn, migrationDigest, watermark,
     [], objects, counts.Select(pair => new RecoveryClassCoverage(pair.Key, pair.Value.ItemCount, pair.Value.ByteLength)).ToArray());
 var recovery = new RecoveryDrillRunner.RecoveryDatabaseConnection("recovery-postgres", 5432, "postgres", password,
     "/fixtures/ca.pem", connectionString);
 const string targetName = "native_recovered";
+Task ValidateRecovered() => RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, targetName, manifest,
+    auditTrust, genesis, migrationDigest, "/migrations", recoveryAccountId, ct);
 await RecoveryDrillRunner.CreateDatabaseAsync(recovery, targetName, ct);
 try
 {
@@ -159,7 +244,54 @@ try
         "Native dump included a mutation committed after its exported snapshot.");
     Check(Convert.ToInt64(await Scalar(target, "SELECT last_sequence FROM recovery_change_watermarks WHERE owner_id='native-owner'", ct)) == 1,
         "Dump and inventory watermarks differ.");
-    await RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, targetName, manifest, ct);
+    await ValidateRecovered();
+
+    var originalEventSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_events WHERE sequence=1", ct))!;
+    var originalCheckpointSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_checkpoints WHERE sequence=2", ct))!;
+    var originalHead = (string)(await Scalar(target, "SELECT last_event_sha256 FROM recovery_audit_state WHERE singleton=true", ct))!;
+    var originalMigrationSha = (string)(await Scalar(target, "SELECT sha256 FROM platform_schema_migrations WHERE id='022_backup_recovery.sql'", ct))!;
+    await Execute(target, "ALTER TABLE recovery_audit_events DISABLE TRIGGER ALL; ALTER TABLE recovery_audit_checkpoints DISABLE TRIGGER ALL", ct);
+    foreach (var (badSql, resetSql, originalValue, safeCode) in new (string, string, object, string)[]
+    {
+        ("UPDATE recovery_audit_events SET signature=decode('01','hex') WHERE sequence=1",
+            "UPDATE recovery_audit_events SET signature=$1 WHERE sequence=1", originalEventSignature, "recovery_audit_signature_invalid"),
+        ("UPDATE recovery_audit_checkpoints SET signature=decode('01','hex') WHERE sequence=2",
+            "UPDATE recovery_audit_checkpoints SET signature=$1 WHERE sequence=2", originalCheckpointSignature, "recovery_audit_checkpoint_signature_invalid"),
+        ("UPDATE recovery_audit_state SET last_event_sha256=repeat('9',64) WHERE singleton=true",
+            "UPDATE recovery_audit_state SET last_event_sha256=$1 WHERE singleton=true", originalHead, "recovery_audit_state_head_mismatch"),
+        ("UPDATE platform_schema_migrations SET sha256=repeat('9',64) WHERE id='022_backup_recovery.sql'",
+            "UPDATE platform_schema_migrations SET sha256=$1 WHERE id='022_backup_recovery.sql'", originalMigrationSha, "restored_migration_ledger_mismatch")
+    })
+    {
+        await Execute(target, badSql, ct);
+        await RejectCode(ValidateRecovered, safeCode);
+        await using var reset = IngestDb.Command(target, resetSql, originalValue);
+        await reset.ExecuteNonQueryAsync(ct);
+    }
+    await Execute(target, "ALTER TABLE recovery_audit_events ENABLE TRIGGER ALL; ALTER TABLE recovery_audit_checkpoints ENABLE TRIGGER ALL", ct);
+    await ValidateRecovered();
+
+    foreach (var (table, column, badValue) in new[]
+    {
+        ("vc_commits", "message", "xxxxx"),
+        ("vc_commit_entries", "display_path", "tamper.dng")
+    })
+    {
+        var identityColumn = table == "vc_commits" ? "id" : "commit_id";
+        await using var readOriginal = IngestDb.Command(target,
+            $"SELECT {column} FROM {table} WHERE {identityColumn}=$1", child);
+        var originalValue = (string)(await readOriginal.ExecuteScalarAsync(ct))!;
+        await Execute(target, $"ALTER TABLE {table} DISABLE TRIGGER ALL", ct);
+        await using var corrupt = IngestDb.Command(target,
+            $"UPDATE {table} SET {column}=$1 WHERE {identityColumn}=$2", badValue, child);
+        await corrupt.ExecuteNonQueryAsync(ct);
+        await RejectCode(ValidateRecovered, "restored_version_graph_invalid");
+        await using var reset = IngestDb.Command(target,
+            $"UPDATE {table} SET {column}=$1 WHERE {identityColumn}=$2", originalValue, child);
+        await reset.ExecuteNonQueryAsync(ct);
+        await Execute(target, $"ALTER TABLE {table} ENABLE TRIGGER ALL", ct);
+    }
+    await ValidateRecovered();
 
     await using (var corruption = new NpgsqlCommand("UPDATE vc_commit_parents SET parent_id=$1 WHERE commit_id=$2", target))
     {
@@ -169,9 +301,9 @@ try
         corruption.Parameters.AddWithValue(child);
         await corruption.ExecuteNonQueryAsync(ct);
     }
-    await RejectCode(() => RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, targetName, manifest, ct), "restored_version_graph_invalid");
+    await RejectCode(ValidateRecovered, "restored_version_graph_invalid");
     await Execute(target, "DROP TABLE assets CASCADE", ct);
-    await RejectCode(() => RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, targetName, manifest, ct), "restored_database_schema_incomplete");
+    await RejectCode(ValidateRecovered, "restored_database_schema_incomplete");
 }
 finally
 {

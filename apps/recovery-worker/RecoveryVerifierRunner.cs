@@ -12,7 +12,7 @@ namespace Platform.Recovery.Worker;
 
 internal static class RecoveryVerifierRunner
 {
-    private const int MaximumScannedItems = 1_000_000;
+    private const int MaximumIndexedPoints = 1_000_000;
     private const int MaximumManifestBytes = 512 * 1024 * 1024;
     private const int MaximumReceiptChunkBytes = 8 * 1024 * 1024;
     private static readonly JsonSerializerOptions ArtifactJson = new(JsonSerializerDefaults.Web);
@@ -30,7 +30,8 @@ internal static class RecoveryVerifierRunner
         using var kms = new AmazonKeyManagementServiceClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
-        var copies = await ReadCopiedPointsAsync(dynamo, configuration.Required("ControlTableName"), cancellationToken);
+        var copies = await ReadCopiedPointsAsync(dynamo, configuration.Required("ControlTableName"),
+            configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
         if (copies.Count == 0) throw new RecoveryWorkerException("recovery_copy_missing");
 
         // Copy completion can arrive out of order. Load the signed source manifests
@@ -104,6 +105,27 @@ internal static class RecoveryVerifierRunner
             manifest.SourceRegion != pointer.SourceRegion)
             throw new RecoveryWorkerException("source_manifest_binding_invalid");
         return manifest;
+    }
+
+    internal static async Task<VerifiedRecoveryAuditGenesis> ReadAuditGenesisAsync(
+        RecoveryWorkerConfiguration configuration,
+        IAmazonS3 s3,
+        RecoverySigningTrust trust,
+        CancellationToken cancellationToken)
+    {
+        var bucket = configuration.Required("EvidenceBucket");
+        var key = configuration.Required("AuditGenesisKey");
+        if (!key.StartsWith("evidence/audit/", StringComparison.Ordinal) || key.Contains("..", StringComparison.Ordinal))
+            throw new RecoveryWorkerException("recovery_audit_genesis_location_invalid");
+        if (!long.TryParse(configuration.Required("AuditGenesisByteLength"), NumberStyles.None,
+                CultureInfo.InvariantCulture, out var length) || length is <= 0 or > 64 * 1024)
+            throw new RecoveryWorkerException("recovery_audit_genesis_size_invalid");
+        var bytes = await ReadExactBytesAsync(s3, bucket, key,
+            configuration.Required("AuditGenesisVersionId"), configuration.RequiredHash("AuditGenesisSha256"),
+            length,
+            64 * 1024, cancellationToken);
+        try { return RecoveryAuditLedgerCodec.VerifyGenesisArtifact(bytes, trust, DateTimeOffset.UtcNow); }
+        catch (InvalidDataException exception) { throw new RecoveryWorkerException("recovery_audit_genesis_untrusted", exception); }
     }
 
     internal static async Task<VerifiedCopiedPoint> VerifyPointAsync(
@@ -327,40 +349,108 @@ internal static class RecoveryVerifierRunner
     internal static async Task<IReadOnlyList<CopyPointer>> ReadCopiedPointsAsync(
         IAmazonDynamoDB dynamo,
         string table,
+        string ownerId,
+        string libraryId,
         CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(15));
         var results = new List<CopyPointer>();
+        var indexKey = RecoveryPointIndexBootstrapRunner.IndexKey(ownerId, libraryId);
+        var indexResponse = await dynamo.GetItemAsync(new GetItemRequest
+        {
+            TableName = table,
+            Key = indexKey,
+            ConsistentRead = true
+        }, timeout.Token);
+        if (indexResponse.Item is not { Count: > 0 } marker)
+            throw new RecoveryWorkerException("scope_index_bootstrap_required");
+        RecoveryPointIndexBootstrapRunner.ValidateComplete(marker);
+
+        var indexed = new List<RecoveryOwnerPointMembership>();
+        var discovered = new Dictionary<Guid, string>();
         Dictionary<string, AttributeValue>? startKey = null;
-        var scanned = 0;
+        var pointCountBefore = ReadNumber(marker, "indexedPointCount");
         do
         {
-            var page = await dynamo.ScanAsync(new ScanRequest
+            var page = await dynamo.QueryAsync(new QueryRequest
             {
                 TableName = table,
                 ConsistentRead = true,
                 Limit = 1000,
                 ExclusiveStartKey = startKey,
-                FilterExpression = "begins_with(pk, :point) AND sk = :copy AND #state IN (:copied, :incomplete)",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
+                KeyConditionExpression = "pk=:pk",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
-                    [":point"] = S("POINT#"),
-                    [":copy"] = S("COPY"),
-                    [":copied"] = S("copied"),
-                    [":incomplete"] = S("access_incomplete")
+                    [":pk"] = S(RecoveryOwnerPointIndex.PartitionKey(ownerId, libraryId))
                 }
             }, timeout.Token);
-            scanned = checked(scanned + (page.ScannedCount ?? 0));
-            if (scanned > MaximumScannedItems) throw new RecoveryWorkerException("recovery_control_discovery_limit");
             foreach (var item in page.Items)
             {
-                var pointer = CopyPointer.From(item);
-                if (pointer is not null) results.Add(pointer);
+                var sortKey = GetString(item, "sk");
+                if (sortKey == "INDEX") continue;
+                if (sortKey is null || !sortKey.StartsWith("POINT#", StringComparison.Ordinal) ||
+                    !Guid.TryParseExact(sortKey.AsSpan("POINT#".Length), "D", out var pointId) || pointId == Guid.Empty ||
+                    GetString(item, "pointId") != pointId.ToString("D").ToLowerInvariant() ||
+                    GetString(item, "sourceManifestSha256") is not { } manifestSha || !IsHash(manifestSha) ||
+                    GetBool(item, "bootstrapMember") is not { } bootstrapMember || !discovered.TryAdd(pointId, manifestSha))
+                    throw new RecoveryWorkerException("scope_index_member_invalid");
+                indexed.Add(new(pointId, manifestSha, bootstrapMember));
+
+                var copyKey = RecoveryPointIndexBootstrapRunner.OwnerPointKey(ownerId, libraryId, pointId);
+                var copyResponse = await dynamo.GetItemAsync(new GetItemRequest
+                {
+                    TableName = table,
+                    Key = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = S("POINT#" + pointId.ToString("D").ToLowerInvariant()),
+                        ["sk"] = S("COPY")
+                    },
+                    ConsistentRead = true
+                }, timeout.Token);
+                if (copyResponse.Item is not { Count: > 0 } copyItem)
+                    throw new RecoveryWorkerException("scope_index_point_missing");
+                if (GetString(copyItem, "ownerId") != ownerId || GetString(copyItem, "libraryId") != libraryId ||
+                    GetString(copyItem, "sourceManifestSha256") != manifestSha)
+                    throw new RecoveryWorkerException("scope_index_point_binding_mismatch");
+                var state = GetString(copyItem, "state");
+                if (state == "copying") continue;
+                if (state is not ("copied" or "access_incomplete"))
+                    throw new RecoveryWorkerException("recovery_copy_state_invalid");
+                var pointer = CopyPointer.From(copyItem);
+                if (pointer is null || pointer.PointId != pointId || pointer.OwnerId != ownerId || pointer.LibraryId != libraryId)
+                    throw new RecoveryWorkerException("recovery_copy_control_record_invalid");
+                results.Add(pointer);
             }
             startKey = page.LastEvaluatedKey is { Count: > 0 } key ? key : null;
         } while (startKey is not null);
+
+        var markerAfter = await dynamo.GetItemAsync(new GetItemRequest
+        {
+            TableName = table,
+            Key = indexKey,
+            ConsistentRead = true
+        }, timeout.Token);
+        if (markerAfter.Item is not { Count: > 0 } finalMarker ||
+            ReadNumber(finalMarker, "indexedPointCount") != pointCountBefore)
+            throw new RecoveryWorkerException("scope_index_changed_during_read");
+        RecoveryPointIndexBootstrapRunner.ValidateComplete(finalMarker);
+        if (ReadNumber(finalMarker, "bootstrapPointCount") != ReadNumber(marker, "bootstrapPointCount") ||
+            GetString(finalMarker, "bootstrapPointSetSha256") != GetString(marker, "bootstrapPointSetSha256"))
+            throw new RecoveryWorkerException("scope_index_bootstrap_binding_changed");
+        if (discovered.Count > MaximumIndexedPoints)
+            throw new RecoveryWorkerException("recovery_control_discovery_limit");
+        try
+        {
+            RecoveryOwnerPointIndex.ValidateStrongIndex(ownerId, libraryId,
+                checked((int)ReadNumber(finalMarker, "bootstrapPointCount")),
+                GetString(finalMarker, "bootstrapPointSetSha256") ?? string.Empty,
+                ReadNumber(finalMarker, "indexedPointCount"), indexed, discovered);
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new RecoveryWorkerException("scope_index_inventory_mismatch", exception);
+        }
         return results;
     }
 
@@ -413,6 +503,15 @@ internal static class RecoveryVerifierRunner
     internal static string ScopeHash(string ownerId, string libraryId) =>
         RecoveryEvidenceCodec.Hash(Encoding.UTF8.GetBytes(ownerId + "\0" + libraryId));
     private static AttributeValue S(string value) => new() { S = value };
+    private static string? GetString(Dictionary<string, AttributeValue> item, string name) =>
+        item.TryGetValue(name, out var value) ? value.S : null;
+    private static long ReadNumber(Dictionary<string, AttributeValue> item, string name) =>
+        item.TryGetValue(name, out var value) && long.TryParse(value.N, NumberStyles.None,
+            CultureInfo.InvariantCulture, out var number) ? number : -1;
+    private static bool? GetBool(Dictionary<string, AttributeValue> item, string name) =>
+        item.TryGetValue(name, out var value) ? value.BOOL : null;
+    private static bool IsHash(string value) => value.Length == 64 &&
+        value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private readonly record struct ReceiptIdentity(string SourceBucket, string SourceKey, string SourceVersionId,
         string Sha256, long ByteLength, string DestinationBucket, string DestinationKey, string DataClass)

@@ -76,6 +76,9 @@
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
         }
       },
+      "platform.contracts": {
+        "type": "Project"
+      },
       "platform.recovery": {
         "type": "Project",
         "dependencies": {
@@ -90,6 +93,7 @@
           "AWSSDK.SQS": "[4.0.100.15, 4.0.100.15]",
           "AWSSDK.SecretsManager": "[4.0.100.15, 4.0.100.15]",
           "AWSSDK.SecurityToken": "[4.0.101.1, 4.0.101.1]",
+          "Platform.Contracts": "[1.0.0, )",
           "Platform.Recovery": "[1.0.0, )"
         }
       },

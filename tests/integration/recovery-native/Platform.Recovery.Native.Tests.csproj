@@ -8,6 +8,8 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../../apps/ingest-worker/DatabaseMigrator.cs" Link="DatabaseMigrator.cs" />
+    <EmbeddedResource Include="../../../apps/api/Database/Migrations/*.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.%(Filename)%(Extension)" />
     <ProjectReference Include="../../../apps/recovery-worker/Platform.Recovery.Worker.csproj" />
   </ItemGroup>
 </Project>

@@ -41,8 +41,11 @@ internal static class RecoveryDrillRunner
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
         var points = await RecoveryVerifierRunner.ReadCopiedPointsAsync(dynamo,
-            configuration.Required("ControlTableName"), cancellationToken);
+            configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
+            configuration.Required("LibraryId"), cancellationToken);
         if (points.Count == 0) throw new RecoveryWorkerException("recovery_copy_missing");
+        var auditGenesis = await RecoveryVerifierRunner.ReadAuditGenesisAsync(configuration, s3, signer.Trust,
+            cancellationToken);
 
         var candidates = new List<(CopyPointer Pointer, RecoveryPointManifestV1 Manifest)>();
         foreach (var point in points)
@@ -87,7 +90,10 @@ internal static class RecoveryDrillRunner
                         "--username", database.Username, dumpPath
                     };
                     await RunPostgresToolAsync(pgRestore, restoreArgs, database, cancellationToken);
-                    await ValidateRestoredPointAsync(database, scratchDatabase, point.SourceManifest, cancellationToken);
+                    await ValidateRestoredPointAsync(database, scratchDatabase, point.SourceManifest, signer.Trust,
+                        auditGenesis, configuration.RequiredHash("MigrationDigest"),
+                        configuration.Optional("MigrationDirectory") ?? "/app/migrations", expectedAccount,
+                        cancellationToken);
                     completedScopes++;
                     var access = point.OwnerAccess is null ? "owner_access_pending" : "provider_release_evidence_pending";
                     Console.WriteLine($"recovery_drill_restore_validated run={runId:D} point={point.Pointer.PointId:D} owner={RecoveryVerifierRunner.ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} access={access}");
@@ -219,6 +225,11 @@ internal static class RecoveryDrillRunner
         RecoveryDatabaseConnection credentials,
         string databaseName,
         RecoveryPointManifestV1 manifest,
+        RecoverySigningTrust auditTrust,
+        VerifiedRecoveryAuditGenesis auditGenesis,
+        string expectedMigrationDigest,
+        string migrationDirectory,
+        string recoveryAccountId,
         CancellationToken cancellationToken)
     {
         var builder = new NpgsqlConnectionStringBuilder(credentials.ConnectionString) { Database = databaseName };
@@ -228,22 +239,9 @@ internal static class RecoveryDrillRunner
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
             await readOnly.ExecuteNonQueryAsync(cancellationToken);
 
-        var requiredTables = new[]
-        {
-            "assets", "content_objects", "edit_identities", "asset_paths", "audit_events", "vc_commits",
-            "vc_commit_parents", "vc_commit_entries", "vc_refs", "vc_reflog", "vc_working_changes",
-            "vc_stashes", "recovery_points", "recovery_change_ledger", "recovery_change_watermarks"
-        };
-        await using (var tables = new NpgsqlCommand("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1)", connection, transaction))
-        {
-            tables.Parameters.AddWithValue(requiredTables);
-            var found = new HashSet<string>(StringComparer.Ordinal);
-            await using var reader = await tables.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken)) found.Add(reader.GetString(0));
-            if (requiredTables.Any(table => !found.Contains(table)))
-                throw new RecoveryWorkerException("restored_database_schema_incomplete");
-        }
-
+        await RecoveryDatabaseValidator.ValidateSchemaAndGraphAsync(connection, transaction,
+            manifest.OwnerId, manifest.LibraryId, migrationDirectory, expectedMigrationDigest,
+            recoveryAccountId, auditTrust, auditGenesis, cancellationToken);
         var counts = await CaptureRunner.ReadClassCountsAsync(connection, transaction,
             manifest.OwnerId, manifest.LibraryId, manifest.Objects, cancellationToken);
         foreach (var dataClass in new[]
@@ -258,46 +256,7 @@ internal static class RecoveryDrillRunner
                 throw new RecoveryWorkerException("restored_database_coverage_mismatch");
         }
 
-        await RequireNoRowsAsync(connection, transaction, """
-            SELECT 1 FROM vc_commit_parents p
-            JOIN vc_commits child ON child.id=p.commit_id
-            LEFT JOIN vc_commits parent ON parent.id=p.parent_id AND parent.owner_id=child.owner_id AND parent.library_id=child.library_id
-            WHERE child.owner_id=$1 AND child.library_id=$2 AND parent.id IS NULL LIMIT 1
-            """, manifest.OwnerId, manifest.LibraryId, "restored_version_graph_invalid", cancellationToken);
-        await RequireNoRowsAsync(connection, transaction, """
-            SELECT 1 FROM vc_refs r LEFT JOIN vc_commits c
-              ON c.id=r.head_commit_id AND c.owner_id=r.owner_id AND c.library_id=r.library_id
-            WHERE r.owner_id=$1 AND r.library_id=$2 AND r.head_commit_id IS NOT NULL AND c.id IS NULL LIMIT 1
-            """, manifest.OwnerId, manifest.LibraryId, "restored_version_graph_invalid", cancellationToken);
-        await RequireNoRowsAsync(connection, transaction, """
-            SELECT 1 FROM vc_commit_entries e
-            JOIN vc_commits c ON c.id=e.commit_id
-            LEFT JOIN assets a ON a.id=e.asset_id AND a.owner_id=c.owner_id
-            LEFT JOIN edit_identities i ON i.id=e.edit_id AND i.asset_id=e.asset_id
-            WHERE c.owner_id=$1 AND c.library_id=$2 AND (a.id IS NULL OR (e.edit_id IS NOT NULL AND i.id IS NULL)) LIMIT 1
-            """, manifest.OwnerId, manifest.LibraryId, "restored_version_graph_invalid", cancellationToken);
-        await RequireNoRowsAsync(connection, transaction, """
-            SELECT 1 FROM assets a LEFT JOIN content_objects o ON o.sha256=a.original_sha256
-            WHERE a.owner_id=$1 AND a.original_sha256 IS NOT NULL
-              AND (o.sha256 IS NULL OR o.integrity_state<>'authoritative') LIMIT 1
-            """, manifest.OwnerId, manifest.LibraryId, "restored_media_metadata_invalid", cancellationToken);
-        await RequireNoRowsAsync(connection, transaction, """
-            SELECT 1 FROM edit_identities i JOIN assets a ON a.id=i.asset_id
-            LEFT JOIN content_objects o ON o.sha256=i.xmp_sha256
-            WHERE a.owner_id=$1 AND i.xmp_sha256 IS NOT NULL
-              AND (o.sha256 IS NULL OR o.integrity_state<>'authoritative') LIMIT 1
-            """, manifest.OwnerId, manifest.LibraryId, "restored_xmp_metadata_invalid", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-    }
-
-    private static async Task RequireNoRowsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
-        string sql, string owner, string library, string failureCode, CancellationToken cancellationToken)
-    {
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue(owner);
-        command.Parameters.AddWithValue(library);
-        if (await command.ExecuteScalarAsync(cancellationToken) is not null)
-            throw new RecoveryWorkerException(failureCode);
     }
 
     internal static async Task RunPostgresToolAsync(string executable, IReadOnlyList<string> arguments,

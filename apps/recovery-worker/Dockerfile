@@ -4,6 +4,7 @@ FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e633
 WORKDIR /src
 
 COPY global.json ./
+COPY packages/contracts/Platform.Contracts.csproj packages/contracts/
 COPY packages/storage/Platform.Storage.csproj packages/storage/
 COPY packages/storage/packages.lock.json packages/storage/
 COPY packages/recovery/Platform.Recovery.csproj packages/recovery/
@@ -13,6 +14,7 @@ COPY apps/recovery-worker/packages.lock.json apps/recovery-worker/
 RUN dotnet restore apps/recovery-worker/Platform.Recovery.Worker.csproj --locked-mode
 
 COPY packages/storage/ packages/storage/
+COPY packages/contracts/ packages/contracts/
 COPY packages/recovery/ packages/recovery/
 COPY apps/recovery-worker/ apps/recovery-worker/
 COPY apps/api/Database/Migrations/ apps/api/Database/Migrations/

@@ -4,6 +4,8 @@ Status: local implementation and verification in progress. No production recover
 
 ## Recorded local checks
 
+2026-10-06 approval-review disposition: automatic approval review rejected a proposed persistent database-trigger freeze because blocking lifecycle/hold writes during purge could broadly disrupt services. The trigger change was not applied. T018-T021 continue with target-scoped application guards serialized on the same asset row as the reversible freeze CAS; full mutation-path coverage and concurrency tests remain required before recovery deletion. The separate template-digest parameter rejection remains pending specific owner approval; its exact-byte gate has only local fixture evidence so far.
+
 | Date | Command | Result and scope |
 |---|---|---|
 | 2026-10-06 | Exact staged checkpoint exported with `git checkout-index`, then locked recovery-test restore/run in a separate workspace-local directory | PASS: the committed candidate builds and its recovery executable passes without the unfinished purge runner/verifier files. The staged CLI exposes bootstrap only; pending purge CLI changes remain outside this checkpoint. |
@@ -53,6 +55,10 @@ The following evidence is unavailable in this local implementation session and r
 Until these gates have evidence, feature acceptance and production recovery enablement remain incomplete. Synthetic qualification must not replace them.
 
 ## Automatic approval review disposition
+
+2026-10-07: the owner explicitly approved local signed-summary publication to the configured primary recovery-observation SQS queue. The fixed payload is limited to owner/library/point IDs, digests, UTC timestamps, class counts/bytes and safe status codes; it excludes media, paths, object locators, credentials and raw errors. This approval authorizes local code/tests, not AWS deployment or actual message delivery. Automatic approval review subsequently rejected additional verifier control-table scan/write and KMS signing/public-key grants as persistent IAM privileges outside that approval. Those grants and the associated verifier task/schedule were not applied. A narrower, configured-scope policy without Scan is being prepared for separate review.
+
+Native restore checkpoint on 2026-10-07: `node tests/integration/recovery-native/run.mjs` passed with locked dependency restore, the production migration runner (including migration digest ledger), PostgreSQL 18 TLS with a pinned CA, and real exported-snapshot `pg_dump`/isolated `pg_restore`. The restored database passed exact protected-schema/class coverage, canonical graph and independent signed audit-chain validation. Changed event/checkpoint signatures, audit head and migration digest were rejected, as were foreign parents and a missing protected table. The fixture also rejects missing, quarantined and misclassified lineage objects and wrong TLS trust. This is a local fixture with an independently generated test signer, not cloud qualification; remote monotonic audit-head anti-truncation, actual owner login, complete purge and workload restoration remain pending.
 
 2026-10-06: automatic approval review rejected both the broad purge-role proposal and a narrower deletion/decryption proposal, requiring exact privilege authorization. The owner subsequently explicitly approved the local CDK definition for an independent MFA role with recovery-version reads, deletion only under `payload/sha256/*` and `snapshots/*`, two recovery-key decrypt permissions constrained through Sydney S3 and object prefixes, control/intent queries and purge-fence management. No signing, database-secret, primary-account or deployment authority was approved. This authorizes local code/tests only, not AWS deployment or data deletion. IAM implementation/validation remains in progress.
 
