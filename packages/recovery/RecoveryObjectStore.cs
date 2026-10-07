@@ -174,6 +174,70 @@ public sealed class RecoveryObjectStore(
         return receipt;
     }
 
+    /// <summary>
+    /// Reuses the exact immutable destination version named by a previously verified,
+    /// signed point receipt. The caller must verify that signature and source-to-
+    /// destination mapping before calling. This method performs fresh destination
+    /// access and retention checks without rereading the full source or payload.
+    /// </summary>
+    public async Task<RecoveryCopyReceipt> ReuseVerifiedReceiptAsync(
+        RecoveryObjectReference source,
+        string destinationKey,
+        RecoveryCopyReceipt signedReceipt,
+        DateTimeOffset admittedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(signedReceipt);
+        source.Validate();
+        if (admittedAtUtc.Offset != TimeSpan.Zero)
+            throw new InvalidDataException("recovery_admission_time_not_utc");
+        if (source.DataClass != signedReceipt.Source.DataClass || source.OwnerId != signedReceipt.Source.OwnerId ||
+            source.LibraryId != signedReceipt.Source.LibraryId || source.SourceKey != signedReceipt.Source.SourceKey ||
+            source.SourceVersionId != signedReceipt.Source.SourceVersionId || source.Sha256 != signedReceipt.Source.Sha256 ||
+            source.ByteLength != signedReceipt.Source.ByteLength || signedReceipt.DestinationBucket != recoveryBucket ||
+            signedReceipt.DestinationKey != destinationKey || signedReceipt.DestinationRegion != recoveryRegion ||
+            signedReceipt.DestinationAccountAlias != recoveryAccountAlias ||
+            string.IsNullOrWhiteSpace(signedReceipt.DestinationVersionId) || signedReceipt.DestinationVersionId == "null" ||
+            signedReceipt.VerifiedAtUtc.Offset != TimeSpan.Zero || signedReceipt.VerifiedAtUtc > clock.GetUtcNow())
+            throw new InvalidDataException("recovery_signed_receipt_binding_invalid");
+
+        await CheckReadyAsync(cancellationToken);
+        var metadata = await recoveryS3.GetObjectMetadataAsync(new GetObjectMetadataRequest
+        {
+            BucketName = recoveryBucket,
+            Key = destinationKey,
+            VersionId = signedReceipt.DestinationVersionId
+        }, cancellationToken);
+        if (metadata.VersionId != signedReceipt.DestinationVersionId || metadata.ContentLength != source.ByteLength)
+            throw new InvalidDataException("recovery_destination_identity_mismatch");
+
+        // A one-byte exact-version read confirms current S3/KMS access without
+        // repeating the payload transfer; the signed receipt attests the full hash.
+        if (source.ByteLength > 0)
+        {
+            using var response = await recoveryS3.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = recoveryBucket,
+                Key = destinationKey,
+                VersionId = signedReceipt.DestinationVersionId,
+                ByteRange = new ByteRange(0, 0)
+            }, cancellationToken);
+            if (response.VersionId != signedReceipt.DestinationVersionId || response.ContentLength != 1)
+                throw new InvalidDataException("recovery_destination_access_probe_invalid");
+            var firstByte = new byte[1];
+            if (await response.ResponseStream.ReadAsync(firstByte, cancellationToken) != 1)
+                throw new InvalidDataException("recovery_destination_access_probe_invalid");
+        }
+
+        await VerifyRetentionAtAsync(destinationKey, signedReceipt.DestinationVersionId, admittedAtUtc, cancellationToken);
+        var receipt = new RecoveryCopyReceipt(source, recoveryBucket, destinationKey,
+            signedReceipt.DestinationVersionId, recoveryAccountAlias, recoveryRegion, admittedAtUtc,
+            clock.GetUtcNow(), verifierBuild, RetentionPolicyVerified: true, AccessPolicyVerified: true);
+        receipt.Validate();
+        return receipt;
+    }
+
     public async Task<Stream> ReadVerifiedAsync(
         RecoveryCopyReceipt receipt,
         CancellationToken cancellationToken = default)

@@ -79,24 +79,22 @@ internal static class CopyRunner
         await evidenceStore.CheckReadyAsync(cancellationToken);
 
         var completeMarkers = await ListCompletedCaptureMarkersAsync(sourceS3, sourceCaptureBucket, cancellationToken);
-        var scopeHashes = new HashSet<string>(StringComparer.Ordinal);
-        if (configuration.Optional("OwnerId") is { Length: > 0 } configuredOwner &&
-            configuration.Optional("LibraryId") is { Length: > 0 } configuredLibrary)
-            scopeHashes.Add(ScopeHash(configuredOwner, configuredLibrary));
+        var reusableReceiptsByScope = new Dictionary<string,
+            Dictionary<RecoveryCopyReceiptReuse.ReceiptIdentity, PrivateCopyReceiptV1>>(StringComparer.Ordinal);
         foreach (var markerKey in completeMarkers)
         {
-            var marker = await ReadJsonAsync<CaptureCompleteV1>(sourceS3, sourceCaptureBucket, markerKey, cancellationToken);
-            if (marker.SchemaVersion != 1 || marker.CaptureId == Guid.Empty || marker.ManifestObjects is null || marker.ManifestObjects.Count == 0 ||
-                marker.ScopeCount != marker.ManifestObjects.Count)
-                throw new RecoveryWorkerException("capture_complete_marker_invalid");
-            var capturePrefix = $"captures/{marker.CaptureId:D}/";
-            if (!markerKey.StartsWith(capturePrefix, StringComparison.Ordinal) ||
-                marker.ManifestObjects.Any(item => item is null || !item.Key.StartsWith(capturePrefix + "scopes/", StringComparison.Ordinal) ||
-                    !item.Key.EndsWith("/manifest.json", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(item.VersionId) ||
-                    !IsHash(item.Sha256) || item.ByteLength <= 0))
-                throw new RecoveryWorkerException("capture_marker_scope_invalid");
+            var markerObject = await ReadVersionedBytesAsync(sourceS3, sourceCaptureBucket, markerKey,
+                null, null, 1024 * 1024, cancellationToken);
+            var marker = RecoveryCaptureCompletionReceipt.Parse(sourceCaptureBucket, markerKey,
+                markerObject.VersionId, markerObject.Bytes);
+            if (await RecoveryCaptureCompletionReceipt.IsAlreadyProcessedAsync(dynamo,
+                    configuration.Required("ControlTableName"), marker, cancellationToken))
+                continue;
 
-            foreach (var manifestPointer in marker.ManifestObjects.OrderBy(item => item.Key, StringComparer.Ordinal))
+            var scopeBindings = new List<CaptureScopeBinding>(marker.Marker.ManifestObjects.Count);
+            var captureFinalized = true;
+
+            foreach (var manifestPointer in marker.Marker.ManifestObjects.OrderBy(item => item.Key, StringComparer.Ordinal))
             {
                 var manifestKey = manifestPointer.Key;
                 var manifestObject = await ReadVersionedBytesAsync(sourceS3, sourceCaptureBucket, manifestKey,
@@ -105,28 +103,77 @@ internal static class CopyRunner
                     throw new RecoveryWorkerException("capture_manifest_length_mismatch");
                 var manifestBytes = manifestObject.Bytes;
                 var manifest = RecoveryPointManifestV1.ParseCanonical(manifestBytes);
-                if (manifest.CaptureId != marker.CaptureId || manifest.SourceRegion != sourceRegion ||
+                if (manifest.CaptureId != marker.Marker.CaptureId || manifest.SourceRegion != sourceRegion ||
                     manifest.OwnerId.Length == 0 || manifest.LibraryId.Length == 0 ||
                     !manifestKey.Contains(ScopeHash(manifest.OwnerId, manifest.LibraryId), StringComparison.Ordinal))
                     throw new RecoveryWorkerException("capture_manifest_binding_invalid");
-                scopeHashes.Add(ScopeHash(manifest.OwnerId, manifest.LibraryId));
+                RecoveryLatestPointDiscovery.ValidateSourceManifestTimeBinding(manifest, DateTimeOffset.UtcNow);
 
                 var leaseToken = await TryAcquirePointAsync(dynamo, configuration.Required("ControlTableName"),
-                    marker.CaptureId, manifest, RecoveryEvidenceCodec.Hash(manifestBytes), configuration.WorkerId, cancellationToken);
-                if (leaseToken is null) continue;
+                    marker.Marker.CaptureId, manifest, RecoveryEvidenceCodec.Hash(manifestBytes), configuration.WorkerId, cancellationToken);
+                if (leaseToken is null)
+                {
+                    var prior = await RecoveryLatestPointDiscovery.RepairFinalizedPointAsync(dynamo,
+                        destinationS3, configuration.Required("ControlTableName"), manifest,
+                        RecoveryEvidenceCodec.Hash(manifestBytes), signer.Trust, cancellationToken);
+                    if (prior is null)
+                    {
+                        captureFinalized = false;
+                        continue;
+                    }
+                    if (prior.Value.Pointer.State == "copied")
+                        await RecoveryCopyReceiptReuse.AdvanceHeadAsync(dynamo,
+                            configuration.Required("ControlTableName"), prior.Value.Manifest,
+                            RecoveryEvidenceCodec.Hash(manifestBytes), cancellationToken);
+                    scopeBindings.Add(ToCaptureBinding(prior.Value.Pointer, prior.Value.Manifest,
+                        manifestPointer, marker.Marker.CaptureId));
+                    continue;
+                }
 
                 try
                 {
+                    var scopeHash = ScopeHash(manifest.OwnerId, manifest.LibraryId);
+                    if (!reusableReceiptsByScope.TryGetValue(scopeHash, out var reusableReceipts))
+                    {
+                        var latestReceipts = await RecoveryCopyReceiptReuse.ReadLatestAsync(dynamo, destinationS3,
+                            configuration.Required("ControlTableName"), manifest.OwnerId, manifest.LibraryId,
+                            sourceCaptureBucket, sourceContentBucket, payloadBucket, evidenceBucket,
+                            sourceAccountId, sourceRegion, destinationAccountId, destinationRegion,
+                            configuration.WorkerBuildDigest, signer.Trust, cancellationToken);
+                        reusableReceipts = latestReceipts.ToDictionary(pair => pair.Key, pair => pair.Value);
+                        reusableReceiptsByScope.Add(scopeHash, reusableReceipts);
+                    }
                     var finished = await CopyPointAsync(configuration, sourceS3, destinationS3, dynamo, sqs,
                         intentStore, payloadStore, capturePayloadStore, evidenceStore, signer, sourceCaptureBucket, sourceContentBucket,
                         evidenceBucket, payloadBucket, payloadKmsKey, evidenceKmsKey, sourceAccountId, destinationAccountId, sourceRegion,
-                        destinationRegion, manifestKey, manifestObject.VersionId, manifestBytes, manifest, leaseToken, cancellationToken);
+                        destinationRegion, manifestKey, manifestObject.VersionId, manifestBytes, manifest, leaseToken,
+                        reusableReceipts, cancellationToken);
                     if (finished)
+                    {
                         await CompletePointAsync(dynamo, configuration.Required("ControlTableName"), manifest,
                             leaseToken, cancellationToken);
+                        await RecoveryCopyReceiptReuse.AdvanceHeadAsync(dynamo,
+                            configuration.Required("ControlTableName"), manifest,
+                            RecoveryEvidenceCodec.Hash(manifestBytes), cancellationToken);
+                    }
                     else
                         await DeferPointAsync(dynamo, configuration.Required("ControlTableName"), manifest,
                             leaseToken, cancellationToken);
+
+                    var finalized = await RecoveryLatestPointDiscovery.RepairFinalizedPointAsync(dynamo,
+                        destinationS3, configuration.Required("ControlTableName"), manifest,
+                        RecoveryEvidenceCodec.Hash(manifestBytes), signer.Trust, cancellationToken);
+                    if (finalized is null)
+                    {
+                        captureFinalized = false;
+                        continue;
+                    }
+                    if (finalized.Value.Pointer.State == "copied")
+                        await RecoveryCopyReceiptReuse.AdvanceHeadAsync(dynamo,
+                            configuration.Required("ControlTableName"), finalized.Value.Manifest,
+                            RecoveryEvidenceCodec.Hash(manifestBytes), cancellationToken);
+                    scopeBindings.Add(ToCaptureBinding(finalized.Value.Pointer, finalized.Value.Manifest,
+                        manifestPointer, marker.Marker.CaptureId));
                 }
                 catch
                 {
@@ -140,10 +187,18 @@ internal static class CopyRunner
                     throw;
                 }
             }
-        }
 
-        await EmitVerifiedAgeAsync(dynamo, configuration, scopeHashes, cancellationToken);
+            if (captureFinalized)
+                await RecoveryCaptureCompletionReceipt.WriteProcessedAsync(dynamo,
+                    configuration.Required("ControlTableName"), marker, scopeBindings, cancellationToken);
+        }
     }
+
+    private static CaptureScopeBinding ToCaptureBinding(CopyPointer pointer, RecoveryPointManifestV1 manifest,
+        CaptureManifestPointer sourcePointer, Guid captureId) => new(captureId, pointer.PointId,
+        manifest.OwnerId, manifest.LibraryId, sourcePointer.Key, sourcePointer.VersionId,
+        sourcePointer.Sha256, sourcePointer.ByteLength, manifest.SnapshotCutoffUtc,
+        manifest.ChangeWatermark.LastSequence, pointer.CheckpointSha256, pointer.State);
 
     private static async Task<bool> CopyPointAsync(
         RecoveryWorkerConfiguration configuration,
@@ -171,6 +226,7 @@ internal static class CopyRunner
         byte[] sourceManifestBytes,
         RecoveryPointManifestV1 sourceManifest,
         string leaseToken,
+        Dictionary<RecoveryCopyReceiptReuse.ReceiptIdentity, PrivateCopyReceiptV1> reusableReceipts,
         CancellationToken cancellationToken)
     {
         var pointId = sourceManifest.RecoveryPointId;
@@ -241,6 +297,7 @@ internal static class CopyRunner
             await intentStore.SetStoragePendingAsync(admission, cancellationToken);
 
         var receiptJournal = new ReceiptJournalWriter(destinationS3, evidenceBucket, evidenceKmsKey, pointId);
+        var pointReceipts = new List<PrivateCopyReceiptV1>(admittedPlans.Count + 1);
         foreach (var admitted in admittedPlans)
         {
             try
@@ -257,10 +314,20 @@ internal static class CopyRunner
                     .Select(item => item.DestinationVersionId).Distinct(StringComparer.Ordinal).ToArray();
                 if (settledVersions.Length > 1 || settledVersions.Length == 1 && string.IsNullOrWhiteSpace(settledVersions[0]))
                     throw new RecoveryWorkerException("settled_intent_version_mismatch");
+                var receiptIdentity = RecoveryCopyReceiptReuse.ReceiptIdentity.From(admitted.Plan.SourceBucket,
+                    admitted.Plan.Source, admitted.Plan.DestinationBucket, admitted.Plan.DestinationKey);
                 var receipt = settledVersions.Length == 1
                     ? await store.VerifyExistingAsync(admitted.Plan.Source, admitted.Plan.DestinationKey,
                         settledVersions[0]!, representative.AdmittedAtUtc, cancellationToken)
-                    : await store.CopyVerifiedAsync(writeIntent, cancellationToken);
+                    : admitted.Plan.IsMedia && reusableReceipts.TryGetValue(receiptIdentity, out var previousReceipt)
+                        ? await store.ReuseVerifiedReceiptAsync(admitted.Plan.Source, admitted.Plan.DestinationKey,
+                            new RecoveryCopyReceipt(admitted.Plan.Source, previousReceipt.DestinationBucket,
+                                previousReceipt.DestinationKey, previousReceipt.DestinationVersionId,
+                                configuration.Required("DestinationAccountAlias"), destinationRegion,
+                                previousReceipt.VerifiedAtUtc, previousReceipt.VerifiedAtUtc,
+                                configuration.WorkerBuildDigest, RetentionPolicyVerified: true,
+                                AccessPolicyVerified: true), representative.AdmittedAtUtc, cancellationToken)
+                        : await store.CopyVerifiedAsync(writeIntent, cancellationToken);
                 var providerReceipt = JsonSerializer.Serialize(new
                 {
                     receipt.Source.Sha256,
@@ -283,11 +350,13 @@ internal static class CopyRunner
                             providerReceipt, cancellationToken);
                     }
                 }
-                await receiptJournal.AppendAsync(new(admitted.Plan.SourceBucket, admitted.Plan.Source.SourceKey,
+                var pointReceipt = new PrivateCopyReceiptV1(admitted.Plan.SourceBucket, admitted.Plan.Source.SourceKey,
                     admitted.Plan.Source.SourceVersionId, admitted.Plan.Source.Sha256,
                     admitted.Plan.Source.ByteLength, admitted.Plan.DestinationBucket,
                     admitted.Plan.DestinationKey, receipt.DestinationVersionId,
-                    admitted.Plan.Source.DataClass.ToString(), receipt.VerifiedAtUtc), cancellationToken);
+                    admitted.Plan.Source.DataClass.ToString(), receipt.VerifiedAtUtc);
+                pointReceipts.Add(pointReceipt);
+                await receiptJournal.AppendAsync(pointReceipt, cancellationToken);
             }
             catch
             {
@@ -340,9 +409,11 @@ internal static class CopyRunner
         var finalManifestSha256 = RecoveryEvidenceCodec.Hash(finalManifestBytes);
         var finalManifestObject = await S3ArtifactWriter.PutBytesAsync(destinationS3, evidenceBucket,
             $"points/{pointId:D}/manifests/{finalManifestSha256}.json", finalManifestBytes, evidenceKmsKey, cancellationToken);
-        await receiptJournal.AppendAsync(new(evidenceBucket, ownerAccess.ArtifactKey, ownerAccess.VersionId,
+        var ownerProofReceipt = new PrivateCopyReceiptV1(evidenceBucket, ownerAccess.ArtifactKey, ownerAccess.VersionId,
             ownerAccess.ArtifactSha256, ownerAccess.ByteLength, evidenceBucket, ownerAccess.ArtifactKey,
-            ownerAccess.VersionId, RecoveryDataClass.AccessEvidence.ToString(), ownerAccess.VerifiedAtUtc), cancellationToken);
+            ownerAccess.VersionId, RecoveryDataClass.AccessEvidence.ToString(), ownerAccess.VerifiedAtUtc);
+        pointReceipts.Add(ownerProofReceipt);
+        await receiptJournal.AppendAsync(ownerProofReceipt, cancellationToken);
         var receiptSummary = await receiptJournal.CompleteAsync(cancellationToken);
 
         var checkpointPayload = new PrivateCopyCheckpointPayloadV1(1, sourceManifest.CaptureId, pointId,
@@ -362,6 +433,11 @@ internal static class CopyRunner
             manifestVersionId, evidenceBucket, finalManifestObject.Key, finalManifestObject.VersionId,
             finalManifestObject.Sha256, checkpoint.Key, checkpoint.VersionId, checkpoint.Sha256, checkpoint.ByteLength,
             sourceAccountId, sourceRegion, destinationAccountId, destinationRegion, leaseToken, cancellationToken);
+        reusableReceipts.Clear();
+        foreach (var receipt in pointReceipts.Where(item => item.DestinationBucket == payloadBucket &&
+                     (item.DataClass is "OriginalImage" or "XmpSidecar") &&
+                     item.DestinationKey == "payload/sha256/" + item.Sha256))
+            reusableReceipts[RecoveryCopyReceiptReuse.ReceiptIdentity.From(receipt)] = receipt;
         Console.WriteLine($"recovery_copy_complete point={pointId:D} owner={ScopeHash(ownerId, libraryId)} objects={sourceManifest.Objects.Count}");
         return true;
     }
@@ -677,7 +753,7 @@ internal static class CopyRunner
         }, cancellationToken);
     }
 
-    private static async Task DeferPointAsync(IAmazonDynamoDB dynamo, string table,
+    private static async Task<bool> DeferPointAsync(IAmazonDynamoDB dynamo, string table,
         RecoveryPointManifestV1 manifest, string leaseToken, CancellationToken cancellationToken)
     {
         try
@@ -697,33 +773,9 @@ internal static class CopyRunner
                     [":now"] = S(DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture))
                 }
             }, cancellationToken);
+            return true;
         }
-        catch (ConditionalCheckFailedException) { }
-    }
-
-    private static async Task EmitVerifiedAgeAsync(IAmazonDynamoDB dynamo,
-        RecoveryWorkerConfiguration configuration, IReadOnlyCollection<string> scopes,
-        CancellationToken cancellationToken)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var age = scopes.Count == 0 ? 86_400d * 365 : 0d;
-        foreach (var scope in scopes)
-        {
-            var latest = await dynamo.GetItemAsync(new GetItemRequest
-            {
-                TableName = configuration.Required("ControlTableName"),
-                Key = ControlKey("OWNER#" + scope, "VERIFIED"),
-                ConsistentRead = true
-            }, cancellationToken);
-            if (latest.Item is null || !DateTimeOffset.TryParse(GetString(latest.Item, "verifiedAtUtc"), CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind, out var verified))
-            {
-                age = Math.Max(age, 86_400d * 365);
-                continue;
-            }
-            age = Math.Max(age, (now - verified.ToUniversalTime()).TotalSeconds);
-        }
-        RecoveryWorkerMetrics.Emit("VerifiedPointAgeSeconds", Math.Max(0, age), configuration);
+        catch (ConditionalCheckFailedException) { return false; }
     }
 
     private static async Task CheckDestinationBucketAsync(IAmazonS3 s3, string bucket, string kmsKey,
@@ -770,13 +822,6 @@ internal static class CopyRunner
             token = page.IsTruncated == true ? page.NextContinuationToken : null;
         } while (token is not null);
         return keys.Order(StringComparer.Ordinal).ToArray();
-    }
-
-    private static async Task<T> ReadJsonAsync<T>(IAmazonS3 s3, string bucket, string key,
-        CancellationToken cancellationToken)
-    {
-        var bytes = await ReadBytesAsync(s3, bucket, key, null, null, 1024 * 1024, cancellationToken);
-        return JsonSerializer.Deserialize<T>(bytes, ArtifactJson) ?? throw new RecoveryWorkerException("capture_artifact_invalid");
     }
 
     private static async Task<byte[]> ReadBytesAsync(IAmazonS3 s3, string bucket, string key,
@@ -849,9 +894,6 @@ internal static class CopyRunner
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ownerId + "\0" + libraryId))).ToLowerInvariant();
     private static Guid StableGuid(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
 
-    private sealed record CaptureManifestPointerV1(string Key, string VersionId, string Sha256, long ByteLength);
-    private sealed record CaptureCompleteV1(int SchemaVersion, Guid CaptureId, DateTimeOffset CompletedAtUtc,
-        int ScopeCount, IReadOnlyList<CaptureManifestPointerV1> ManifestObjects);
     private sealed record PlannedCopy(string SourceBucket, RecoveryObjectReference Source,
         string DestinationBucket, string DestinationKey, bool IsMedia, IReadOnlyList<LogicalWriteAdmission> Admissions);
     private sealed record AdmittedPlan(PlannedCopy Plan, IReadOnlyList<LogicalWriteAdmission> Admissions);

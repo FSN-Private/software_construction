@@ -15,6 +15,14 @@
           "AWSSDK.Core": "[4.0.102.8, 5.0.0)"
         }
       },
+      "AWSSDK.ECS": {
+        "type": "Transitive",
+        "resolved": "4.0.106",
+        "contentHash": "pZve5VF3tmEGrJObv/ecpuJ9XGvS7VxPaj2alnD0qpw2bd2JBfAe9s/Jubv7kRnQhS7K+2CP0LFKsSAFKvpPSg==",
+        "dependencies": {
+          "AWSSDK.Core": "[4.0.102.8, 5.0.0)"
+        }
+      },
       "AWSSDK.KeyManagementService": {
         "type": "Transitive",
         "resolved": "4.0.100.15",
@@ -89,6 +97,7 @@
         "type": "Project",
         "dependencies": {
           "AWSSDK.DynamoDBv2": "[4.0.107, 4.0.107]",
+          "AWSSDK.ECS": "[4.0.106, 4.0.106]",
           "AWSSDK.KeyManagementService": "[4.0.100.15, 4.0.100.15]",
           "AWSSDK.SQS": "[4.0.100.15, 4.0.100.15]",
           "AWSSDK.SecretsManager": "[4.0.100.15, 4.0.100.15]",

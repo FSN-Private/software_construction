@@ -9,6 +9,7 @@ internal class RecoveryIndexDynamoFake : DispatchProxy
 
     public int ScanCalls { get; private set; }
     public int QueryCalls { get; private set; }
+    public Action<GetItemRequest>? BeforeGet { get; set; }
     public Dictionary<string, AttributeValue>? Read(string pk, string sk) =>
         _items.TryGetValue((pk, sk), out var item) ? Clone(item) : null;
 
@@ -23,6 +24,7 @@ internal class RecoveryIndexDynamoFake : DispatchProxy
     }
 
     public void Remove(string pk, string sk) => _items.Remove((pk, sk));
+    public void Replace(Dictionary<string, AttributeValue> item) => _items[ReadKey(item)] = Clone(item);
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
@@ -54,9 +56,12 @@ internal class RecoveryIndexDynamoFake : DispatchProxy
 
     private QueryResponse Query(QueryRequest request)
     {
+        if (request.ConsistentRead != true) throw new InvalidOperationException("query_not_strongly_consistent");
         QueryCalls++;
         var partition = request.ExpressionAttributeValues[":pk"].S;
         var all = _items.Values.Where(item => ReadKey(item).Pk == partition)
+            .Where(item => !request.ExpressionAttributeValues.TryGetValue(":point", out var prefix) ||
+                           ReadKey(item).Sk.StartsWith(prefix.S, StringComparison.Ordinal))
             .OrderBy(item => ReadKey(item).Sk, StringComparer.Ordinal).ToArray();
         var (items, lastKey) = Page(all, request.ExclusiveStartKey, Math.Min(_pageSize, request.Limit ?? _pageSize));
         return new QueryResponse
@@ -70,6 +75,8 @@ internal class RecoveryIndexDynamoFake : DispatchProxy
 
     private GetItemResponse Get(GetItemRequest request)
     {
+        if (request.ConsistentRead != true) throw new InvalidOperationException("get_not_strongly_consistent");
+        BeforeGet?.Invoke(request);
         var key = ReadKey(request.Key);
         return new GetItemResponse
         {

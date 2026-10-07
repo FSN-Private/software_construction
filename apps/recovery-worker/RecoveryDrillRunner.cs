@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Amazon.ECS;
 using Amazon.KeyManagementService;
 using Amazon.S3;
 using Amazon.SecretsManager;
@@ -28,6 +29,7 @@ internal static class RecoveryDrillRunner
             throw new RecoveryWorkerException("drill_recovery_only_required");
         if (!Guid.TryParse(configuration.Required("DrillRunId"), out var runId) || runId == Guid.Empty)
             throw new RecoveryWorkerException("drill_run_id_invalid");
+        var accessInputs = await RecoveryCandidateAccessRunner.ReadInputsAsync(configuration, cancellationToken);
 
         var region = configuration.RequiredRegion("DestinationRegion");
         var expectedAccount = configuration.RequiredAccountId("DestinationAccountId");
@@ -40,38 +42,38 @@ internal static class RecoveryDrillRunner
         using var kms = new AmazonKeyManagementServiceClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
-        var points = await RecoveryVerifierRunner.ReadCopiedPointsAsync(dynamo,
+        var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
             configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
-            configuration.Required("LibraryId"), cancellationToken);
-        if (points.Count == 0) throw new RecoveryWorkerException("recovery_copy_missing");
+            configuration.Required("LibraryId"), signer.Trust, cancellationToken);
         var auditGenesis = await RecoveryVerifierRunner.ReadAuditGenesisAsync(configuration, s3, signer.Trust,
             cancellationToken);
-
-        var candidates = new List<(CopyPointer Pointer, RecoveryPointManifestV1 Manifest)>();
-        foreach (var point in points)
-            candidates.Add((point, await RecoveryVerifierRunner.ReadSourceManifestAsync(
-                s3, point, signer.Trust, cancellationToken)));
-        var latest = candidates.GroupBy(item => RecoveryVerifierRunner.ScopeHash(item.Pointer.OwnerId, item.Pointer.LibraryId), StringComparer.Ordinal)
-            .Select(RecoveryVerifierRunner.SelectLatest).ToArray();
 
         var scratchDirectory = configuration.Optional("ScratchDirectory") ?? Path.Combine(Path.GetTempPath(), "recovery-drill");
         Directory.CreateDirectory(scratchDirectory);
         var runDirectory = Path.Combine(scratchDirectory, runId.ToString("N"));
         Directory.CreateDirectory(runDirectory);
         var completedScopes = 0;
+        PublishedS3Object? candidateEvidence = null;
         try
         {
             using var secrets = new AmazonSecretsManagerClient(Amazon.RegionEndpoint.GetBySystemName(region));
+            using var ecs = new AmazonECSClient(Amazon.RegionEndpoint.GetBySystemName(region));
             var database = await ReadRecoveryDatabaseAsync(configuration, secrets, runDirectory, cancellationToken);
             var pgDump = configuration.Optional("PgDumpPath") ?? "pg_dump";
             var pgRestore = configuration.Optional("PgRestorePath") ?? "pg_restore";
             await CaptureRunner.RequirePostgres18Async(pgDump, cancellationToken);
             await CaptureRunner.RequirePostgres18Async(pgRestore, cancellationToken);
 
-            foreach (var candidate in latest)
+            foreach (var candidate in new[] { latest })
             {
                 var point = await RecoveryVerifierRunner.VerifyPointAsync(configuration, s3,
                     candidate.Pointer, signer.Trust, cancellationToken);
+                await RecoveryVerifierRunner.VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
+                var auditProof = await RecoveryAuditHeadProofStore.ReadAsync(dynamo,
+                    configuration.Required("VerificationTableName"), point.Pointer.PointId, signer.Trust,
+                    cancellationToken) ?? throw new RecoveryWorkerException("audit_head_proof_missing");
+                var expectedAuditHead = RecoveryAuditHeadProofStore.ValidateForDrill(auditProof,
+                    configuration, point, auditGenesis);
                 var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
                     receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString())
                     ?? throw new RecoveryWorkerException("database_snapshot_receipt_missing");
@@ -81,6 +83,8 @@ internal static class RecoveryDrillRunner
 
                 var scratchDatabase = "recovery_drill_" + runId.ToString("N") + "_" + point.Pointer.PointId.ToString("N")[..8];
                 await CreateDatabaseAsync(database, scratchDatabase, cancellationToken);
+                RecoveryApiTask? apiTask = null;
+                var apiLaunchAttempted = false;
                 try
                 {
                     var restoreArgs = new[]
@@ -90,17 +94,64 @@ internal static class RecoveryDrillRunner
                         "--username", database.Username, dumpPath
                     };
                     await RunPostgresToolAsync(pgRestore, restoreArgs, database, cancellationToken);
-                    await ValidateRestoredPointAsync(database, scratchDatabase, point.SourceManifest, signer.Trust,
+                    await ValidateRestoredPointWithAuditHeadAsync(database, scratchDatabase, point.SourceManifest, signer.Trust,
                         auditGenesis, configuration.RequiredHash("MigrationDigest"),
                         configuration.Optional("MigrationDirectory") ?? "/app/migrations", expectedAccount,
-                        cancellationToken);
+                        expectedAuditHead, configuration, cancellationToken);
+                    var candidateConnectionString = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+                        { Database = scratchDatabase }.ConnectionString;
+                    await using var candidateConnection = new NpgsqlConnection(candidateConnectionString);
+                    await candidateConnection.OpenAsync(cancellationToken);
+                    await RecoveryCandidateStore.CreateAsync(candidateConnection, runId, scratchDatabase,
+                        configuration, point, auditProof, cancellationToken);
+                    var materialized = await RecoveryMaterializer.MaterializeAsync(s3, configuration, point,
+                        new DynamoFenceIntentStore(dynamo, configuration.Required("FenceTableName"),
+                            configuration.Required("IntentTableName")), runId, cancellationToken);
+                    await RecoveryCandidateStore.RebindAsync(candidateConnection, runId, materialized, cancellationToken);
+                    var validationDigest = await ValidateMaterializedCandidateAsync(candidateConnection,
+                        point.SourceManifest, materialized, configuration.Required("SourceBucket"),
+                        configuration.Required("TargetBucket"), signer.Trust, auditGenesis,
+                        configuration.Optional("MigrationDirectory") ?? "/app/migrations",
+                        configuration.RequiredHash("MigrationDigest"), expectedAccount, expectedAuditHead,
+                        configuration, cancellationToken);
+                    var targetDigest = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new
+                    {
+                        database = scratchDatabase, endpoint = database.Host,
+                        certificateSha256 = configuration.RequiredHash("DatabaseRootCertificateSha256"),
+                        bucket = configuration.Required("TargetBucket"),
+                        applicationDigest = configuration.RequiredHash("ApiBuildDigest"), validationDigest
+                    }));
+                    await RecoveryCandidateStore.RecordValidationAsync(candidateConnection, runId,
+                        point.SourceManifest.Digest(), targetDigest, validationDigest, cancellationToken);
+                    candidateEvidence = await RecoveryCandidateEvidence.PersistAsync(s3, candidateConnection,
+                        configuration, runId, point, materialized, signer, signer.Trust, cancellationToken);
+                    if (accessInputs is not null)
+                    {
+                        var mapping = await RecoveryCandidateAccessRunner.PrepareAsync(secrets, candidateConnection,
+                            configuration, runId, accessInputs, cancellationToken);
+                        apiLaunchAttempted = true;
+                        apiTask = await RecoveryApiTaskRunner.StartAsync(ecs, configuration, runId,
+                            scratchDatabase, cancellationToken);
+                        var transcript = await RecoveryOwnerAccessProbe.RunAsync(apiTask, Guid.NewGuid(), mapping.Payload,
+                            accessInputs.OwnerToken, accessInputs.ForeignToken, cancellationToken);
+                        await RecoveryCandidateAccessRunner.PersistTranscriptAsync(s3, configuration, runId,
+                            point.Pointer.PointId, mapping, transcript, signer, cancellationToken);
+                    }
                     completedScopes++;
-                    var access = point.OwnerAccess is null ? "owner_access_pending" : "provider_release_evidence_pending";
+                    // A prior source-side access proof cannot qualify this new clone. Fresh
+                    // candidate mapping, real probes and independent attestation remain required.
+                    const string access = "owner_access_pending";
                     Console.WriteLine($"recovery_drill_restore_validated run={runId:D} point={point.Pointer.PointId:D} owner={RecoveryVerifierRunner.ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} access={access}");
                 }
                 finally
                 {
-                    await DropDatabaseAsync(database, scratchDatabase, cancellationToken);
+                    if (apiTask is not null)
+                        await RecoveryApiTaskRunner.StopAsync(ecs, configuration, apiTask.TaskArn, CancellationToken.None);
+                    if (apiLaunchAttempted && apiTask is null)
+                        throw new RecoveryWorkerException("api_candidate_launch_cleanup_pending");
+                    // An unknown launch/stop outcome retains the clone for explicit
+                    // reconciliation. Never drop its database under a running API.
+                    await DropDatabaseAsync(database, scratchDatabase, CancellationToken.None);
                 }
             }
 
@@ -117,7 +168,10 @@ internal static class RecoveryDrillRunner
                     ["pointCount"] = N(completedScopes),
                     ["completedAtUtc"] = S(DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)),
                     ["workerBuildDigest"] = S(configuration.WorkerBuildDigest),
-                    ["reason"] = S("release_evidence_pending")
+                    ["reason"] = S("release_evidence_pending"),
+                    ["candidateEvidenceKey"] = S(candidateEvidence?.Key ?? throw new RecoveryWorkerException("candidate_evidence_missing")),
+                    ["candidateEvidenceVersionId"] = S(candidateEvidence.VersionId),
+                    ["candidateEvidenceSha256"] = S(candidateEvidence.Sha256)
                 },
                 ConditionExpression = "attribute_not_exists(pk) OR #state <> :qualified",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
@@ -232,6 +286,24 @@ internal static class RecoveryDrillRunner
         string recoveryAccountId,
         CancellationToken cancellationToken)
     {
+        _ = await ValidateRestoredPointWithAuditHeadAsync(credentials, databaseName, manifest, auditTrust,
+            auditGenesis, expectedMigrationDigest, migrationDirectory, recoveryAccountId,
+            expectedAuditHead: null, configuration: null, cancellationToken);
+    }
+
+    internal static async Task<RecoveryAuditHeadV1> ValidateRestoredPointWithAuditHeadAsync(
+        RecoveryDatabaseConnection credentials,
+        string databaseName,
+        RecoveryPointManifestV1 manifest,
+        RecoverySigningTrust auditTrust,
+        VerifiedRecoveryAuditGenesis auditGenesis,
+        string expectedMigrationDigest,
+        string migrationDirectory,
+        string recoveryAccountId,
+        RecoveryAuditHeadRequirementV1? expectedAuditHead,
+        RecoveryWorkerConfiguration? configuration,
+        CancellationToken cancellationToken)
+    {
         var builder = new NpgsqlConnectionStringBuilder(credentials.ConnectionString) { Database = databaseName };
         await using var connection = new NpgsqlConnection(builder.ConnectionString);
         await connection.OpenAsync(cancellationToken);
@@ -239,9 +311,17 @@ internal static class RecoveryDrillRunner
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
             await readOnly.ExecuteNonQueryAsync(cancellationToken);
 
-        await RecoveryDatabaseValidator.ValidateSchemaAndGraphAsync(connection, transaction,
+        var auditHead = await RecoveryDatabaseValidator.ValidateSchemaAndGraphWithAuditHeadAsync(connection, transaction,
             manifest.OwnerId, manifest.LibraryId, migrationDirectory, expectedMigrationDigest,
-            recoveryAccountId, auditTrust, auditGenesis, cancellationToken);
+            recoveryAccountId, auditTrust, auditGenesis, expectedAuditHead, cancellationToken);
+        var purgeOmissions = configuration is null
+            ? new HashSet<RecoveryPurgedReference>()
+            : await RecoveryPurgeCapture.ReadAuthorizedOmissionsAsync(connection, transaction, configuration,
+                manifest.OwnerId, manifest.LibraryId, DateTimeOffset.UtcNow, cancellationToken);
+        var actualObjects = await CaptureRunner.ReadObjectClosureAsync(connection, transaction,
+            configuration?.Optional("SourceBucket") ?? string.Empty, manifest.OwnerId, manifest.LibraryId,
+            purgeOmissions, cancellationToken);
+        RecoveryObjectClosureValidator.RequireExactMatch(manifest.Objects, actualObjects);
         var counts = await CaptureRunner.ReadClassCountsAsync(connection, transaction,
             manifest.OwnerId, manifest.LibraryId, manifest.Objects, cancellationToken);
         foreach (var dataClass in new[]
@@ -257,6 +337,56 @@ internal static class RecoveryDrillRunner
         }
 
         await transaction.CommitAsync(cancellationToken);
+        return auditHead;
+    }
+
+    internal static async Task<string> ValidateMaterializedCandidateAsync(
+        NpgsqlConnection connection, RecoveryPointManifestV1 manifest,
+        IReadOnlyList<RecoveryMaterializedObjectV1> receipts, string sourceBucket, string targetBucket,
+        RecoverySigningTrust auditTrust, VerifiedRecoveryAuditGenesis auditGenesis,
+        string migrationDirectory, string migrationDigest, string recoveryAccountId,
+        RecoveryAuditHeadRequirementV1 expectedAuditHead, RecoveryWorkerConfiguration? configuration,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead,
+            cancellationToken);
+        await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
+            await readOnly.ExecuteNonQueryAsync(cancellationToken);
+        var head = await RecoveryDatabaseValidator.ValidateSchemaAndGraphWithAuditHeadAsync(connection, transaction,
+            manifest.OwnerId, manifest.LibraryId, migrationDirectory, migrationDigest, recoveryAccountId,
+            auditTrust, auditGenesis, expectedAuditHead, cancellationToken);
+        var omissions = configuration is null ? new HashSet<RecoveryPurgedReference>() :
+            await RecoveryPurgeCapture.ReadAuthorizedOmissionsAsync(connection, transaction, configuration,
+                manifest.OwnerId, manifest.LibraryId, DateTimeOffset.UtcNow, cancellationToken);
+        var actualObjects = await CaptureRunner.ReadObjectClosureAsync(connection, transaction, sourceBucket,
+            manifest.OwnerId, manifest.LibraryId, omissions, cancellationToken);
+        RecoveryMaterializedClosureValidator.RequireExactMappedMatch(manifest.Objects, actualObjects, receipts,
+            sourceBucket, targetBucket);
+        var counts = await CaptureRunner.ReadClassCountsAsync(connection, transaction,
+            manifest.OwnerId, manifest.LibraryId, manifest.Objects, cancellationToken);
+        foreach (var dataClass in new[] { RecoveryDataClass.VersionGraph, RecoveryDataClass.LibraryMetadata,
+                     RecoveryDataClass.AuditRecord })
+        {
+            var expected = manifest.Coverage.Single(item => item.DataClass == dataClass);
+            var actual = counts[dataClass];
+            if (actual.ItemCount != expected.ItemCount || actual.ByteLength != expected.ByteLength)
+                throw new RecoveryWorkerException("candidate_database_coverage_mismatch");
+        }
+        // Candidate sessions/receipts are new recovery evidence. The exact source evidence
+        // count was checked before insertion; target receipts are checked separately above.
+        var digest = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new
+        {
+            schemaVersion = 1, manifest.RecoveryPointId, manifest.OwnerId, manifest.LibraryId,
+            targetBucket, verifiedAuditHead = head,
+            receipts = receipts.OrderBy(item => item.SourceBucket, StringComparer.Ordinal)
+                .ThenBy(item => item.SourceKey, StringComparer.Ordinal)
+                .ThenBy(item => item.SourceVersionId, StringComparer.Ordinal).ToArray(),
+            immutableClasses = counts.Where(pair => pair.Key is RecoveryDataClass.VersionGraph or
+                RecoveryDataClass.LibraryMetadata or RecoveryDataClass.AuditRecord)
+                .OrderBy(pair => pair.Key).ToArray()
+        }));
+        await transaction.CommitAsync(cancellationToken);
+        return digest;
     }
 
     internal static async Task RunPostgresToolAsync(string executable, IReadOnlyList<string> arguments,

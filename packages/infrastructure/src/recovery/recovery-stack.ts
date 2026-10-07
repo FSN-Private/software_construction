@@ -56,6 +56,9 @@ export interface RecoveryStackProps extends StackProps {
   readonly configurationDigest: string;
   readonly databaseRootCertificate: string;
   readonly databaseRootCertificateSha256: string;
+  readonly auditGenesisVersionId: string;
+  readonly auditGenesisSha256: string;
+  readonly auditGenesisByteLength: number;
   readonly recoverySigningPublicKeySpkiBase64: string;
   readonly recoverySigningPublicKeySha256: string;
   readonly ownerApprovalRoleArn: string;
@@ -101,6 +104,11 @@ export class RecoveryStack extends Stack {
     const certificateDigest = createHash('sha256').update(props.databaseRootCertificate, 'utf8').digest('hex');
     if (certificateDigest !== props.databaseRootCertificateSha256) throw new Error('Recovery database root certificate digest does not match its exact UTF-8 bytes.');
     if (!props.allowOfflinePlaceholders && !/-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----/.test(props.databaseRootCertificate)) throw new Error('A valid PEM database root certificate is required for deployment.');
+    if (!props.auditGenesisVersionId.trim() || props.auditGenesisVersionId.length > 1024 || props.auditGenesisVersionId === 'null' ||
+      !/^[a-f0-9]{64}$/.test(props.auditGenesisSha256) || !Number.isInteger(props.auditGenesisByteLength) ||
+      props.auditGenesisByteLength < 1 || props.auditGenesisByteLength > 64 * 1024) {
+      throw new Error('Recovery audit genesis requires an exact S3 version, SHA-256 digest, and bounded byte length.');
+    }
     if (!/^[a-f0-9]{64}$/.test(props.recoverySigningPublicKeySha256)) throw new Error('Recovery evidence KMS public key fingerprint must be pinned out of band.');
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(props.recoverySigningPublicKeySpkiBase64) || props.recoverySigningPublicKeySpkiBase64.length < 100) throw new Error('Recovery evidence signing SPKI must be pinned out of band.');
     if (!new RegExp(`^arn:[^:]+:iam::${props.recoveryAccountId}:role/[A-Za-z0-9+=,.@_/-]+$`).test(props.ownerApprovalRoleArn) || (!props.allowOfflinePlaceholders && props.ownerApprovalRoleArn.includes('example'))) throw new Error('A separately provisioned recovery-account MFA owner-approval role is required.');
@@ -343,6 +351,11 @@ export class RecoveryStack extends Stack {
       actions: ['dynamodb:GetItem', 'dynamodb:Query'],
       resources: [intentTable.tableArn],
     }));
+    recoveryOnlyRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
+      resources: [intentTable.tableArn],
+      conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['MEDIA#*'] } },
+    }));
     liveBucket.grantRead(recoveryOnlyRole, 'sha256/*');
     liveBucket.grantPut(recoveryOnlyRole, 'sha256/*');
     encryptionKey.grantEncryptDecrypt(recoveryOnlyRole);
@@ -540,6 +553,10 @@ export class RecoveryStack extends Stack {
         Recovery__DestinationBucket: bucket.bucketName,
         Recovery__EvidenceBucket: evidenceBucket.bucketName,
         Recovery__TargetBucket: liveBucket.bucketName,
+        Recovery__TargetKmsKeyId: encryptionKey.keyArn,
+        Recovery__ApiImageDigest: props.recoveryApiImageDigest,
+        Recovery__SourceRegion: props.primaryRegion,
+        Recovery__SourceBucket: props.primaryIngestBucketName,
         Recovery__DestinationRegion: this.region,
         Recovery__DestinationKmsKeyId: encryptionKey.keyArn,
         Recovery__EvidenceKmsKeyId: evidenceEncryptionKey.keyArn,

@@ -78,6 +78,10 @@ assert.ok(values(drillEnvironment.Recovery__EvidenceBucket).includes(Object.entr
 assert.ok(copyEnvironment.Recovery__EvidenceKmsKeyId);
 assert.ok(drillEnvironment.Recovery__EvidenceKmsKeyId);
 assert.equal(drillEnvironment.Recovery__RecoveryOnly, 'true');
+assert.ok(drillEnvironment.Recovery__TargetKmsKeyId);
+assert.match(drillEnvironment.Recovery__ApiImageDigest, /^[0-9a-f]{64}$/);
+assert.equal(drillEnvironment.Recovery__SourceRegion, 'ap-southeast-1');
+assert.ok(drillEnvironment.Recovery__SourceBucket);
 for (const environment of [copyEnvironment, drillEnvironment]) {
   for (const name of ['Recovery__ApiBuildDigest', 'Recovery__IngestWorkerBuildDigest', 'Recovery__RecoveryWorkerBuildDigest',
     'Recovery__RendererBuildDigest', 'Recovery__RecoveryTemplateDigest', 'Recovery__MigrationDigest',
@@ -173,6 +177,13 @@ assert.ok(bootstrapPolicies.every(policy => policy.Statement.every(statement =>
 assert.ok(!bootstrapPolicies.some(policy => values(policy).match(/s3:|kms:|secretsmanager:|fence|intent|sts:AssumeRole/)));
 
 const purgePolicies = policiesForRole(purgeRole);
+const drillRole = resourceOf('AWS::IAM::Role', value => values(value.Properties.Description).includes('Verify and drill using recovery resources only'));
+const drillIntentWrites = policiesForRole(drillRole).flatMap(policy => policy.Statement)
+  .filter(statement => values(statement.Resource).includes(Object.entries(recovery.Resources).find(([, value]) => value === intentTable)?.[0]))
+  .filter(statement => values(statement.Action).includes('dynamodb:PutItem') || values(statement.Action).includes('dynamodb:UpdateItem'));
+assert.equal(drillIntentWrites.length, 1);
+assert.deepEqual(drillIntentWrites[0].Action, ['dynamodb:PutItem', 'dynamodb:UpdateItem']);
+assert.deepEqual(drillIntentWrites[0].Condition, { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['MEDIA#*'] } });
 const purgeStatements = purgePolicies.flatMap(policy => policy.Statement);
 const purgeTrustStatement = purgeRole.Properties.AssumeRolePolicyDocument.Statement[0];
 assert.equal(purgeTrustStatement.Condition.Bool['aws:MultiFactorAuthPresent'], 'true');

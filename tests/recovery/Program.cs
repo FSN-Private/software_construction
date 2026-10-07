@@ -23,6 +23,22 @@ try
     ContractChecks();
     OwnerPointIndexChecks();
     await OwnerPointIndexBootstrapChecksAsync();
+    await RecoveryPointDiscoveryChecks.RunAsync();
+    RecoveryAuditHeadChecks.Run();
+    await RecoveryAuditHeadProofStoreChecks.RunAsync();
+    await RecoveryVerificationPublisherChecks.RunAsync();
+    RecoveryObjectClosureChecks.Run();
+    RecoveryMaterializedClosureChecks.Run();
+    RecoveryRetentionHistoryChecks.Run();
+    await RecoveryMaterializerChecks.RunAsync();
+    await RecoveryApiTaskChecks.RunAsync();
+    RecoveryCandidateIdentityChecks.Run();
+    await RecoveryOwnerAccessProbeChecks.RunAsync();
+    await RecoveryCandidateAccessInputChecks.RunAsync();
+    await RecoveryXmpContentChecks.RunAsync();
+    await RecoveryCrossPointReuseChecks.RunAsync();
+    await RecoveryLatestPointDiscoveryChecks.RunAsync();
+    await RecoveryCaptureCompletionReceiptChecks.RunAsync();
     EvidenceContractChecks();
     OwnerAccessEvidenceChecks();
     VerifierContractChecks();
@@ -275,6 +291,13 @@ static async Task OwnerPointIndexBootstrapChecksAsync()
           emptyMarker["bootstrapPointCount"].N == "0" && emptyMarker["indexedPointCount"].N == "0",
         "Bootstrap indexes all discovered scopes and only an explicitly configured empty scope.");
 
+    var scansBeforeVerification = fake.ScanCalls;
+    var indexedCopies = await RecoveryVerifierRunner.ReadCopiedPointsAsync(client, "control", ownerA, libraryA,
+        CancellationToken.None);
+    Check(fake.ScanCalls == scansBeforeVerification && indexedCopies.Count == 2 &&
+          indexedCopies.Select(point => point.PointId).Order().SequenceEqual(new[] { pointA, pointB }.Order()),
+        "Ordinary verification reads only the configured strongly consistent OWNER index and exact COPY rows; it never scans.");
+
     var newPoint = Guid.Parse("10000000-0000-0000-0000-000000000004");
     var newActions = RecoveryPointIndexBootstrapRunner.BuildPointIndexAdmissionActions("control", ownerA,
         libraryA, newPoint, new string('d', 64), alreadyIndexed: false);
@@ -311,9 +334,26 @@ static Dictionary<string, AttributeValue> LegacyCopy(Guid pointId, string ownerI
     ["pk"] = new AttributeValue { S = "POINT#" + pointId.ToString("D") },
     ["sk"] = new AttributeValue { S = "COPY" },
     ["pointId"] = new AttributeValue { S = pointId.ToString("D") },
+    ["captureId"] = new AttributeValue { S = "a0000000-0000-0000-0000-" + pointId.ToString("N")[20..] },
     ["ownerId"] = new AttributeValue { S = ownerId },
     ["libraryId"] = new AttributeValue { S = libraryId },
     ["sourceManifestSha256"] = new AttributeValue { S = digest },
+    ["sourceAccountId"] = new AttributeValue { S = "111111111111" },
+    ["sourceRegion"] = new AttributeValue { S = "ap-southeast-1" },
+    ["recoveryAccountId"] = new AttributeValue { S = "222222222222" },
+    ["recoveryRegion"] = new AttributeValue { S = "ap-southeast-2" },
+    ["sourceManifestBucket"] = new AttributeValue { S = "capture-bucket" },
+    ["sourceManifestKey"] = new AttributeValue { S = "captures/point.json" },
+    ["sourceManifestVersionId"] = new AttributeValue { S = "source-version" },
+    ["evidenceBucket"] = new AttributeValue { S = "evidence-bucket" },
+    ["manifestKey"] = new AttributeValue { S = "points/point/manifest.json" },
+    ["manifestVersionId"] = new AttributeValue { S = "manifest-version" },
+    ["manifestSha256"] = new AttributeValue { S = new string('e', 64) },
+    ["checkpointKey"] = new AttributeValue { S = "points/point/checkpoint.json" },
+    ["checkpointVersionId"] = new AttributeValue { S = "checkpoint-version" },
+    ["checkpointSha256"] = new AttributeValue { S = new string('f', 64) },
+    ["checkpointByteLength"] = new AttributeValue { N = "100" },
+    ["copiedAtUtc"] = new AttributeValue { S = "2026-10-06T00:00:00Z" },
     ["state"] = new AttributeValue { S = "copied" }
 };
 

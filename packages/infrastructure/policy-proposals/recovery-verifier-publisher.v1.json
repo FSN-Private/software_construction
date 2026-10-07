@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "status": "proposal-only",
+  "deployable": false,
+  "attachedToCdk": false,
+  "roleName": "platform-__ENVIRONMENT__-recovery-verify-publisher",
+  "task": {
+    "command": ["verify"],
+    "schedule": "rate(15 minutes)",
+    "network": "private recovery worker subnets without a public IP; cross-region SQS connectivity is a separate network review",
+    "database": "recovery PostgreSQL 18 endpoint using the recovery database secret and verify-full CA pins",
+    "executionRole": "separate ECS image-pull and log-write role, not included in this task-role policy"
+  },
+  "proposedResources": [
+    {
+      "constructId": "RecoveryVerificationTable",
+      "tableName": "platform-__ENVIRONMENT__-recovery-verification",
+      "partitionKey": "pk",
+      "sortKey": "sk",
+      "billingMode": "PAY_PER_REQUEST",
+      "encryption": "existing recovery customer-managed DynamoDB key",
+      "pointInTimeRecovery": true,
+      "deletionProtection": true,
+      "removalPolicy": "RETAIN",
+      "roleAttached": false
+    }
+  ],
+  "scopeBindings": {
+    "primaryRegion": "ap-southeast-1",
+    "recoveryRegion": "ap-southeast-2",
+    "primaryAccountId": "__PRIMARY_ACCOUNT_ID__",
+    "recoveryAccountId": "__RECOVERY_ACCOUNT_ID__",
+    "ownerId": "__EXACT_PRESERVED_PRIMARY_OWNER_ID__",
+    "libraryId": "__CANONICAL_LIBRARY_ID__",
+    "ownerScopeHash": "__LOWERCASE_SHA256_OF_UTF8_OWNER_ID_NUL_LIBRARY_ID__",
+    "ownerScopePartitionKey": "OWNER#__LOWERCASE_SHA256_OF_UTF8_OWNER_ID_NUL_LIBRARY_ID__",
+    "scopeHashDefinition": "lowercase hex SHA256(UTF8(ownerId + NUL + libraryId)); match RecoveryOwnerPointIndex.ScopeHash"
+  },
+  "requiredTaskEnvironment": {
+    "Recovery__Environment": "__ENVIRONMENT__",
+    "Recovery__WorkerId": "verify",
+    "Recovery__OwnerId": "__EXACT_PRESERVED_PRIMARY_OWNER_ID__",
+    "Recovery__LibraryId": "__CANONICAL_LIBRARY_ID__",
+    "Recovery__SourceRevision": "__FULL_SOURCE_REVISION__",
+    "Recovery__ApiBuildDigest": "__LOWERCASE_SHA256__",
+    "Recovery__IngestWorkerBuildDigest": "__LOWERCASE_SHA256__",
+    "Recovery__RecoveryWorkerBuildDigest": "__LOWERCASE_SHA256__",
+    "Recovery__RendererBuildDigest": "__LOWERCASE_SHA256__",
+    "Recovery__RecoveryTemplateDigest": "__LOWERCASE_SHA256__",
+    "Recovery__MigrationDigest": "__LOWERCASE_SHA256__",
+    "Recovery__ConfigurationDigest": "__LOWERCASE_SHA256__",
+    "Recovery__DatabaseRootCertificate": "__PINNED_RDS_CA_PEM__",
+    "Recovery__DatabaseRootCertificateSha256": "__LOWERCASE_SHA256_OF_EXACT_UTF8_PEM__",
+    "Recovery__SourceAccountId": "__PRIMARY_ACCOUNT_ID__",
+    "Recovery__SourceRegion": "ap-southeast-1",
+    "Recovery__DestinationAccountId": "__RECOVERY_ACCOUNT_ID__",
+    "Recovery__DestinationRegion": "ap-southeast-2",
+    "Recovery__SourceBucket": "__PRIMARY_MEDIA_BUCKET_NAME__",
+    "Recovery__DestinationBucket": "__RECOVERY_PAYLOAD_BUCKET_NAME__",
+    "Recovery__EvidenceBucket": "__RECOVERY_EVIDENCE_BUCKET_NAME__",
+    "Recovery__ControlTableName": "__RECOVERY_CONTROL_TABLE_NAME__",
+    "Recovery__VerificationTableName": "__RECOVERY_VERIFICATION_TABLE_NAME__",
+    "Recovery__DatabaseSecretArn": "__RECOVERY_DATABASE_SECRET_ARN__",
+    "Recovery__Database__Host": "__RECOVERY_POSTGRESQL_18_HOST__",
+    "Recovery__Database__Port": "5432",
+    "Recovery__Database__Name": "platform_recovery",
+    "Recovery__MigrationDirectory": "/app/migrations",
+    "Recovery__SigningKeyId": "__RECOVERY_EVIDENCE_SIGNING_KEY_ARN__",
+    "Recovery__SigningPublicKeySha256": "__OUT_OF_BAND_LOWERCASE_SHA256__",
+    "Recovery__OwnerApprovalTrust__KeyId": "__OUT_OF_BAND_OWNER_APPROVAL_KEY_ID__",
+    "Recovery__OwnerApprovalTrust__PublicKeySpkiBase64": "__OUT_OF_BAND_OWNER_APPROVAL_SPKI_BASE64__",
+    "Recovery__OwnerApprovalTrust__PublicKeySha256": "__OUT_OF_BAND_OWNER_APPROVAL_SPKI_SHA256__",
+    "Recovery__OwnerUserPoolId": "__RECOVERY_USER_POOL_ID__",
+    "Recovery__OwnerUserPoolClientId": "__RECOVERY_USER_POOL_CLIENT_ID__",
+    "Recovery__OwnerUserPoolIssuer": "https://cognito-idp.ap-southeast-2.amazonaws.com/__RECOVERY_USER_POOL_ID__",
+    "Recovery__AuditGenesisKey": "evidence/audit/genesis.v1.json",
+    "Recovery__AuditGenesisVersionId": "__EXACT_S3_VERSION_ID__",
+    "Recovery__AuditGenesisSha256": "__LOWERCASE_SHA256_OF_EXACT_BYTES__",
+    "Recovery__AuditGenesisByteLength": "__DECIMAL_BYTE_LENGTH__",
+    "Recovery__AuditMinimumSequence": "__INDEPENDENTLY_PINNED_AUDIT_SEQUENCE__",
+    "Recovery__AuditMinimumEventSha256": "__INDEPENDENTLY_PINNED_AUDIT_EVENT_SHA256__",
+    "Recovery__ObservationQueueArn": "__EXACT_PRIMARY_OBSERVATION_QUEUE_ARN__",
+    "Recovery__ObservationQueueUrl": "__EXACT_PRIMARY_OBSERVATION_QUEUE_URL__"
+  },
+  "roleTrustPolicy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowEcsTasksFromRecoveryAccount",
+        "Effect": "Allow",
+        "Principal": { "Service": "ecs-tasks.amazonaws.com" },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": { "aws:SourceAccount": "__RECOVERY_ACCOUNT_ID__" },
+          "ArnLike": { "aws:SourceArn": "arn:aws:ecs:ap-southeast-2:__RECOVERY_ACCOUNT_ID__:*" }
+        }
+      }
+    ]
+  },
+  "policyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "GetRecoveryTaskIdentity",
+        "Effect": "Allow",
+        "Action": "sts:GetCallerIdentity",
+        "Resource": "*"
+      },
+      {
+        "Sid": "ReadOnlyRecoveryDatabaseSecret",
+        "Effect": "Allow",
+        "Action": "secretsmanager:GetSecretValue",
+        "Resource": "__RECOVERY_DATABASE_SECRET_ARN__"
+      },
+      {
+        "Sid": "DecryptRecoveryDatabaseSecretThroughSecretsManager",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "__RECOVERY_DATABASE_SECRET_KMS_KEY_ARN__",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "secretsmanager.ap-southeast-2.amazonaws.com",
+            "kms:CallerAccount": "__RECOVERY_ACCOUNT_ID__",
+            "kms:EncryptionContext:SecretARN": "__RECOVERY_DATABASE_SECRET_ARN__"
+          }
+        }
+      },
+      {
+        "Sid": "ReadRecoveryEvidenceSigningPublicKey",
+        "Effect": "Allow",
+        "Action": "kms:GetPublicKey",
+        "Resource": "__RECOVERY_EVIDENCE_SIGNING_KEY_ARN__"
+      },
+      {
+        "Sid": "SignRecoverySafeCatalog",
+        "Effect": "Allow",
+        "Action": "kms:Sign",
+        "Resource": "__RECOVERY_EVIDENCE_SIGNING_KEY_ARN__",
+        "Condition": {
+          "StringEquals": { "kms:SigningAlgorithm": "RSASSA_PSS_SHA_256" }
+        }
+      },
+      {
+        "Sid": "ReadExactRecoveryPayloadVersions",
+        "Effect": "Allow",
+        "Action": "s3:GetObjectVersion",
+        "Resource": [
+          "__RECOVERY_PAYLOAD_BUCKET_ARN__/payload/sha256/*",
+          "__RECOVERY_PAYLOAD_BUCKET_ARN__/snapshots/*"
+        ]
+      },
+      {
+        "Sid": "ReadExactRecoveryEvidenceVersions",
+        "Effect": "Allow",
+        "Action": "s3:GetObjectVersion",
+        "Resource": [
+          "__RECOVERY_EVIDENCE_BUCKET_ARN__/points/*",
+          "__RECOVERY_EVIDENCE_BUCKET_ARN__/evidence/audit/genesis.v1.json"
+        ]
+      },
+      {
+        "Sid": "DecryptRecoveryPayloadThroughRegionalS3",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "__RECOVERY_PAYLOAD_KMS_KEY_ARN__",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.ap-southeast-2.amazonaws.com",
+            "kms:CallerAccount": "__RECOVERY_ACCOUNT_ID__"
+          },
+          "StringLike": {
+            "kms:EncryptionContext:aws:s3:arn": [
+              "__RECOVERY_PAYLOAD_BUCKET_ARN__/payload/sha256/*",
+              "__RECOVERY_PAYLOAD_BUCKET_ARN__/snapshots/*"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "DecryptRecoveryEvidenceThroughRegionalS3",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "__RECOVERY_EVIDENCE_KMS_KEY_ARN__",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.ap-southeast-2.amazonaws.com",
+            "kms:CallerAccount": "__RECOVERY_ACCOUNT_ID__"
+          },
+          "StringLike": {
+            "kms:EncryptionContext:aws:s3:arn": [
+              "__RECOVERY_EVIDENCE_BUCKET_ARN__/points/*",
+              "__RECOVERY_EVIDENCE_BUCKET_ARN__/evidence/audit/genesis.v1.json"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "ReadConfiguredOwnerIndexHeadStronglyConsistent",
+        "Effect": "Allow",
+        "Action": "dynamodb:GetItem",
+        "Resource": "__RECOVERY_CONTROL_TABLE_ARN__",
+        "Condition": {
+          "ForAllValues:StringEquals": {
+            "dynamodb:LeadingKeys": ["OWNER#__LOWERCASE_SHA256_OF_UTF8_OWNER_ID_NUL_LIBRARY_ID__"]
+          }
+        }
+      },
+      {
+        "Sid": "ReadCopyPointerItemsFromIndexedPoints",
+        "Effect": "Allow",
+        "Action": "dynamodb:GetItem",
+        "Resource": "__RECOVERY_CONTROL_TABLE_ARN__",
+        "Condition": {
+          "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["POINT#*"] }
+        }
+      },
+      {
+        "Sid": "ReadWritePointVerificationOutbox",
+        "Effect": "Allow",
+        "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
+        "Resource": "__RECOVERY_VERIFICATION_TABLE_ARN__",
+        "Condition": {
+          "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["POINT#*"] },
+          "ForAllValues:StringEquals": {
+            "dynamodb:Attributes": [
+              "pk", "sk", "ownerId", "libraryId", "pointId", "captureId", "sourceManifestSha256",
+              "checkpointSha256", "fullManifestSha256", "auditHeadSequence", "auditHeadEventSha256",
+              "snapshotCutoffUtc", "changeSequence", "verifiedAtUtc", "payloadSha256", "outboxSha256",
+              "messageCount", "messageBodies", "state", "safeStatus", "safeClassCoverage", "workerBuildDigest",
+              "deliveredAtUtc", "supersededAtUtc", "proofState", "envelopeBytes"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "ReadOrAdvanceConfiguredOwnerVerificationAndAuditHead",
+        "Effect": "Allow",
+        "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+        "Resource": "__RECOVERY_VERIFICATION_TABLE_ARN__",
+        "Condition": {
+          "ForAllValues:StringEquals": {
+            "dynamodb:LeadingKeys": ["OWNER#__LOWERCASE_SHA256_OF_UTF8_OWNER_ID_NUL_LIBRARY_ID__"],
+            "dynamodb:Attributes": [
+              "pk", "sk", "ownerId", "libraryId", "pointId", "sourceManifestSha256",
+              "checkpointSha256", "fullManifestSha256", "snapshotCutoffUtc", "changeSequence",
+              "verifiedAtUtc", "safeStatus", "safeClassCoverage", "auditHeadSequence", "auditHeadEventSha256",
+              "payloadSha256", "workerBuildDigest"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "PublishOnlyToPrimaryRecoveryObservationQueue",
+        "Effect": "Allow",
+        "Action": "sqs:SendMessage",
+        "Resource": "__EXACT_PRIMARY_OBSERVATION_QUEUE_ARN__"
+      }
+    ]
+  },
+  "reviewConstraints": [
+    "This document is not attached to any stack or role and its __PLACEHOLDER__ bindings make it non-deployable.",
+    "The verifier strongly Gets only the configured OWNER#<owner/library hash>/INDEX and exact latest OWNER#<scope>/POINT#<id> membership, then Gets the corresponding POINT#<id>/COPY row; routine verification does not Query or Scan history.",
+    "ControlTable is read-only to this role: it strongly Queries the configured OWNER# partition and Gets exact POINT#<id>/COPY items. All verifier writes and the audit head use the separate retained VerificationTable.",
+    "DynamoDB IAM LeadingKeys constrains only the partition key, not a sort key. Because the separate VerificationTable contains only verifier records, this no longer permits overwriting ControlTable COPY/index rows; the worker must still use exact POINT/VERIFY, POINT/AUDIT_VERIFY, and OWNER/VERIFIED sort keys, immutable point records, and conditional monotonic owner updates.",
+    "POINT/AUDIT_VERIFY stores only the signed historical audit-head proof envelope and its fixed identity/digest/state fields; drill reads that exact item and verifies its signature and point bindings.",
+    "The OWNER#<scope hash>/VERIFIED update conditionally advances auditHeadSequence/auditHeadEventSha256 only after proving the previous pair occurs in the verified audit chain; no separate AUDIT namespace is authorized.",
+    "Signed safe summaries are published only to the exact primary recovery observation queue. The signed schema is limited to approved IDs, digests, times, class counts, and status codes; it carries no media bytes, object locators, credentials, or raw errors.",
+    "The cross-region SQS network path, task scheduling authority, template-digest binding, and runtime behavior require separate review; this proposal grants no task-launch, deployment, or schedule authority."
+  ]
+}

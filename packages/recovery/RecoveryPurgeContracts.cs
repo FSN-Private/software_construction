@@ -126,6 +126,7 @@ public sealed record RecoveryPurgePlanV1(
     Guid OperationId,
     Guid EventId,
     string ProposalDigest,
+    string FreezeAcknowledgementSha256,
     string OwnerId,
     string LibraryId,
     Guid AssetId,
@@ -140,9 +141,10 @@ public sealed record RecoveryPurgePlanV1(
     string SettledWriterIntentSetSha256,
     DateTimeOffset PreparedAtUtc,
     DateTimeOffset ExpiresAtUtc,
+    RecoveryRetentionHistoryProofV1 RetentionHistory,
     IReadOnlyList<RecoveryPurgeTargetVersionV1> TargetVersions)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false
@@ -165,6 +167,7 @@ public sealed record RecoveryPurgePlanV1(
             AssetId == Guid.Empty || EditId == Guid.Empty)
             throw new InvalidDataException("purge_plan_identity_invalid");
         RecoveryValidation.Hash(ProposalDigest, nameof(ProposalDigest));
+        RecoveryValidation.Hash(FreezeAcknowledgementSha256, nameof(FreezeAcknowledgementSha256));
         RecoveryValidation.Text(OwnerId, nameof(OwnerId), 200);
         RecoveryValidation.Text(LibraryId, nameof(LibraryId), 200);
         if (Category is not ("original" or "xmp") || Category == "xmp" && EditId is null ||
@@ -179,6 +182,9 @@ public sealed record RecoveryPurgePlanV1(
         RecoveryValidation.Hash(SettledWriterIntentSetSha256, nameof(SettledWriterIntentSetSha256));
         RecoveryValidation.Utc(PreparedAtUtc, nameof(PreparedAtUtc));
         RecoveryValidation.Utc(ExpiresAtUtc, nameof(ExpiresAtUtc));
+        if (RetentionHistory is null) throw new InvalidDataException("purge_retention_history_required");
+        RetentionService.ValidateHistoryProof(RetentionHistory, OwnerId, LibraryId, AssetId, EditId,
+            Category, ContentSha256, OwnerPointCount, OwnerPointSetSha256);
         if (ExpiresAtUtc <= PreparedAtUtc || ExpiresAtUtc > PreparedAtUtc.AddHours(1))
             throw new InvalidDataException("purge_plan_expiry_invalid");
         foreach (var target in TargetVersions)

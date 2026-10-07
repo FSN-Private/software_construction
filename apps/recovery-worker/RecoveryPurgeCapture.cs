@@ -49,11 +49,12 @@ internal static class RecoveryPurgeCapture
                    t.event_id, t.owner_id, t.library_id, t.asset_id, t.edit_id, t.category,
                    t.content_sha256, t.lifecycle_generation, t.recovery_acknowledged_at_utc, t.completed_at_utc,
                    c.canonical_payload, c.signature, c.signing_key_id, c.signing_public_key_sha256,
-                   c.payload_sha256, c.completed_at_utc
+                   c.payload_sha256, c.completed_at_utc, f.canonical_freeze_ack, f.freeze_ack_sha256
               FROM recovery_purge_proposals p
               LEFT JOIN recovery_purge_journals j ON j.operation_id=p.operation_id
               LEFT JOIN media_purge_tombstones t ON t.event_id=p.event_id
               LEFT JOIN recovery_purge_completions c ON c.event_id=p.event_id
+              LEFT JOIN recovery_purge_freezes f ON f.operation_id=p.operation_id
              WHERE p.owner_id=$1 AND p.library_id=$2
              ORDER BY p.proposed_at_utc, p.operation_id
             """;
@@ -72,6 +73,22 @@ internal static class RecoveryPurgeCapture
             {
                 if (hasJournal || hasTombstone || hasCompletion)
                     throw new RecoveryWorkerException("purge_reversible_state_conflict");
+                continue;
+            }
+            if (phase == "executing" && !hasJournal && !hasTombstone && !hasCompletion)
+            {
+                if (reader.IsDBNull(22) || reader.IsDBNull(23))
+                    throw new RecoveryWorkerException("purge_freeze_ack_missing");
+                var frozenProposal = RecoveryPurgeProposalV1.ParseCanonical(reader.GetFieldValue<byte[]>(0));
+                var freezeBytes = reader.GetFieldValue<byte[]>(22);
+                var freeze = RecoveryPurgeFreezeAcknowledgementV1.ParseCanonical(freezeBytes);
+                freeze.Validate(frozenProposal);
+                if (frozenProposal.OwnerId != ownerId || frozenProposal.LibraryId != libraryId ||
+                    frozenProposal.PlanDigest != reader.GetString(2).Trim() ||
+                    RecoveryEvidenceCodec.Hash(freezeBytes) != reader.GetString(23).Trim() || freeze.FrozenAtUtc > nowUtc)
+                    throw new RecoveryWorkerException("purge_freeze_ack_binding_invalid");
+                // A reversible freeze requires a complete post-freeze dump. It never
+                // authorizes omission; only independent completion can do that below.
                 continue;
             }
             if (phase != "completed" || !hasJournal || !hasTombstone || !hasCompletion || trust is null)
