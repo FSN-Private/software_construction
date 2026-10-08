@@ -1,8 +1,16 @@
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { verifyRecoveryTemplate } from '../../../scripts/verify-recovery-template.mjs';
 
 const foundation = JSON.parse(readFileSync('packages/infrastructure/cdk.out-recovery/PlatformFoundation-nonprod.template.json', 'utf8'));
-const recovery = JSON.parse(readFileSync('packages/infrastructure/cdk.out-recovery/Recovery-nonprod.template.json', 'utf8'));
+const recoveryBytes = readFileSync('packages/infrastructure/cdk.out-recovery/Recovery-nonprod.template.json');
+const recovery = JSON.parse(recoveryBytes.toString('utf8'));
+const recoveryDigest = createHash('sha256').update(recoveryBytes).digest('hex');
+assert.deepEqual(verifyRecoveryTemplate(recoveryBytes, recoveryDigest), [
+  { ParameterKey: 'RecoveryTemplateDigest', ParameterValue: recoveryDigest },
+]);
+assert.throws(() => verifyRecoveryTemplate(Buffer.concat([recoveryBytes, Buffer.from('\n')]), recoveryDigest), /differs/);
 const resources = Object.entries(recovery.Resources);
 const resourceOf = (type, predicate = () => true) => {
   const found = resources.find(([, value]) => value.Type === type && predicate(value));
@@ -306,4 +314,6 @@ assert.ok(!primaryValues.includes('BackupAgeHours'), 'The previous placeholder b
 const schedules = resources.filter(([, value]) => value.Type === 'AWS::Events::Rule' && value.Properties.ScheduleExpression).map(([, value]) => value.Properties.ScheduleExpression);
 assert.ok(schedules.includes('rate(5 minutes)'), 'Recovery copy verification and freshness polling must run every five minutes.');
 
+await import('./verifier-publisher-policy-proposal.mjs');
+await import('./verification-table-proposal.mjs');
 console.log('Recovery infrastructure isolation, retention, scheduling, and alarm contracts passed.');

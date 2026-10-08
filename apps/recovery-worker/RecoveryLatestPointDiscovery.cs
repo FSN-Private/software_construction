@@ -11,6 +11,49 @@ internal static class RecoveryLatestPointDiscovery
     private const int MaximumHeadReadAttempts = 2;
     internal static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromMinutes(5);
 
+    internal static Guid? SelectedPoint(RecoveryWorkerConfiguration configuration)
+    {
+        if (configuration.Optional("RecoveryPointId") is not { } text) return null;
+        if (!Guid.TryParseExact(text, "D", out var id) || id == Guid.Empty)
+            throw new RecoveryWorkerException("recovery_point_id_invalid");
+        return id;
+    }
+
+    internal static void RequireSelectedPoint(Guid? selected, Guid recorded)
+    {
+        if (selected is { } id && id != recorded)
+            throw new RecoveryWorkerException("drill_run_selected_point_conflict");
+    }
+
+    internal static async Task<(CopyPointer Pointer, RecoveryPointManifestV1 Manifest)>
+        ReadIndexedPointAsync(IAmazonDynamoDB dynamo, IAmazonS3 s3, string table,
+            string ownerId, string libraryId, Guid pointId, RecoverySigningTrust trust, CancellationToken cancellationToken)
+    {
+        if (pointId == Guid.Empty) throw new RecoveryWorkerException("recovery_point_id_invalid");
+        var marker = await GetStrongAsync(dynamo, table,
+            RecoveryPointIndexBootstrapRunner.IndexKey(ownerId, libraryId), cancellationToken)
+            ?? throw new RecoveryWorkerException("scope_index_bootstrap_required");
+        RecoveryPointIndexBootstrapRunner.ValidateComplete(marker);
+        var member = await GetStrongAsync(dynamo, table,
+            RecoveryPointIndexBootstrapRunner.OwnerPointKey(ownerId, libraryId, pointId), cancellationToken);
+        if (member is null || ReadString(member, "pk") != RecoveryOwnerPointIndex.PartitionKey(ownerId, libraryId) ||
+            ReadString(member, "sk") != RecoveryOwnerPointIndex.PointSortKey(pointId) ||
+            ReadString(member, "pointId") != pointId.ToString("D") || !IsHash(ReadString(member, "sourceManifestSha256")))
+            throw new RecoveryWorkerException("selected_copy_membership_missing_or_foreign");
+        var key = CopyKey(pointId);
+        var item = await GetStrongAsync(dynamo, table, key, cancellationToken);
+        if (item is null || ReadString(item, "pk") != key["pk"].S || ReadString(item, "sk") != "COPY")
+            throw new RecoveryWorkerException("scope_index_point_missing");
+        var pointer = CopyPointer.From(item);
+        if (pointer is null || pointer.PointId != pointId || pointer.OwnerId != ownerId || pointer.LibraryId != libraryId ||
+            pointer.SourceManifestSha256 != ReadString(member, "sourceManifestSha256"))
+            throw new RecoveryWorkerException("scope_index_point_binding_mismatch");
+        var (manifest, _) = await RecoveryVerifierRunner.ReadSourceManifestAsync(s3, pointer, trust, cancellationToken);
+        ValidateMembership(member, RecoveryOwnerPointIndex.PartitionKey(ownerId, libraryId), ownerId, libraryId,
+            new Head(pointId, manifest.Digest(), manifest.SnapshotCutoffUtc, manifest.ChangeWatermark.LastSequence));
+        return (pointer, manifest);
+    }
+
     public static async Task<(CopyPointer Pointer, RecoveryPointManifestV1 Manifest)> ReadLatestSealedPointAsync(
         IAmazonDynamoDB dynamo,
         IAmazonS3 s3,
