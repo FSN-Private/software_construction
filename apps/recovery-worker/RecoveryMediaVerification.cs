@@ -20,6 +20,12 @@ internal static class RecoveryMediaVerification
         if (receipt.DataClass is not (nameof(RecoveryDataClass.OriginalImage) or nameof(RecoveryDataClass.XmpSidecar)))
             throw new RecoveryWorkerException("media_verification_class_invalid");
         var due = FullReadRequired(receipt, nowUtc);
+        var metadata = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
+        { BucketName=receipt.DestinationBucket,Key=receipt.DestinationKey,VersionId=receipt.DestinationVersionId },ct);
+        if(metadata.VersionId!=receipt.DestinationVersionId || metadata.ContentLength!=receipt.ByteLength ||
+            metadata.ObjectLockMode != ObjectLockMode.Governance && metadata.ObjectLockMode != ObjectLockMode.Compliance ||
+            metadata.ObjectLockRetainUntilDate is not { } retainUntil || retainUntil.ToUniversalTime()<=nowUtc.UtcDateTime)
+            throw new RecoveryWorkerException("media_verification_retention_identity_invalid");
         if (forceFullRead || due)
         {
             if (receipt.DataClass == nameof(RecoveryDataClass.XmpSidecar))
@@ -32,12 +38,6 @@ internal static class RecoveryMediaVerification
         // This timestamp arrives only through the verified signed checkpoint and
         // exact receipt set. An unsigned time or a changed object version is never
         // authority to skip the periodic full hash/structure verification.
-        var metadata = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
-        { BucketName=receipt.DestinationBucket,Key=receipt.DestinationKey,VersionId=receipt.DestinationVersionId },ct);
-        if(metadata.VersionId!=receipt.DestinationVersionId || metadata.ContentLength!=receipt.ByteLength ||
-            metadata.ObjectLockMode != ObjectLockMode.Governance && metadata.ObjectLockMode != ObjectLockMode.Compliance ||
-            metadata.ObjectLockRetainUntilDate is not { } retainUntil || retainUntil.ToUniversalTime()<=nowUtc.UtcDateTime)
-            throw new RecoveryWorkerException("media_verification_retention_identity_invalid");
         using var access = await s3.GetObjectAsync(new GetObjectRequest
         {
             BucketName=receipt.DestinationBucket,Key=receipt.DestinationKey,VersionId=receipt.DestinationVersionId,

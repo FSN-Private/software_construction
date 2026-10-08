@@ -28,8 +28,12 @@ internal static class RecoveryMediaVerificationChecks
         await RecoveryMediaVerification.VerifyAsync(s3,receipt with { FullByteVerifiedAtUtc=now.AddHours(-24) },false,now,default);
         Require(proxy.FullReads==2,"expired_full_receipt_skipped_hash");
         foreach(var fault in new[] { "version","length","retention","lock_mode" })
+        {
             await Reject(()=>RecoveryMediaVerification.VerifyAsync(Fake(bytes,fault),receipt,false,now,default),
                 "media_verification_retention_identity_invalid");
+            await Reject(()=>RecoveryMediaVerification.VerifyAsync(Fake(bytes,fault),receipt,true,now,default),
+                "media_verification_retention_identity_invalid");
+        }
         await Reject(()=>RecoveryMediaVerification.VerifyAsync(Fake(bytes,"probe_version"),receipt,false,now,default),"media_verification_access_invalid");
         var corrupt=bytes.ToArray();corrupt[0]^=1;
         await Reject(()=>RecoveryMediaVerification.VerifyAsync(Fake(corrupt),receipt,true,now,default),"artifact_checksum_mismatch");

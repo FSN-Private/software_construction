@@ -1,0 +1,14 @@
+# T036: Signed periodic full-media verification proof
+
+**Status**: Specific local record-scope approval pending; not implemented
+**Date**: 2026-10-08
+
+Automatic approval review rejected adding this record because the approved verifier proposal names only VERIFY, AUDIT_VERIFY, CYCLE and scoped owner records. This proposal extends that record contract without adding IAM actions, resources, attributes or principals. The existing verifier role would strongly Get and conditionally Put one `POINT#<id>/FULL_VERIFY#<exact-checkpoint-envelope-sha256>` item in the existing recovery VerificationTable, using only already allowed identity, digest, `verifiedAtUtc`, `workerBuildDigest` and `envelopeBytes` attributes.
+
+The private signed payload is fixed: schema version, point/capture IDs, owner/library IDs, exact immutable copy-checkpoint envelope SHA-256, original full-read start UTC and worker image digest. The checkpoint authenticates the complete exact-version receipt closure, including receipt chunk hashes. No media, paths, object locators, credentials or raw errors appear in this payload; it is never sent to the primary queue. Signatures use the already approved recovery evidence key, with separate message type `recovery_full_media_verification`.
+
+The verifier writes only after the authenticated complete point's media have all passed actual streamed SHA-256/XMP checks and existing release checks. Failed/truncated reads produce no proof. The conservative start time precedes every read; persistence/replay cannot renew it. Strong reads authenticate the signature, canonical bytes and all owner/point/checkpoint/build/time bindings before allowing ordinary exact-version metadata/retention/access checks within 24 hours. Absence or expiry forces every media version to be fully read again. A new checkpoint hash uses another exact item and cannot inherit prior closure evidence. Drills always rehash, irrespective of the proof.
+
+Conditional writes compare the prior signed payload digest, preventing a slower writer from overwriting newer verification evidence. Unknown write outcomes are read and cryptographically validated on retry; unconfirmed writes establish no authority. This record does not advance the healthy owner marker, audit head, catalog time or qualification state. It cannot release a hold, purge or authorize promotion.
+
+Local checks will cover repeated cycles, 24-hour boundaries, absent/legacy evidence, tampering, foreign scope/build/checkpoint/version, future timestamps, failed full reads, accepted-but-lost writes and concurrent older/newer writers. Both ordinary and full reads will enforce current exact-version retention metadata. Real AWS/full-volume qualification remains separately required. Approval authorizes local code/tests and the proposal's record-contract documentation only; no deployment, live reads/writes or message delivery.

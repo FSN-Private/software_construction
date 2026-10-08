@@ -4,6 +4,8 @@ Status: local implementation and verification in progress. No production recover
 
 ## Recorded local checks
 
+2026-10-08 current checkpoint: `dotnet run --project tests/recovery/Platform.Recovery.Tests.csproj -c Release --no-restore` passes signed failure replay, historical selection, offline owner-attestation preparation/assembly and ordinary/full media retention fault checks. `dotnet build apps/recovery-worker/Platform.Recovery.Worker.csproj -c Release --no-restore` passes with zero warnings/errors. `node tests/integration/recovery/run.mjs` passes the actual local PostgreSQL/S3/API regression, including readiness refusal without a successful latest validation and refusal of promotion through a generic state update. Earlier approvals for the verifier/table, exact runtime secret, template digest and reader support are implemented in 78b6979; they no longer await local authorization. The FULL_VERIFY record proposal and ADR-0017 retention extension remain pending. Prior checkpoint statements below retain their historical context.
+
 2026-10-06 approval-review disposition: automatic approval review rejected a proposed persistent database-trigger freeze because blocking lifecycle/hold writes during purge could broadly disrupt services. The trigger change was not applied. T018-T021 continue with target-scoped application guards serialized on the same asset row as the reversible freeze CAS; full mutation-path coverage and concurrency tests remain required before recovery deletion. The separate template-digest parameter rejection remains pending specific owner approval; its exact-byte gate has only local fixture evidence so far.
 
 | Date | Command | Result and scope |
