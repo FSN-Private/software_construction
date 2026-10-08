@@ -58,6 +58,12 @@ internal static class RecoveryVerificationPublisherChecks
         Set("MigrationDigest", new string('5', 64));
         Set("VerifierBuild", "fixture-worker");
         var configuration = RecoveryWorkerConfiguration.Load("verify");
+        Check(RecoveryCyclePublisher.FailureCode("verification", new InvalidDataException("private/path")) == "verification_integrity_failed" &&
+            RecoveryCyclePublisher.FailureCode("verification", new IOException("credential=secret")) == "verification_inaccessible" &&
+            RecoveryCyclePublisher.FailureCode("verification", new RecoveryWorkerException("private_filename")) == "verification_incomplete" &&
+            RecoveryCyclePublisher.FailureCode("verification", new OperationCanceledException()) == "worker_cancelled" &&
+            RecoveryCyclePublisher.FailureCode("publication", new IOException("queue/path")) == "publication_failed",
+            "Exception details entered publication codes or failed captures lost their safe classification.");
 
         using var rsa = RSA.Create(2048);
         var signer = new TestSigner(rsa, "fixture-publisher-key");
@@ -169,6 +175,94 @@ internal static class RecoveryVerificationPublisherChecks
         catch (RecoveryWorkerException exception) when (exception.SafeCode == "owner_access_proof_required_for_healthy_catalog") { }
         Check(sqs.Sends.Count == deliveredSendCount,
             "An access-incomplete point must not send any healthy catalog or observations.");
+        var failedPoint = Guid.NewGuid();
+        var failedCapture = Guid.NewGuid();
+        sqs.FailOnceAfterAcceptingCall = sqs.Sends.Count + 1;
+        try
+        {
+            await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+                failedPoint, failedCapture, "verification", "failed", "verification_integrity_failed", CancellationToken.None);
+            throw new InvalidOperationException("Lost cycle-send response did not leave a retryable outbox.");
+        }
+        catch (InvalidOperationException error) when (error.Message == "simulated_send_timeout") { }
+        var cycleKey = RecoveryCyclePublisher.Key("owner-fixture", "main", failedPoint);
+        var cycleItem = dynamo.Read(cycleKey["pk"].S, "CYCLE")!;
+        Check(Attr(cycleItem, "state") == "pending", "Cycle bytes were not persisted before publication.");
+        var firstBody = sqs.Sends[^1];
+        var cycle = RecoveryCycleCodec.Verify(RecoveryCycleCodec.ParseEnvelope(System.Text.Encoding.UTF8.GetBytes(firstBody)), trust);
+        using var safePayload = JsonDocument.Parse(cycle.CanonicalPayloadBytes);
+        Check(safePayload.RootElement.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal).SequenceEqual(
+            new[] { "schemaVersion", "eventId", "captureId", "recoveryPointId", "ownerId", "libraryId", "observedAtUtc", "stage",
+                "failedDataClass", "outcome", "safeCode", "recoveryWorkerBuildDigest" }.Order(StringComparer.Ordinal)),
+            "Cycle payload included fields outside the approved publication contract.");
+        Check(cycle.Payload.RecoveryPointId == failedPoint && cycle.Payload.CaptureId == failedCapture &&
+            cycle.Payload.SafeCode == "verification_integrity_failed" && cycle.Payload.FailedDataClass == "recovery_records",
+            "Cycle scope or fixed safe fields were lost.");
+        await RecoveryCyclePublisher.ReplayPendingAsync(database, queue, configuration, signer, trust, CancellationToken.None);
+        Check(sqs.Sends[^1] == firstBody && Attr(dynamo.Read(cycleKey["pk"].S, "CYCLE")!, "state") == "delivered",
+            "A cycle retry changed its signature/event/time or did not finish delivery.");
+        var cycleSendCount = sqs.Sends.Count;
+        await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+            failedPoint, failedCapture, "verification", "failed", "verification_integrity_failed", CancellationToken.None);
+        Check(sqs.Sends.Count == cycleSendCount && dynamo.TransactionCount == 2 &&
+            Attr(dynamo.Read("OWNER#" + RecoveryOwnerPointIndex.ScopeHash("owner-fixture", "main"), "CYCLE_PENDING")!, "pointId") == "",
+            "Delivered cycle replay sent again or modified a healthy owner marker.");
+        await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+            null, null, "verification", "failed", "verification_inaccessible", CancellationToken.None, replayOnly: true);
+        Check(sqs.Sends.Count == cycleSendCount, "Replay invented a failure when no outbox existed.");
+        foreach (var invalid in new[] { "private/path", "database_password", "arbitrary_safe_looking_code" })
+        {
+            try
+            {
+                await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+                    failedPoint, failedCapture, "verification", "failed", invalid, CancellationToken.None);
+                throw new InvalidOperationException("An unapproved cycle code entered the outbox.");
+            }
+            catch (RecoveryWorkerException error) when (error.SafeCode == "cycle_publication_input_invalid") { }
+        }
+        var secondCycle = Guid.NewGuid();
+        dynamo.FailAfterCycleTransactionOnce = true;
+        try
+        {
+            await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+                failedPoint, failedCapture, "verification", "failed", "verification_inaccessible", CancellationToken.None, cycleId: secondCycle);
+            throw new InvalidOperationException("Unknown committed outbox transaction was not simulated.");
+        }
+        catch (InvalidOperationException error) when (error.Message == "cycle_transaction_response_lost") { }
+        var secondKey = RecoveryCyclePublisher.Key("owner-fixture", "main", secondCycle);
+        var secondItem = dynamo.Read(secondKey["pk"].S, "CYCLE")!;
+        var secondBytes = Convert.FromBase64String(Attr(secondItem, "envelopeBytes"));
+        dynamo.FailAfterCycleDeliveryOnce = true;
+        try
+        {
+            await RecoveryCyclePublisher.ReplayPendingAsync(database, queue, configuration, signer, trust, CancellationToken.None);
+            throw new InvalidOperationException("Unknown delivered update was not simulated.");
+        }
+        catch (InvalidOperationException error) when (error.Message == "cycle_delivery_response_lost") { }
+        var sendsBeforeDeliveredReplay = sqs.Sends.Count;
+        await RecoveryCyclePublisher.ReplayPendingAsync(database, queue, configuration, signer, trust, CancellationToken.None);
+        Check(sqs.Sends.Count == sendsBeforeDeliveredReplay && System.Text.Encoding.UTF8.GetBytes(sqs.Sends[^1]).SequenceEqual(secondBytes),
+            "Restart after a committed delivery resent or changed the signed cycle.");
+        var secondPayload = RecoveryCycleCodec.Verify(RecoveryCycleCodec.ParseEnvelope(secondBytes), trust).Payload;
+        Check(secondPayload.EventId == secondCycle && secondPayload.RecoveryPointId == failedPoint &&
+            dynamo.Read(cycleKey["pk"].S, "CYCLE") is not null,
+            "A later failed cycle overwrote the first receipt or confused event and recovery-point identities.");
+        var fallbackCycle = Guid.NewGuid();
+        await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+            null, null, "verification", "failed", "verification_inaccessible", CancellationToken.None, cycleId: fallbackCycle);
+        var fallbackPayload = RecoveryCycleCodec.Verify(RecoveryCycleCodec.ParseEnvelope(System.Text.Encoding.UTF8.GetBytes(sqs.Sends[^1])), trust).Payload;
+        Check(fallbackPayload.EventId == fallbackCycle && fallbackPayload.RecoveryPointId is null && fallbackPayload.CaptureId is null,
+            "Pre-discovery failure fabricated a sealed point or capture identity.");
+        cycleSendCount = sqs.Sends.Count;
+        Set("ObservationQueueUrl", $"https://sqs.{sourceRegion}.amazonaws.com/{sourceAccount}/foreign");
+        try
+        {
+            await RecoveryCyclePublisher.PublishAsync(database, queue, configuration, signer, trust,
+                failedPoint, failedCapture, "verification", "failed", "verification_inaccessible", CancellationToken.None);
+            throw new InvalidOperationException("Cycle publication accepted a foreign destination.");
+        }
+        catch (RecoveryWorkerException) { }
+        Check(sqs.Sends.Count == cycleSendCount, "Rejected cycle inputs still reached the queue.");
     }
 
     private static VerifiedCopiedPoint CopiedPoint(DateTimeOffset now)
@@ -246,6 +340,8 @@ internal static class RecoveryVerificationPublisherChecks
         private readonly Dictionary<(string Pk, string Sk), Dictionary<string, AttributeValue>> items = [];
         public int TransactionCount { get; private set; }
         public int UpdateCount { get; private set; }
+        public bool FailAfterCycleTransactionOnce { get; set; }
+        public bool FailAfterCycleDeliveryOnce { get; set; }
         public List<Dictionary<string,AttributeValue>> PageItems { get; set; }=[];
         public static IAmazonDynamoDB Create(out FakeDynamo fake)
         {
@@ -268,6 +364,7 @@ internal static class RecoveryVerificationPublisherChecks
                 _ => throw new NotSupportedException(targetMethod.Name)
             };
         }
+
 
         private GetItemResponse Get(GetItemRequest request)
         {
@@ -300,6 +397,28 @@ internal static class RecoveryVerificationPublisherChecks
             var pointKey = Key(put.Item);
             if (items.ContainsKey(pointKey)) throw new TransactionCanceledException("point_marker_exists");
             var ownerKey = Key(update.Key);
+            if (pointKey.Sk == "CYCLE")
+            {
+                Check(put.TableName == "recovery-verification-fixture" && update.TableName == put.TableName &&
+                    ownerKey.Sk == "CYCLE_PENDING" && put.ConditionExpression == "attribute_not_exists(pk)",
+                    "Cycle transaction crossed table, scope or immutable envelope boundaries.");
+                var incoming = update.ExpressionAttributeValues;
+                if (items.TryGetValue(ownerKey, out var existing) && Attr(existing, "pointId") != "" &&
+                    (Attr(existing, "pointId") != Attr(incoming, ":point") || Attr(existing, "payloadSha256") != Attr(incoming, ":sha")))
+                    throw new TransactionCanceledException("cycle_pending_exists");
+                items.Add(pointKey, Clone(put.Item));
+                items[ownerKey] = new(update.Key)
+                {
+                    ["ownerId"] = incoming[":owner"], ["libraryId"] = incoming[":library"],
+                    ["pointId"] = incoming[":point"], ["payloadSha256"] = incoming[":sha"]
+                };
+                if (FailAfterCycleTransactionOnce)
+                {
+                    FailAfterCycleTransactionOnce = false;
+                    throw new InvalidOperationException("cycle_transaction_response_lost");
+                }
+                return new TransactWriteItemsResponse();
+            }
             if (items.TryGetValue(ownerKey, out var current))
             {
                 var values = update.ExpressionAttributeValues;
@@ -321,6 +440,30 @@ internal static class RecoveryVerificationPublisherChecks
             var key = Key(request.Key);
             if (!items.TryGetValue(key, out var item)) throw new ConditionalCheckFailedException("marker_missing");
             var values = request.ExpressionAttributeValues;
+            if (key.Sk == "CYCLE_PENDING")
+            {
+                if (Attr(item, "ownerId") != Attr(values, ":owner") || Attr(item, "libraryId") != Attr(values, ":library") ||
+                    Attr(item, "pointId") != Attr(values, ":point") || Attr(item, "payloadSha256") != Attr(values, ":sha"))
+                    throw new ConditionalCheckFailedException("pending_clear_conflict");
+                item.Remove("pointId");
+                item.Remove("payloadSha256");
+                return new UpdateItemResponse();
+            }
+            if (key.Sk == "CYCLE")
+            {
+                Check(request.TableName == "recovery-verification-fixture", "Cycle delivery escaped its table.");
+                if (Attr(item, "state") != "pending" || Attr(item, "payloadSha256") != Attr(values, ":sha"))
+                    throw new ConditionalCheckFailedException("cycle_delivery_condition_failed");
+                item["state"] = values[":delivered"];
+                item["deliveredAtUtc"] = values[":now"];
+                UpdateCount++;
+                if (FailAfterCycleDeliveryOnce)
+                {
+                    FailAfterCycleDeliveryOnce = false;
+                    throw new InvalidOperationException("cycle_delivery_response_lost");
+                }
+                return new UpdateItemResponse();
+            }
             if (Attr(item, "state") != Attr(values, ":pending") ||
                 Attr(item, "sourceManifestSha256") != Attr(values, ":source") ||
                 Attr(item, "fullManifestSha256") != Attr(values, ":full"))

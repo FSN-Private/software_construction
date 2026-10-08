@@ -1,5 +1,7 @@
-import { ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, CfnParameter, Duration, RemovalPolicy, Stack, StackProps, aws_iam } from 'aws-cdk-lib';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { AccountRecovery, CfnUserPoolGroup, Mfa, UserPool } from 'aws-cdk-lib/aws-cognito';
 import { GatewayVpcEndpointAwsService, InstanceType, InterfaceVpcEndpointAwsService, Port, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { Cluster, ContainerImage, FargateTaskDefinition, LogDrivers, Secret as EcsSecret } from 'aws-cdk-lib/aws-ecs';
@@ -59,6 +61,8 @@ export interface RecoveryStackProps extends StackProps {
   readonly auditGenesisVersionId: string;
   readonly auditGenesisSha256: string;
   readonly auditGenesisByteLength: number;
+  readonly auditMinimumSequence: number;
+  readonly auditMinimumEventSha256: string;
   readonly recoverySigningPublicKeySpkiBase64: string;
   readonly recoverySigningPublicKeySha256: string;
   readonly ownerApprovalRoleArn: string;
@@ -76,6 +80,7 @@ export class RecoveryStack extends Stack {
     if (!safeName(props.environmentName)) throw new Error('Recovery environment name must be a short lower-case deployment identifier.');
     if (!/^[A-Za-z0-9._:-]{1,200}$/.test(props.recoveryLibraryId)) throw new Error('Recovery library ID must be an explicitly provisioned bounded identifier.');
     if (props.recoveryOwnerId !== undefined && !/^[A-Za-z0-9._:@-]{1,200}$/.test(props.recoveryOwnerId)) throw new Error('Recovery owner ID must be an explicitly provisioned bounded identifier.');
+    if (!props.allowOfflinePlaceholders && !props.recoveryOwnerId) throw new Error('Recovery owner ID must be independently provisioned before deployment.');
     if (!/^\d{12}$/.test(props.recoveryAccountId) || this.account !== props.recoveryAccountId) throw new Error('Recovery stack account must match its explicit 12-digit target account.');
     if (!/^\d{12}$/.test(props.primaryAccountId) || props.primaryAccountId === props.recoveryAccountId) throw new Error('Recovery account must be distinct from the primary 12-digit account.');
     if (!/^[a-z][a-z0-9-]{2,119}$/.test(props.primaryAccountAlias) || !/^[a-z][a-z0-9-]{2,119}$/.test(props.recoveryAccountAlias) || props.primaryAccountAlias === props.recoveryAccountAlias) throw new Error('Distinct non-placeholder primary and recovery account aliases are required.');
@@ -116,6 +121,12 @@ export class RecoveryStack extends Stack {
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(props.ownerApprovalPublicKeySpkiBase64) || props.ownerApprovalPublicKeySpkiBase64.length < 100 || !/^[a-f0-9]{64}$/.test(props.ownerApprovalPublicKeySha256)) throw new Error('The owner approval public SPKI and fingerprint must be supplied from the separately provisioned KMS key.');
 
     const prefix = `platform-${props.environmentName}-recovery`;
+    const templateDigest = new CfnParameter(this, 'RecoveryTemplateDigest', {
+      type: 'String', allowedPattern: '^[a-f0-9]{64}$', minLength: 64, maxLength: 64,
+      description: 'SHA-256 of the independently verified exact synthesized template bytes; no default.',
+    }).valueAsString;
+    if (!Number.isSafeInteger(props.auditMinimumSequence) || props.auditMinimumSequence < 0 ||
+        !/^[a-f0-9]{64}$/.test(props.auditMinimumEventSha256)) throw new Error('An independently pinned audit minimum is required.');
     const primaryReadRoleName = `platform-${props.environmentName}-recovery-source-read`;
     const primaryReadRoleArn = Stack.of(this).formatArn({ service: 'iam', region: '', account: props.primaryAccountId, resource: 'role', resourceName: primaryReadRoleName, arnFormat: ArnFormat.SLASH_RESOURCE_NAME });
     const vpc = new Vpc(this, 'RecoveryVpc', {
@@ -197,6 +208,12 @@ export class RecoveryStack extends Stack {
       deletionProtection: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const verificationTable = new Table(this, 'RecoveryVerificationTable', {
+      tableName: `${prefix}-verification`, partitionKey: { name: 'pk', type: AttributeType.STRING },
+      sortKey: { name: 'sk', type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.CUSTOMER_MANAGED, encryptionKey, pointInTimeRecovery: true,
+      deletionProtection: true, removalPolicy: RemovalPolicy.RETAIN,
+    });
     const fenceTable = new Table(this, 'RecoveryFenceTable', {
       tableName: `${prefix}-fence`,
       partitionKey: { name: 'scopeId', type: AttributeType.STRING },
@@ -265,7 +282,6 @@ export class RecoveryStack extends Stack {
     copyRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({ actions: ['kms:GetPublicKey'], resources: [evidenceSigningKey.keyArn] }));
     addRecoveryEvidencePolicy(copyRole, evidenceBucket, ['points/*', 'evidence/*']);
     evidenceEncryptionKey.grantEncryptDecrypt(copyRole);
-    copyRole.addToPolicy(new aws_iam.PolicyStatement({ actions: ['sqs:SendMessage'], resources: [props.primaryObservationQueueArn] }));
 
     const purgeExecutorRole = new aws_iam.Role(this, 'RecoveryPurgeExecutorRole', {
       roleName: `${prefix}-purge-executor`,
@@ -387,10 +403,17 @@ export class RecoveryStack extends Stack {
       Recovery__IngestWorkerBuildDigest: props.recoveryIngestWorkerBuildDigest,
       Recovery__RecoveryWorkerBuildDigest: props.recoveryImageDigest,
       Recovery__RendererBuildDigest: props.recoveryRendererBuildDigest,
-      Recovery__RecoveryTemplateDigest: props.recoveryTemplateDigest,
+      Recovery__RecoveryTemplateDigest: templateDigest,
       Recovery__MigrationDigest: props.migrationDigest,
+      Recovery__MigrationDirectory: '/app/migrations',
       Recovery__ConfigurationDigest: props.configurationDigest,
       Recovery__DatabaseRootCertificateSha256: props.databaseRootCertificateSha256,
+      Recovery__AuditGenesisKey: 'evidence/audit/genesis.v1.json',
+      Recovery__AuditGenesisVersionId: props.auditGenesisVersionId,
+      Recovery__AuditGenesisSha256: props.auditGenesisSha256,
+      Recovery__AuditGenesisByteLength: String(props.auditGenesisByteLength),
+      Recovery__AuditMinimumSequence: String(props.auditMinimumSequence),
+      Recovery__AuditMinimumEventSha256: props.auditMinimumEventSha256,
     };
 
     const createRepository = (name: string, id: string) => new Repository(this, id, {
@@ -440,7 +463,6 @@ export class RecoveryStack extends Stack {
         Recovery__ControlTableName: controlTable.tableName,
         Recovery__FenceTableName: fenceTable.tableName,
         Recovery__IntentTableName: intentTable.tableName,
-        Recovery__ObservationQueueUrl: props.primaryObservationQueueUrl,
         Recovery__CaptureIntervalMinutes: '15',
         Recovery__SigningKeyId: evidenceSigningKey.keyArn,
         Recovery__SigningPublicKeySha256: props.recoverySigningPublicKeySha256,
@@ -536,6 +558,55 @@ export class RecoveryStack extends Stack {
       encryptionKey,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    recoveryOnlyRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['secretsmanager:GetSecretValue'], resources: [runtimeDatabaseSecret.secretArn],
+    }));
+    const ownerScope = createHash('sha256').update(`${props.recoveryOwnerId ?? 'offline-owner-not-qualified'}\0${props.recoveryLibraryId}`, 'utf8').digest('hex');
+    const verifierRole = new aws_iam.Role(this, 'RecoveryVerifierPublisherRole', {
+      roleName: `${prefix}-verify-publisher`,
+      assumedBy: new aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com').withConditions({
+        StringEquals: { 'aws:SourceAccount': props.recoveryAccountId },
+        ArnLike: { 'aws:SourceArn': `arn:aws:ecs:${this.region}:${props.recoveryAccountId}:*` },
+      }),
+      description: 'Independent read-only point verifier with retained verification evidence and exact-queue publication.',
+    });
+    const verifierBindings: Record<string,string> = {
+      __RECOVERY_DATABASE_SECRET_ARN__: database.secret.secretArn,
+      __RECOVERY_DATABASE_SECRET_KMS_KEY_ARN__: encryptionKey.keyArn,
+      __RECOVERY_ACCOUNT_ID__: props.recoveryAccountId,
+      __RECOVERY_EVIDENCE_SIGNING_KEY_ARN__: evidenceSigningKey.keyArn,
+      __RECOVERY_PAYLOAD_BUCKET_ARN__: bucket.bucketArn,
+      __RECOVERY_EVIDENCE_BUCKET_ARN__: evidenceBucket.bucketArn,
+      __RECOVERY_PAYLOAD_KMS_KEY_ARN__: encryptionKey.keyArn,
+      __RECOVERY_EVIDENCE_KMS_KEY_ARN__: evidenceEncryptionKey.keyArn,
+      __RECOVERY_CONTROL_TABLE_ARN__: controlTable.tableArn,
+      __RECOVERY_VERIFICATION_TABLE_ARN__: verificationTable.tableArn,
+      __LOWERCASE_SHA256_OF_UTF8_OWNER_ID_NUL_LIBRARY_ID__: ownerScope,
+      __EXACT_PRIMARY_OBSERVATION_QUEUE_ARN__: props.primaryObservationQueueArn,
+    };
+    const approvedVerifierPolicy = JSON.parse(new TextDecoder().decode(readFileSync(fileURLToPath(
+      new URL('../../policy-proposals/recovery-verifier-publisher.v1.json', import.meta.url))))).policyDocument;
+    const boundVerifierPolicy = JSON.parse(JSON.stringify(approvedVerifierPolicy).replace(/__[A-Z0-9_]+__/g, placeholder => {
+      const value = verifierBindings[placeholder];
+      if (!value) throw new Error(`Unbound approved verifier policy: ${placeholder}`);
+      return value;
+    }));
+    for (const statement of boundVerifierPolicy.Statement)
+      verifierRole.addToPrincipalPolicy(aws_iam.PolicyStatement.fromJson(statement));
+    verifierRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      sid: 'DecryptOnlyRecoveryControlAndVerificationThroughDynamoDb',
+      actions: ['kms:Decrypt'], resources: [encryptionKey.keyArn],
+      conditions: { StringEquals: {
+        'kms:ViaService': 'dynamodb.ap-southeast-2.amazonaws.com',
+        'kms:CallerAccount': props.recoveryAccountId,
+        'kms:EncryptionContext:aws:dynamodb:tableName': [controlTable.tableName, verificationTable.tableName],
+        'kms:EncryptionContext:aws:dynamodb:subscriberId': props.recoveryAccountId,
+      } },
+    }));
+    recoveryOnlyRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      sid: 'ReadOnlyRecoveryVerificationProofs', actions: ['dynamodb:GetItem'], resources: [verificationTable.tableArn],
+      conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['POINT#*', `OWNER#${ownerScope}`] } },
+    }));
     recoveryWorkerRepository.grantPull(recoveryExecutionRole);
     auditLogs.grantWrite(recoveryExecutionRole);
     const drillTask = new FargateTaskDefinition(this, 'RecoveryDrillTask', {
@@ -566,6 +637,7 @@ export class RecoveryStack extends Stack {
         Recovery__DestinationKmsKeyId: encryptionKey.keyArn,
         Recovery__EvidenceKmsKeyId: evidenceEncryptionKey.keyArn,
         Recovery__ControlTableName: controlTable.tableName,
+        Recovery__VerificationTableName: verificationTable.tableName,
         Recovery__FenceTableName: fenceTable.tableName,
         Recovery__IntentTableName: intentTable.tableName,
         Recovery__Database__Host: database.dbInstanceEndpointAddress,
@@ -687,7 +759,7 @@ export class RecoveryStack extends Stack {
         Recovery__IngestWorkerBuildDigest: props.recoveryIngestWorkerBuildDigest,
         Recovery__RecoveryWorkerBuildDigest: props.recoveryImageDigest,
         Recovery__RendererBuildDigest: props.recoveryRendererBuildDigest,
-        Recovery__RecoveryTemplateDigest: props.recoveryTemplateDigest,
+        Recovery__RecoveryTemplateDigest: templateDigest,
         Recovery__MigrationDigest: props.migrationDigest,
         Recovery__ConfigurationDigest: props.configurationDigest,
         Recovery__DatabaseRootCertificate: props.databaseRootCertificate,
@@ -737,6 +809,46 @@ export class RecoveryStack extends Stack {
     drillContainer.addEnvironment('Recovery__OwnerUserPoolId', pool.userPoolId);
     drillContainer.addEnvironment('Recovery__OwnerUserPoolClientId', poolClient.userPoolClientId);
     drillContainer.addEnvironment('Recovery__OwnerUserPoolIssuer', ownerPoolIssuer);
+
+    const verifierSecurityGroup = new SecurityGroup(this, 'RecoveryVerifierSecurityGroup', { vpc, allowAllOutbound: true });
+    databaseSecurityGroup.addIngressRule(verifierSecurityGroup, Port.tcp(5432), 'Independent verifier may reconstruct isolated snapshots.');
+    isolatedEndpointSecurityGroup.addIngressRule(verifierSecurityGroup, Port.tcp(443), 'Verifier may use pinned regional AWS endpoints.');
+    const verifierTask = new FargateTaskDefinition(this, 'RecoveryVerifierTask', {
+      family: `${prefix}-verify`, cpu: 1024, memoryLimitMiB: 4096,
+      ephemeralStorageGiB: props.workerEphemeralStorageGiB, executionRole: recoveryExecutionRole, taskRole: verifierRole,
+    });
+    verifierTask.addContainer('recovery-worker', {
+      image: ContainerImage.fromRegistry(`${recoveryWorkerRepository.repositoryUri}@sha256:${props.recoveryImageDigest}`),
+      command: ['verify'],
+      environment: {
+        ...runtimePins, Recovery__Environment: props.environmentName, Recovery__WorkerId: 'verify',
+        Recovery__OwnerId: props.recoveryOwnerId ?? 'offline-owner-not-qualified', Recovery__LibraryId: props.recoveryLibraryId,
+        Recovery__SourceAccountId: props.primaryAccountId, Recovery__SourceRegion: props.primaryRegion,
+        Recovery__DestinationAccountId: props.recoveryAccountId, Recovery__DestinationRegion: this.region,
+        Recovery__SourceBucket: props.primaryIngestBucketName, Recovery__DestinationBucket: bucket.bucketName,
+        Recovery__EvidenceBucket: evidenceBucket.bucketName, Recovery__DestinationKmsKeyId: encryptionKey.keyArn,
+        Recovery__EvidenceKmsKeyId: evidenceEncryptionKey.keyArn, Recovery__ControlTableName: controlTable.tableName,
+        Recovery__VerificationTableName: verificationTable.tableName,
+        Recovery__DatabaseSecretArn: database.secret.secretArn, Recovery__DatabaseRootCertificate: props.databaseRootCertificate,
+        Recovery__Database__Host: database.dbInstanceEndpointAddress, Recovery__Database__Port: database.dbInstanceEndpointPort,
+        Recovery__Database__Name: 'platform_recovery', Recovery__RecoveryOnly: 'true',
+        Recovery__SigningKeyId: evidenceSigningKey.keyArn, Recovery__SigningPublicKeySha256: props.recoverySigningPublicKeySha256,
+        Recovery__OwnerApprovalKeyId: ownerApprovalKey.keyArn, Recovery__OwnerApprovalTrust__KeyId: ownerApprovalKey.keyArn,
+        Recovery__OwnerApprovalTrust__PublicKeySpkiBase64: props.ownerApprovalPublicKeySpkiBase64,
+        Recovery__OwnerApprovalTrust__PublicKeySha256: props.ownerApprovalPublicKeySha256,
+        Recovery__OwnerUserPoolId: pool.userPoolId, Recovery__OwnerUserPoolClientId: poolClient.userPoolClientId,
+        Recovery__OwnerUserPoolIssuer: ownerPoolIssuer,
+        Recovery__ObservationQueueArn: props.primaryObservationQueueArn, Recovery__ObservationQueueUrl: props.primaryObservationQueueUrl,
+      },
+      logging: LogDrivers.awsLogs({ logGroup: auditLogs, streamPrefix: 'verify' }),
+    });
+    if (props.schedulesEnabled) {
+      new Rule(this, 'RecoveryVerifierSchedule', {
+        schedule: Schedule.rate(Duration.minutes(15)),
+        targets: [new EcsTask({ cluster, taskDefinition: verifierTask, securityGroups: [verifierSecurityGroup],
+          subnetSelection: { subnetType: SubnetType.PRIVATE_WITH_EGRESS }, assignPublicIp: false })],
+      });
+    }
 
     const githubProvider = new OpenIdConnectProvider(this, 'RecoveryGitHubOidcProvider', {
       url: 'https://token.actions.githubusercontent.com',
@@ -794,7 +906,8 @@ export class RecoveryStack extends Stack {
     evidenceEncryptionKey.grantDecrypt(drillOidcRole);
 
     const copyDimensions = { Environment: props.environmentName, WorkerId: 'copy' };
-    const verifiedAge = new Metric({ namespace: 'Platform/Recovery', metricName: 'VerifiedPointAgeSeconds', statistic: 'Maximum', period: Duration.minutes(5), dimensionsMap: copyDimensions });
+    const verifierDimensions = { Environment: props.environmentName, WorkerId: 'verify' };
+    const verifiedAge = new Metric({ namespace: 'Platform/Recovery', metricName: 'VerifiedPointAgeSeconds', statistic: 'Maximum', period: Duration.minutes(5), dimensionsMap: verifierDimensions });
     const overdueAlarm = new Alarm(this, 'RecoveryPointOverdueAlarm', {
       metric: verifiedAge,
       threshold: 2700,
@@ -813,9 +926,17 @@ export class RecoveryStack extends Stack {
       alarmDescription: 'No successful recovery copy or freshness-check invocation reported in five minutes. Notify within 15 minutes. Runbook: docs/runbooks/library-recovery.md',
     });
     heartbeatAlarm.addAlarmAction(new SnsAction(alerts));
+    const verifierHeartbeatAlarm = new Alarm(this, 'RecoveryVerifierHeartbeatAlarm', {
+      metric: new Metric({ namespace: 'Platform/Recovery', metricName: 'RecoveryWorkerHeartbeat', statistic: 'Sum', period: Duration.minutes(5), dimensionsMap: verifierDimensions }),
+      threshold: 1, evaluationPeriods: 3,
+      comparisonOperator: ComparisonOperator.LESS_THAN_THRESHOLD,
+      treatMissingData: TreatMissingData.BREACHING,
+      alarmDescription: 'No successful independent verifier invocation within fifteen minutes. Runbook: docs/runbooks/library-recovery.md',
+    });
+    verifierHeartbeatAlarm.addAlarmAction(new SnsAction(alerts));
     for (const [id, metricName] of [['RecoveryCopyFailureAlarm', 'CopyFailures'], ['RecoveryVerificationFailureAlarm', 'VerificationFailures']] as const) {
       const alarm = new Alarm(this, id, {
-        metric: new Metric({ namespace: 'Platform/Recovery', metricName, statistic: 'Sum', period: Duration.minutes(5), dimensionsMap: copyDimensions }),
+        metric: new Metric({ namespace: 'Platform/Recovery', metricName, statistic: 'Sum', period: Duration.minutes(5), dimensionsMap: metricName === 'VerificationFailures' ? verifierDimensions : copyDimensions }),
         threshold: 1,
         evaluationPeriods: 1,
         comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
@@ -835,7 +956,10 @@ export class RecoveryStack extends Stack {
     new CfnOutput(this, 'RecoveryFenceTableName', { value: fenceTable.tableName });
     new CfnOutput(this, 'RecoveryIntentTableName', { value: intentTable.tableName });
     new CfnOutput(this, 'RecoveryWorkerRoleArn', { value: copyRole.roleArn });
-    new CfnOutput(this, 'RecoveryVerifyRoleArn', { value: recoveryOnlyRole.roleArn });
+    new CfnOutput(this, 'RecoveryVerifyRoleArn', { value: verifierRole.roleArn });
+    new CfnOutput(this, 'RecoveryDrillTaskRoleArn', { value: recoveryOnlyRole.roleArn });
+    new CfnOutput(this, 'RecoveryVerificationTableName', { value: verificationTable.tableName });
+    new CfnOutput(this, 'RecoveryVerifierTaskDefinitionArn', { value: verifierTask.taskDefinitionArn });
     new CfnOutput(this, 'RecoveryWorkerRepositoryName', { value: recoveryWorkerRepository.repositoryName });
     new CfnOutput(this, 'RecoveryApiRepositoryName', { value: apiRepository.repositoryName });
     new CfnOutput(this, 'RecoveryIngestWorkerRepositoryName', { value: ingestWorkerRepository.repositoryName });

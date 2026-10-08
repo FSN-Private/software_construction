@@ -13,9 +13,9 @@ const values = value => Array.isArray(value) ? value : [value];
 const actions = statements.flatMap(statement => values(statement.Action));
 const taskEnvironment = proposal.requiredTaskEnvironment;
 
-assert.equal(proposal.status, 'proposal-only');
+assert.equal(proposal.status, 'approved-local-definition');
 assert.equal(proposal.deployable, false);
-assert.equal(proposal.attachedToCdk, false);
+assert.equal(proposal.attachedToCdk, true);
 assert.ok(proposal.scopeBindings.ownerScopePartitionKey.startsWith('OWNER#__'));
 assert.match(proposal.scopeBindings.scopeHashDefinition, /SHA256\(UTF8\(ownerId \+ NUL \+ libraryId\)\)/);
 assert.deepEqual(proposal.task.command, ['verify']);
@@ -132,10 +132,71 @@ assert.deepEqual(queuePublish.Resource, '__EXACT_PRIMARY_OBSERVATION_QUEUE_ARN__
 assert.deepEqual(actions.filter(action => action.startsWith('sqs:')), ['sqs:SendMessage']);
 
 const stackSource = readFileSync('packages/infrastructure/src/recovery/recovery-stack.ts', 'utf8');
-assert.ok(!stackSource.includes(proposal.roleName), 'Proposal must remain unattached to the synthesized stack.');
-assert.ok(!stackSource.includes('recovery-verify-publisher'), 'Proposal must not create a publisher role before review.');
+assert.ok(stackSource.includes('recovery-verifier-publisher.v1.json'), 'CDK must bind the reviewed policy document.');
 assert.equal(proposal.proposedResources.length, 1);
 assert.equal(proposal.proposedResources[0].constructId, 'RecoveryVerificationTable');
-assert.equal(proposal.proposedResources[0].roleAttached, false);
+assert.equal(proposal.proposedResources[0].roleAttached, true);
 
-console.log('Recovery verifier publisher policy proposal is bounded and remains unattached.');
+const template = JSON.parse(readFileSync('packages/infrastructure/cdk.out-recovery/Recovery-nonprod.template.json', 'utf8'));
+const resources = Object.entries(template.Resources);
+const [roleId, role] = resources.find(([id, resource]) => id.startsWith('RecoveryVerifierPublisherRole') && resource.Type === 'AWS::IAM::Role');
+assert.equal(role.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service, 'ecs-tasks.amazonaws.com');
+assert.ok(role.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['aws:SourceAccount']);
+const policy = resources.find(([, resource]) => resource.Type === 'AWS::IAM::Policy' &&
+  resource.Properties.Roles.some(role => role.Ref === roleId))[1].Properties.PolicyDocument.Statement;
+for (const approved of statements) {
+  const actual = policy.find(statement => statement.Sid === approved.Sid);
+  assert.ok(actual, `Missing synthesized statement ${approved.Sid}`);
+  assert.deepEqual(actual.Action, approved.Action);
+  assert.ok(!JSON.stringify(actual).includes('__'), `Unbound placeholder in ${approved.Sid}`);
+}
+const controlTableId = resources.find(([id, resource]) => id.startsWith('RecoveryControlTable') && resource.Type === 'AWS::DynamoDB::Table')[0];
+assert.ok(policy.filter(statement => JSON.stringify(statement.Resource).includes(controlTableId))
+  .every(statement => values(statement.Action).every(action => action === 'dynamodb:GetItem')));
+const actualActions = policy.flatMap(statement => values(statement.Action));
+assert.ok(!actualActions.some(action => /^(s3:(Put|Delete)|ecs:|iam:|sts:AssumeRole)/.test(action)));
+assert.deepEqual(actualActions.filter(action => action.startsWith('sqs:')), ['sqs:SendMessage']);
+assert.ok(!JSON.stringify(policy).includes('kms:GenerateDataKey'));
+const runtimeSecretId = resources.find(([id, resource]) => id.startsWith('RecoveryDatabaseRuntimeCredentials') && resource.Type === 'AWS::SecretsManager::Secret')[0];
+const drillRoleId = resources.find(([id, resource]) => id.startsWith('RecoveryOnlyTaskRole') && resource.Type === 'AWS::IAM::Role')[0];
+const drillPolicy = resources.find(([, resource]) => resource.Type === 'AWS::IAM::Policy' &&
+  resource.Properties.Roles.some(role => role.Ref === drillRoleId))[1].Properties.PolicyDocument.Statement;
+const runtimeReader = drillPolicy.filter(statement => values(statement.Action).includes('secretsmanager:GetSecretValue') &&
+  JSON.stringify(statement.Resource).includes(runtimeSecretId));
+assert.equal(runtimeReader.length, 1);
+assert.equal(runtimeReader[0].Action, 'secretsmanager:GetSecretValue');
+assert.deepEqual(runtimeReader[0].Resource, { Ref: runtimeSecretId });
+assert.ok(!drillPolicy.some(statement => values(statement.Action).some(action => action.startsWith('sqs:'))));
+const support = JSON.parse(readFileSync('packages/infrastructure/policy-proposals/recovery-verification-reader-support.v1.json', 'utf8'));
+assert.equal(support.status, 'approved-local-definition');
+assert.equal(support.attachedToCdk, true);
+const tableDecrypt = policy.find(statement => statement.Sid === 'DecryptOnlyRecoveryControlAndVerificationThroughDynamoDb');
+assert.equal(tableDecrypt.Action, 'kms:Decrypt');
+assert.equal(tableDecrypt.Condition.StringEquals['kms:ViaService'], 'dynamodb.ap-southeast-2.amazonaws.com');
+const configuredRecoveryAccount = role.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['aws:SourceAccount'];
+assert.equal(tableDecrypt.Condition.StringEquals['kms:CallerAccount'], configuredRecoveryAccount);
+assert.equal(tableDecrypt.Condition.StringEquals['kms:EncryptionContext:aws:dynamodb:subscriberId'], configuredRecoveryAccount);
+assert.deepEqual(tableDecrypt.Condition.StringEquals['kms:EncryptionContext:aws:dynamodb:tableName'], [
+  { Ref: controlTableId }, { Ref: resources.find(([id, resource]) => id.startsWith('RecoveryVerificationTable') && resource.Type === 'AWS::DynamoDB::Table')[0] },
+]);
+const proofReader = drillPolicy.find(statement => statement.Sid === 'ReadOnlyRecoveryVerificationProofs');
+assert.equal(proofReader.Action, 'dynamodb:GetItem');
+assert.deepEqual(proofReader.Resource, { 'Fn::GetAtt': [resources.find(([id, resource]) => id.startsWith('RecoveryVerificationTable') && resource.Type === 'AWS::DynamoDB::Table')[0], 'Arn'] });
+assert.equal(proofReader.Condition['ForAllValues:StringLike']['dynamodb:LeadingKeys'][0], 'POINT#*');
+assert.match(proofReader.Condition['ForAllValues:StringLike']['dynamodb:LeadingKeys'][1], /^OWNER#[a-f0-9]{64}$/);
+const verifier = resources.find(([id, resource]) => id.startsWith('RecoveryVerifierTask') && resource.Type === 'AWS::ECS::TaskDefinition')[1];
+assert.deepEqual(verifier.Properties.TaskRoleArn, { 'Fn::GetAtt': [roleId, 'Arn'] });
+const container = verifier.Properties.ContainerDefinitions[0];
+assert.deepEqual(container.Command, ['verify']);
+const environment = Object.fromEntries(container.Environment.map(item => [item.Name, item.Value]));
+for (const name of requiredEnvironment) assert.ok(Object.hasOwn(environment, name), `Missing synthesized task binding ${name}`);
+assert.deepEqual(environment.Recovery__RecoveryTemplateDigest, { Ref: 'RecoveryTemplateDigest' });
+assert.ok(environment.Recovery__VerificationTableName);
+assert.ok(!Object.hasOwn(environment, 'Recovery__PrimaryReadRoleArn'));
+assert.ok(!Object.hasOwn(environment, 'Recovery__TargetBucket'));
+for (const [, resource] of resources.filter(([, resource]) => resource.Type === 'AWS::ECS::TaskDefinition' && resource !== verifier)) {
+  for (const other of resource.Properties.ContainerDefinitions) {
+    assert.ok(!other.Environment?.some(item => item.Name === 'Recovery__ObservationQueueUrl'), 'Only the verifier may publish to primary.');
+  }
+}
+console.log('Approved verifier role and task preserve read-only copy authority and exact publication scope.');

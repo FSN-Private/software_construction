@@ -8,11 +8,20 @@ const proposal = JSON.parse(readFileSync(
 const recoveryVerificationTables = Object.values(template.Resources ?? {}).filter(resource =>
   resource.Type === 'AWS::DynamoDB::Table' &&
   JSON.stringify(resource.Properties.TableName).includes('recovery-verification'));
-assert.equal(recoveryVerificationTables.length, 0,
-  'The pending VerificationTable proposal must not provision a table before approval.');
-assert.equal(proposal.status, 'proposal-only');
+assert.equal(recoveryVerificationTables.length, 1,
+  'The specifically approved VerificationTable must be synthesized once.');
+const table = recoveryVerificationTables[0];
+assert.equal(table.DeletionPolicy, 'Retain');
+assert.equal(table.UpdateReplacePolicy, 'Retain');
+assert.equal(table.Properties.DeletionProtectionEnabled, true);
+assert.equal(table.Properties.PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled, true);
+assert.equal(table.Properties.SSESpecification.SSEEnabled, true);
+assert.equal(table.Properties.SSESpecification.SSEType, 'KMS');
+assert.equal(table.Properties.BillingMode, 'PAY_PER_REQUEST');
+assert.deepEqual(table.Properties.KeySchema, [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'sk', KeyType: 'RANGE' }]);
+assert.equal(proposal.status, 'approved-local-definition');
 assert.equal(proposal.deployable, false);
-assert.equal(proposal.attachedToCdk, false);
+assert.equal(proposal.attachedToCdk, true);
 assert.deepEqual(proposal.proposedResources, [{
   constructId: 'RecoveryVerificationTable',
   tableName: 'platform-__ENVIRONMENT__-recovery-verification',
@@ -23,6 +32,6 @@ assert.deepEqual(proposal.proposedResources, [{
   pointInTimeRecovery: true,
   deletionProtection: true,
   removalPolicy: 'RETAIN',
-  roleAttached: false,
+  roleAttached: true,
 }]);
-console.log('Recovery verification table remains a review-only proposal and is not synthesized.');
+console.log('Approved recovery verification table synthesis preserves retention, encryption and recovery protections.');

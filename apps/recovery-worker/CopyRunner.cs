@@ -11,8 +11,6 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.SecurityToken;
 using Amazon.SecurityToken.Model;
-using Amazon.SQS;
-using Amazon.SQS.Model;
 using Platform.Recovery;
 
 namespace Platform.Recovery.Worker;
@@ -46,7 +44,6 @@ internal static class CopyRunner
         using var destinationS3 = new AmazonS3Client(RegionEndpoint.GetBySystemName(destinationRegion));
         using var dynamo = new AmazonDynamoDBClient(RegionEndpoint.GetBySystemName(destinationRegion));
         using var kms = new AmazonKeyManagementServiceClient(RegionEndpoint.GetBySystemName(destinationRegion));
-        using var sqs = new AmazonSQSClient(RegionEndpoint.GetBySystemName(sourceRegion));
         var destinationActual = await sts.GetCallerIdentityAsync(new GetCallerIdentityRequest(), cancellationToken);
         if (destinationActual.Account != destinationAccountId)
             throw new RecoveryWorkerException("recovery_task_account_mismatch");
@@ -143,7 +140,7 @@ internal static class CopyRunner
                         reusableReceipts = latestReceipts.ToDictionary(pair => pair.Key, pair => pair.Value);
                         reusableReceiptsByScope.Add(scopeHash, reusableReceipts);
                     }
-                    var finished = await CopyPointAsync(configuration, sourceS3, destinationS3, dynamo, sqs,
+                    var finished = await CopyPointAsync(configuration, sourceS3, destinationS3, dynamo,
                         intentStore, payloadStore, capturePayloadStore, evidenceStore, signer, sourceCaptureBucket, sourceContentBucket,
                         evidenceBucket, payloadBucket, payloadKmsKey, evidenceKmsKey, sourceAccountId, destinationAccountId, sourceRegion,
                         destinationRegion, manifestKey, manifestObject.VersionId, manifestBytes, manifest, leaseToken,
@@ -177,11 +174,6 @@ internal static class CopyRunner
                 }
                 catch
                 {
-                    try
-                    {
-                        await PublishCycleAsync(sqs, configuration, signer, manifest, "copy_failed", cancellationToken);
-                    }
-                    catch { }
                     await DeferPointAsync(dynamo, configuration.Required("ControlTableName"), manifest,
                         leaseToken, cancellationToken);
                     throw;
@@ -205,7 +197,6 @@ internal static class CopyRunner
         IAmazonS3 sourceS3,
         IAmazonS3 destinationS3,
         IAmazonDynamoDB dynamo,
-        IAmazonSQS sqs,
         DynamoFenceIntentStore intentStore,
         Platform.Recovery.RecoveryObjectStore payloadStore,
         Platform.Recovery.RecoveryObjectStore capturePayloadStore,
@@ -395,8 +386,7 @@ internal static class CopyRunner
             evidenceBucket, ownerId, libraryId, cancellationToken);
         if (ownerAccess is null)
         {
-            await PublishCycleAsync(sqs, configuration, signer, sourceManifest,
-                "access_policy_failed", cancellationToken);
+            RecoveryWorkerMetrics.Emit("CopyFailures", 1, configuration);
             var receiptState = await receiptJournal.CompleteAsync(cancellationToken);
             var deferred = new PrivateCopyCheckpointPayloadV1(1, sourceManifest.CaptureId, pointId,
                 ownerId, libraryId, RecoveryEvidenceCodec.Hash(sourceManifestBytes), null, sourceRegion,
@@ -568,26 +558,6 @@ internal static class CopyRunner
         var result = await S3ArtifactWriter.PutBytesAsync(destinationS3, evidenceBucket,
             $"points/{pointId:D}/checkpoints/{RecoveryEvidenceCodec.Hash(payloadBytes)}.json", bytes, kmsKey, cancellationToken);
         return new(result.Key, result.VersionId, result.Sha256, result.ByteLength, digest);
-    }
-
-    private static async Task PublishCycleAsync(IAmazonSQS sqs, RecoveryWorkerConfiguration configuration,
-        AwsKmsEvidenceSigner signer, RecoveryPointManifestV1 manifest, string safeCode,
-        CancellationToken cancellationToken)
-    {
-        var payload = new RecoveryCycleEventV1(1, Guid.NewGuid(), manifest.CaptureId,
-            manifest.RecoveryPointId, manifest.OwnerId, manifest.LibraryId, DateTimeOffset.UtcNow,
-            "publication", "recovery_records", "incomplete", safeCode, configuration.WorkerBuildDigest);
-        var canonical = RecoveryCycleCodec.SerializePayload(payload);
-        var signature = new RecoveryEvidenceSignature(signer.KeyId, signer.PublicKeySha256,
-            await signer.SignDigestAsync(SHA256.HashData(canonical), cancellationToken));
-        var envelope = RecoveryCycleCodec.CreateEnvelope(payload, configuration.WorkerId, signature);
-        var bytes = RecoveryCycleCodec.SerializeEnvelope(envelope);
-        if (bytes.Length > 64 * 1024) throw new RecoveryWorkerException("cycle_message_size_limit");
-        await sqs.SendMessageAsync(new SendMessageRequest
-        {
-            QueueUrl = configuration.Required("ObservationQueueUrl"),
-            MessageBody = Encoding.UTF8.GetString(bytes)
-        }, cancellationToken);
     }
 
     private static async Task WriteCopyArtifactsToControlAsync(IAmazonDynamoDB dynamo, string table,
