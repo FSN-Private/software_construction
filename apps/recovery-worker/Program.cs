@@ -3,9 +3,9 @@ using Platform.Recovery.Worker;
 if (args.Length > 0 && args[0] == "verify-qualification")
     return OfflineQualificationVerifier.Run(args[1..]);
 
-if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "bootstrap-index" or "purge"))
+if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "bootstrap-index" or "purge" or "health" or "list-points"))
 {
-    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index> | recovery-worker purge <proposal> <plan|execute> <output> [approval <receipt>] | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
+    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index|health|list-points> | recovery-worker purge <proposal> <plan|execute> <output> [approval <receipt>] | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
     return 2;
 }
 
@@ -37,6 +37,10 @@ try
             break;
         case "purge":
             await RecoveryPurgeRunner.RunAsync(configuration, args[1..], CancellationToken.None);
+            break;
+        case "health":
+        case "list-points":
+            await RecoveryControlReader.RunAsync(configuration, CancellationToken.None);
             break;
     }
 

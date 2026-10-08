@@ -43,6 +43,7 @@ internal static class RecoveryVerificationPublisherChecks
         Set("VerificationTableName", "recovery-verification-fixture");
         Set("ControlTableName", "recovery-control-fixture");
         Set("OwnerId", "owner-fixture");
+
         Set("LibraryId", "main");
         Set("SourceAccountId", sourceAccount);
         Set("SourceRegion", sourceRegion);
@@ -96,6 +97,50 @@ internal static class RecoveryVerificationPublisherChecks
             "Successful retry must mark the original immutable outbox delivered without replacing it.");
 
         var deliveredBody = Attr(delivered, "messageBodies");
+        var controlPoint = await RecoveryControlReader.ReadPointAsync(database, configuration, trust,
+            point.Pointer.PointId, CancellationToken.None);
+        Check(controlPoint?.RecoveryPointId == point.Pointer.PointId, "Independent control did not verify the exact signed point.");
+        var independentHealth = await RecoveryControlReader.ReadHealthAsync(database, configuration, trust,
+            DateTimeOffset.UtcNow, CancellationToken.None);
+        Check(independentHealth.Status == "verified" && independentHealth.Point?.PointId == point.Pointer.PointId,
+            "Independent health did not verify its signed owner head.");
+        var overdueHealth = await RecoveryControlReader.ReadHealthAsync(database, configuration, trust,
+            DateTimeOffset.UtcNow.AddMinutes(46), CancellationToken.None);
+        Check(overdueHealth.Status == "overdue", "Independent health ignored the 45-minute warning boundary.");
+        Set("OwnerId", "foreign");
+        try
+        {
+            await RecoveryControlReader.ReadPointAsync(database, configuration, trust, point.Pointer.PointId, CancellationToken.None);
+            throw new InvalidOperationException("Independent control accepted a foreign signed catalog.");
+        }
+        catch (RecoveryWorkerException error) when (error.SafeCode == "control_point_binding_invalid") { }
+        Set("OwnerId", "owner-fixture");
+        var unverifiedId=Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var partition=RecoveryOwnerPointIndex.PartitionKey("owner-fixture","main");
+        dynamo.PageItems=[Member(unverifiedId),Member(point.Pointer.PointId)];
+        Dictionary<string,AttributeValue> Member(Guid id)=>new()
+        {
+            ["pk"]=S(partition),["sk"]=S(RecoveryOwnerPointIndex.PointSortKey(id)),
+            ["pointId"]=S(id.ToString("D")),["ownerId"]=S("owner-fixture"),["libraryId"]=S("main")
+        };
+        var firstPage=await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,null,CancellationToken.None);
+        Check(firstPage.Points.Single().Status=="unverified" && firstPage.Points.Single().CapturedAtUtc is null &&
+            firstPage.NextAfterPointId==unverifiedId,"Unverified point invented trusted metadata or lost pagination.");
+        var secondPage=await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,firstPage.NextAfterPointId,CancellationToken.None);
+        Check(secondPage.Points.Single().PointId==point.Pointer.PointId && secondPage.Points.Single().Status=="verified" &&
+            secondPage.NextAfterPointId is null,"Verified page or terminal cursor failed.");
+        Check((await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,Guid.NewGuid(),CancellationToken.None)).Points.Count==0,
+            "An absent owner cursor disclosed another scope.");
+        dynamo.PageItems[0]["ownerId"]=S("foreign");
+        try
+        {
+            await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,null,CancellationToken.None);
+            throw new InvalidOperationException("Foreign membership entered control output.");
+        }
+        catch(RecoveryWorkerException error) when(error.SafeCode=="control_point_member_invalid") { }
+        dynamo.PageItems=[];
+        Check(dynamo.TransactionCount == 1 && dynamo.UpdateCount == 1,
+            "Independent control read mutated verification records.");
         var deliveredSendCount = sqs.Sends.Count;
         await RecoveryVerificationPublisher.PublishAsync(database, queue, configuration, signer, trust,
             point, head, CancellationToken.None);
@@ -201,6 +246,7 @@ internal static class RecoveryVerificationPublisherChecks
         private readonly Dictionary<(string Pk, string Sk), Dictionary<string, AttributeValue>> items = [];
         public int TransactionCount { get; private set; }
         public int UpdateCount { get; private set; }
+        public List<Dictionary<string,AttributeValue>> PageItems { get; set; }=[];
         public static IAmazonDynamoDB Create(out FakeDynamo fake)
         {
             var client = DispatchProxy.Create<IAmazonDynamoDB, FakeDynamo>();
@@ -218,6 +264,7 @@ internal static class RecoveryVerificationPublisherChecks
                 nameof(IAmazonDynamoDB.GetItemAsync) => Task.FromResult(Get((GetItemRequest)args[0]!)),
                 nameof(IAmazonDynamoDB.TransactWriteItemsAsync) => Task.FromResult(Transact((TransactWriteItemsRequest)args[0]!)),
                 nameof(IAmazonDynamoDB.UpdateItemAsync) => Task.FromResult(Update((UpdateItemRequest)args[0]!)),
+                nameof(IAmazonDynamoDB.QueryAsync) => Task.FromResult(Query((QueryRequest)args[0]!)),
                 _ => throw new NotSupportedException(targetMethod.Name)
             };
         }
@@ -226,7 +273,23 @@ internal static class RecoveryVerificationPublisherChecks
         {
             if (request.ConsistentRead != true) throw new InvalidOperationException("publisher_reads_must_be_strong");
             var key = Key(request.Key);
+            var member=PageItems.SingleOrDefault(item=>Key(item)==key);
+            if(member is not null) return new GetItemResponse { Item=Clone(member) };
             return new GetItemResponse { Item = items.TryGetValue(key, out var item) ? Clone(item) : new() };
+        }
+
+        private QueryResponse Query(QueryRequest request)
+        {
+            Check(request.ConsistentRead==true && request.Limit is >=1 and <=100 &&
+                request.TableName=="recovery-control-fixture" && request.ExpressionAttributeValues[":owner"].S==
+                RecoveryOwnerPointIndex.PartitionKey("owner-fixture","main") && request.ExpressionAttributeValues[":points"].S=="POINT#",
+                "Control page query escaped its strong bounded owner partition.");
+            var after=request.ExclusiveStartKey is { Count:>0 } ? Attr(request.ExclusiveStartKey,"sk") : "";
+            var remaining=PageItems.Where(item=>string.CompareOrdinal(Attr(item,"sk"),after)>0)
+                .OrderBy(item=>Attr(item,"sk"),StringComparer.Ordinal).ToArray();
+            var page=remaining.Take(request.Limit!.Value).Select(Clone).ToList();
+            return new QueryResponse { Items=page,LastEvaluatedKey=remaining.Length>page.Count ?
+                new() { ["pk"]=page[^1]["pk"],["sk"]=page[^1]["sk"] } : new() };
         }
 
         private TransactWriteItemsResponse Transact(TransactWriteItemsRequest request)
