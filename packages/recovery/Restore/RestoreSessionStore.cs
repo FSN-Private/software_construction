@@ -355,9 +355,15 @@ public static class RestoreSessionStore
             }
         }
 
-        await using var update = new NpgsqlCommand("UPDATE recovery_sessions SET validation_digest=$2 WHERE session_id=$1 AND state='validating'", connection, transaction);
+        await using var update = new NpgsqlCommand("""
+            UPDATE recovery_sessions SET validation_digest=CASE
+                WHEN $3=(SELECT max(revision) FROM recovery_validation_revisions WHERE session_id=$1)
+                THEN $2 ELSE validation_digest END
+            WHERE session_id=$1 AND state='validating'
+            """, connection, transaction);
         update.Parameters.AddWithValue(sessionId);
         update.Parameters.AddWithValue(validationDigest);
+        update.Parameters.AddWithValue(revision);
         if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
             throw new InvalidOperationException("restore_validation_session_conflict");
         return revision;

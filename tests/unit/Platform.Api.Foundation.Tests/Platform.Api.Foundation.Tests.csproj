@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../../../apps/api/Platform.Api.csproj" />
     <ProjectReference Include="../../../packages/recovery/Platform.Recovery.csproj" />
+    <ProjectReference Include="../../../apps/recovery-worker/Platform.Recovery.Worker.csproj" />
     <ProjectReference Include="../../../apps/ingest-worker/Platform.Ingest.Worker.csproj" />
     <ProjectReference Include="../../../packages/storage/Platform.Storage.csproj" />
     <ProjectReference Include="../../../apps/render-worker/Platform.Render.Worker.csproj" />
