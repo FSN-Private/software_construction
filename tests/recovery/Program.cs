@@ -33,6 +33,7 @@ try
     await RecoveryMaterializerChecks.RunAsync();
     await RecoveryApiTaskChecks.RunAsync();
     RecoveryCandidateIdentityChecks.Run();
+    OfflineOwnerAccessAttestationChecks.Run();
     await RecoveryOwnerAccessProbeChecks.RunAsync();
     await RecoveryCandidateAccessInputChecks.RunAsync();
     await RecoveryMediaVerificationChecks.RunAsync();

@@ -67,12 +67,17 @@ internal static class RecoveryCandidateAccessRunner
         Guid runId, Guid pointId, RecoveryIdentityApprovalArtifactV1 mapping,
         RecoveryOwnerAccessTranscriptV1 transcript, IRecoveryEvidenceSigner signer, CancellationToken cancellationToken)
     {
-        var payload = RecoveryEvidenceCodec.SerializeCanonical(new
-        {
-            schemaVersion = 1, runId, pointId, state = "independent_attestation_pending",
-            mappingApprovalSha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(mapping)),
-            transcript, recoveryWorkerBuildDigest = configuration.WorkerBuildDigest
-        });
+        var expectation = new RecoveryOwnerAccessExpectationV1(configuration.Required("OwnerId"),
+            configuration.Required("LibraryId"), configuration.RequiredHash("ConfigurationDigest"),
+            configuration.RequiredHash("ApiBuildDigest"), configuration.Required("SourceRevision"),
+            configuration.RequiredHash("MigrationDigest"), configuration.WorkerBuildDigest,
+            configuration.RequiredHash("RecoveryTemplateDigest"), configuration.Required("OwnerUserPoolId"),
+            configuration.Required("OwnerUserPoolClientId"), configuration.Required("OwnerUserPoolIssuer"));
+        expectation.Validate();
+        transcript.Validate(expectation.OwnerId, DateTimeOffset.UtcNow);
+        var payload = RecoveryEvidenceCodec.SerializeCanonical(new RecoveryCandidateAccessProbeV1(1,
+            runId, pointId, "independent_attestation_pending",
+            RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(mapping)), transcript, expectation));
         var signature = await signer.SignDigestAsync(SHA256.HashData(payload), cancellationToken);
         var envelope = new PrivateSignedCheckpointV1(1, "recovery_candidate_access_probe", configuration.WorkerId,
             signer.KeyId, signer.PublicKeySha256, RecoveryEvidenceCodec.Hash(payload),

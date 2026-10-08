@@ -2,6 +2,8 @@ using Platform.Recovery.Worker;
 
 if (args.Length > 0 && args[0] == "verify-qualification")
     return OfflineQualificationVerifier.Run(args[1..]);
+if (args.Length > 0 && args[0] == "owner-access")
+    return OfflineOwnerAccessAttestation.Run(args[1..]);
 
 if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "bootstrap-index" or "purge" or "health" or "list-points"))
 {
