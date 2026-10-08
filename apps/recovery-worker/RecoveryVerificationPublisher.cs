@@ -302,6 +302,18 @@ internal static class RecoveryVerificationPublisher
     private static List<string> ReadAndVerifyOutbox(IReadOnlyDictionary<string, AttributeValue> item,
         RecoverySigningTrust trust, VerifiedCopiedPoint point)
     {
+        var (catalog,messages)=ReadSignedOutbox(item,trust);
+        if (catalog.RecoveryPointId != point.Pointer.PointId || catalog.OwnerId != point.Pointer.OwnerId ||
+            catalog.LibraryId != point.Pointer.LibraryId || catalog.FullManifestSha256 != point.Pointer.ManifestSha256 ||
+            catalog.CheckpointSha256 != point.CheckpointPayloadSha256 ||
+            catalog.VerifiedAtUtc.ToString("O", CultureInfo.InvariantCulture) != String(item, "verifiedAtUtc"))
+            throw new RecoveryWorkerException("verification_outbox_catalog_binding_invalid");
+        return messages;
+    }
+
+    internal static (RecoveryCatalogPayloadV1 Catalog,List<string> Messages) ReadSignedOutbox(
+        IReadOnlyDictionary<string, AttributeValue> item,RecoverySigningTrust trust)
+    {
         var bytes = String(item, "messageBodies") is { } encoded
             ? Encoding.UTF8.GetBytes(encoded)
             : throw new RecoveryWorkerException("verification_outbox_missing");
@@ -318,11 +330,6 @@ internal static class RecoveryVerificationPublisher
             ReadNumber(item, "messageCount") != messages.Count || messages.Any(body => Encoding.UTF8.GetByteCount(body) > MaximumMessageBytes))
             throw new RecoveryWorkerException("verification_outbox_count_invalid");
         var catalog = RecoveryCatalogCodec.Verify(RecoveryCatalogCodec.ParseEnvelope(Encoding.UTF8.GetBytes(messages[0])), trust).Payload;
-        if (catalog.RecoveryPointId != point.Pointer.PointId || catalog.OwnerId != point.Pointer.OwnerId ||
-            catalog.LibraryId != point.Pointer.LibraryId || catalog.FullManifestSha256 != point.Pointer.ManifestSha256 ||
-            catalog.CheckpointSha256 != point.CheckpointPayloadSha256 ||
-            catalog.VerifiedAtUtc.ToString("O", CultureInfo.InvariantCulture) != String(item, "verifiedAtUtc"))
-            throw new RecoveryWorkerException("verification_outbox_catalog_binding_invalid");
         for (var index = 0; index < RecoveryEvidenceCodec.ObservationClasses.Length; index++)
         {
             var envelope = RecoveryEvidenceCodec.ParseObservationEnvelope(Encoding.UTF8.GetBytes(messages[index + 1]));
@@ -338,7 +345,7 @@ internal static class RecoveryVerificationPublisher
                     coverage.DataClass, catalog.FullManifestSha256, catalog.VerifiedAtUtc))
                 throw new RecoveryWorkerException("verification_outbox_observation_binding_invalid");
         }
-        return messages;
+        return (catalog,messages);
     }
 
     private static void ValidatePointMarker(IReadOnlyDictionary<string, AttributeValue> item,
