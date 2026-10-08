@@ -46,8 +46,30 @@ internal static class RecoveryDrillRunner
         var completion = await RecoveryDrillCompletion.ReadAsync(s3, configuration, runId, signer.Trust, cancellationToken, approvalSha256);
         if (completion is not null)
         {
-            Console.WriteLine($"recovery_drill_completed_replay run={runId:D} point={completion.PointId:D} state=restore_validated_unqualified");
+            Console.WriteLine($"recovery_drill_completed_replay run={runId:D} point={completion.PointId:D} state={completion.State}");
+            if (completion.State == "interrupted_cleaned_unqualified")
+                throw new RecoveryWorkerException("drill_interrupted_cleaned_unqualified");
             return;
+        }
+        var interruptedLaunch = await RecoveryApiLaunchJournal.ReadAsync(s3, configuration, runId, signer.Trust,
+            approvalSha256, cancellationToken);
+        if (interruptedLaunch is not null)
+        {
+            var reconcileDirectory = Path.Combine(configuration.Optional("ScratchDirectory") ?? Path.GetTempPath(), "recovery-reconcile", runId.ToString("N"));
+            Directory.CreateDirectory(reconcileDirectory);
+            try
+            {
+                using var reconcileEcs = new AmazonECSClient(Amazon.RegionEndpoint.GetBySystemName(region));
+                using var reconcileSecrets = new AmazonSecretsManagerClient(Amazon.RegionEndpoint.GetBySystemName(region));
+                await RecoveryApiLaunchJournal.ReconcileAsync(s3, reconcileEcs, configuration, interruptedLaunch,
+                    signer, signer.Trust, cancellationToken);
+                var reconcileDatabase = await ReadRecoveryDatabaseAsync(configuration, reconcileSecrets, reconcileDirectory, cancellationToken);
+                await DropDatabaseAsync(reconcileDatabase, interruptedLaunch.DatabaseName, cancellationToken);
+                await RecoveryDrillCompletion.PersistAsync(s3, configuration, runId, interruptedLaunch.PointId,
+                    interruptedLaunch.CandidateEvidence, signer, cancellationToken, approvalSha256, "interrupted_cleaned_unqualified");
+            }
+            finally { try { Directory.Delete(reconcileDirectory, recursive: true); } catch { } }
+            throw new RecoveryWorkerException("drill_interrupted_cleaned_unqualified");
         }
         var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
             configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
@@ -132,8 +154,11 @@ internal static class RecoveryDrillRunner
                         var mapping = await RecoveryCandidateAccessRunner.PrepareAsync(secrets, candidateConnection,
                             configuration, runId, accessInputs, cancellationToken);
                         apiLaunchAttempted = true;
+                        var launchIntent = await RecoveryApiLaunchJournal.PrepareAsync(s3, configuration, runId,
+                            point.Pointer.PointId, scratchDatabase, candidateEvidence, signer, signer.Trust, approvalSha256, cancellationToken);
                         apiTask = await RecoveryApiTaskRunner.StartAsync(ecs, configuration, runId,
-                            scratchDatabase, cancellationToken);
+                            scratchDatabase, cancellationToken, arn => RecoveryApiLaunchJournal.RecordTaskAsync(s3,
+                                configuration, launchIntent, arn, signer, signer.Trust, cancellationToken));
                         var transcript = await RecoveryOwnerAccessProbe.RunAsync(apiTask, Guid.NewGuid(), mapping.Payload,
                             accessInputs.OwnerToken, accessInputs.ForeignToken, cancellationToken);
                         await RecoveryCandidateAccessRunner.PersistTranscriptAsync(s3, configuration, runId,

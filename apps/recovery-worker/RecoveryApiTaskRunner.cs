@@ -13,7 +13,7 @@ internal static class RecoveryApiTaskRunner
 {
     internal static async Task<RecoveryApiTask> StartAsync(IAmazonECS ecs,
         RecoveryWorkerConfiguration configuration, Guid runId, string databaseName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Func<string, Task>? recordTask = null)
     {
         if (runId == Guid.Empty || configuration.Required("RecoveryOnly") != "true" ||
             !databaseName.StartsWith("recovery_drill_", StringComparison.Ordinal) || databaseName.Length > 63 ||
@@ -58,14 +58,23 @@ internal static class RecoveryApiTaskRunner
             // Confirm cleanup before allowing the caller to discard the clone.
             foreach (var launched in response.Tasks ?? [])
                 RequireArn(launched.TaskArn, account, region, "task/");
-            foreach (var launched in response.Tasks ?? [])
-                await StopAsync(ecs, configuration, launched.TaskArn, CancellationToken.None);
+            try
+            {
+                if (response.Tasks is { Count: 1 } && recordTask is not null)
+                    await recordTask(response.Tasks[0].TaskArn);
+            }
+            finally
+            {
+                foreach (var launched in response.Tasks ?? [])
+                    await StopAsync(ecs, configuration, launched.TaskArn, CancellationToken.None);
+            }
             throw new RecoveryWorkerException("api_candidate_launch_failed");
         }
         var taskArn = response.Tasks[0].TaskArn;
         RequireArn(taskArn, account, region, "task/");
         try
         {
+            if (recordTask is not null) await recordTask(taskArn);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
             while (true)
@@ -123,6 +132,22 @@ internal static class RecoveryApiTaskRunner
             if (response.Tasks[0].LastStatus == "STOPPED") return;
             await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
         }
+    }
+
+    internal static async Task StopOwnedAsync(IAmazonECS ecs, RecoveryWorkerConfiguration configuration,
+        Guid runId, string taskArn, CancellationToken ct)
+    {
+        RequireArn(taskArn,configuration.RequiredAccountId("DestinationAccountId"),
+            configuration.RequiredRegion("DestinationRegion"),"task/");
+        var cluster=configuration.Required("ApiClusterArn");
+        var response=await ecs.DescribeTasksAsync(new DescribeTasksRequest { Cluster=cluster,Tasks=[taskArn] },ct);
+        if(response.Failures is { Count:>0 } || response.Tasks is not { Count:1 } ||
+            response.Tasks[0].TaskArn!=taskArn || response.Tasks[0].ClusterArn!=cluster ||
+            response.Tasks[0].TaskDefinitionArn!=configuration.Required("ApiTaskDefinitionArn") ||
+            response.Tasks[0].StartedBy!=runId.ToString("D"))
+            throw new RecoveryWorkerException("api_candidate_cleanup_binding_invalid");
+        if(response.Tasks[0].LastStatus=="STOPPED") return;
+        await StopAsync(ecs,configuration,taskArn,ct);
     }
 
     private static bool ValidResourceId(string value, string prefix) => value.StartsWith(prefix, StringComparison.Ordinal) &&

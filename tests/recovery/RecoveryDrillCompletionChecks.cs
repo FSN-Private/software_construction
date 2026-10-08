@@ -63,6 +63,7 @@ internal static class RecoveryDrillCompletionChecks
             }
             var missing=DispatchProxy.Create<IAmazonS3,S3Fake>();((S3Fake)(object)missing).Fault="missing";
             Require(await RecoveryDrillCompletion.ReadAsync(missing,configuration,run,trust,default) is null,"missing_completion_not_new_run");
+            await RecoveryApiLaunchJournalChecks.RunAsync(configuration,run,trust,rsa,value.CandidateEvidence);
         }
         finally { foreach(var (key,value) in old) Environment.SetEnvironmentVariable("Recovery__"+key,value); }
     }

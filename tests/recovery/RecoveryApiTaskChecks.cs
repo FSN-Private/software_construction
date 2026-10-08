@@ -48,16 +48,24 @@ internal static class RecoveryApiTaskChecks
     }
 
     private static void Require(bool value,string code) { if(!value) throw new InvalidOperationException(code); }
-    private sealed class EcsFake() : AmazonECSClient(new AnonymousAWSCredentials(),
+    internal sealed class EcsFake() : AmazonECSClient(new AnonymousAWSCredentials(),
         new AmazonECSConfig { ServiceURL="http://127.0.0.1:1" })
     {
         private const string TaskArn="arn:aws:ecs:ap-southeast-2:444455556666:task/recovery/fixture";
-        internal string? Fault { get; init; }
+        internal string? Fault { get; set; }
+        internal int Launches { get; private set; }
+        internal bool FailOnceAfterLaunch { get; set; }
         internal RunTaskRequest? Request { get; private set; }
         internal int Stops { get; private set; }
         public override Task<RunTaskResponse> RunTaskAsync(RunTaskRequest request,CancellationToken cancellationToken=default)
         {
             Request=request;
+            Launches++;
+            if(FailOnceAfterLaunch)
+            {
+                FailOnceAfterLaunch=false;
+                throw new InvalidOperationException("fixture_unknown_launch_result");
+            }
             return Task.FromResult(new RunTaskResponse { Tasks=[new() { TaskArn=TaskArn }],
                 Failures=Fault=="partial_launch" ? [new() { Reason="fixture_failure" }] : [] });
         }
@@ -65,7 +73,8 @@ internal static class RecoveryApiTaskChecks
             Task.FromResult(new DescribeTasksResponse { Tasks=[new()
             {
                 TaskArn=TaskArn,ClusterArn=Request!.Cluster,TaskDefinitionArn=Fault=="definition" ? "foreign" : Request.TaskDefinition,
-                StartedBy=Request.StartedBy,EnableExecuteCommand=Fault=="exec",LastStatus=Stops>0 ? "STOPPED" : "RUNNING",
+                StartedBy=Fault=="foreign_run" ? Guid.NewGuid().ToString("D") : Request.StartedBy,
+                EnableExecuteCommand=Fault=="exec",LastStatus=Stops>0 ? "STOPPED" : "RUNNING",
                 Containers=[new() { Name="api",Image="recovery-api@sha256:"+new string('b',64),
                     ImageDigest="sha256:"+new string(Fault=="image" ? 'c' : 'b',64) }],
                 Attachments=[new() { Type="ElasticNetworkInterface",Details=[
