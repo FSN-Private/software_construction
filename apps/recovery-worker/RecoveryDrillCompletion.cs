@@ -35,11 +35,12 @@ internal static class RecoveryDrillCompletion
 
     internal static async Task<PublishedS3Object> PersistAsync(IAmazonS3 s3,
         RecoveryWorkerConfiguration configuration, Guid runId, Guid pointId,
-        PublishedS3Object candidate, IRecoveryEvidenceSigner signer, CancellationToken ct, string? approvalSha256 = null)
+        PublishedS3Object candidate, IRecoveryEvidenceSigner signer, CancellationToken ct, string? approvalSha256 = null,
+        string state = "restore_validated_unqualified")
     {
         var completion=new RecoveryDrillCompletionV1(1,runId,pointId,configuration.Required("OwnerId"),
             configuration.Required("LibraryId"),Binding(configuration,approvalSha256),candidate,DateTimeOffset.UtcNow,
-            true,true,"restore_validated_unqualified");
+            true,true,state);
         var payload=RecoveryEvidenceCodec.SerializeCanonical(completion);
         var signature=await signer.SignDigestAsync(SHA256.HashData(payload),ct);
         var envelope=new PrivateSignedCheckpointV1(1,"recovery_drill_completed",configuration.WorkerId,
@@ -67,7 +68,7 @@ internal static class RecoveryDrillCompletion
                 result.SchemaVersion!=1 || result.RunId!=runId || result.PointId==Guid.Empty ||
                 result.OwnerId!=configuration.Required("OwnerId") || result.LibraryId!=configuration.Required("LibraryId") ||
                 result.BindingSha256!=Binding(configuration,approvalSha256) || !result.ApiCleanupConfirmed || !result.DatabaseCleanupConfirmed ||
-                result.State!="restore_validated_unqualified" || result.CompletedAtUtc.Offset!=TimeSpan.Zero ||
+                result.State is not ("restore_validated_unqualified" or "interrupted_cleaned_unqualified") || result.CompletedAtUtc.Offset!=TimeSpan.Zero ||
                 result.CompletedAtUtc>DateTimeOffset.UtcNow || result.CandidateEvidence is null ||
                 result.CandidateEvidence.Key!=$"evidence/drills/{runId:D}/candidate.v1.json" ||
                 string.IsNullOrWhiteSpace(result.CandidateEvidence.VersionId) || result.CandidateEvidence.VersionId=="null" ||
@@ -99,7 +100,7 @@ internal static class RecoveryDrillCompletion
         }));
 
     private static string Key(Guid runId)=>$"evidence/drills/{runId:D}/completed.v1.json";
-    private static async Task<byte[]> ReadExactAsync(IAmazonS3 s3,string bucket,string key,string? version,int limit,CancellationToken ct)
+    internal static async Task<byte[]> ReadExactAsync(IAmazonS3 s3,string bucket,string key,string? version,int limit,CancellationToken ct)
     {
         if(version is null)
         {
