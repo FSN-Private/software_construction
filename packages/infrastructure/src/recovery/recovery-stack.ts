@@ -268,6 +268,15 @@ export class RecoveryStack extends Stack {
       description: 'Recovery-side copy identity; primary access is a time-bounded, explicit AssumeRole only.',
     });
     copyRole.addToPolicy(new aws_iam.PolicyStatement({ actions: ['sts:AssumeRole'], resources: [primaryReadRoleArn] }));
+    copyRole.addToPolicy(new aws_iam.PolicyStatement({
+      sid: 'ExtendOnlyExactRecoveryMediaGovernanceRetention',
+      actions: ['s3:PutObjectRetention'], resources: [bucket.arnForObjects('payload/sha256/*')],
+      conditions: {
+        StringEquals: { 's3:object-lock-mode': 'GOVERNANCE' },
+        NumericGreaterThanEquals: { 's3:object-lock-remaining-retention-days': '90' },
+        NumericLessThanEquals: { 's3:object-lock-remaining-retention-days': '92' },
+      },
+    }));
     addRecoveryDataPolicy(copyRole, bucket, controlTable, ['payload/sha256/*', 'snapshots/*', 'points/*', 'evidence/*'], ['payload/sha256/*', 'snapshots/*', 'points/*', 'evidence/*'], ['GetItem', 'PutItem', 'UpdateItem', 'Query', 'DescribeTable']);
     copyRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
       actions: ['dynamodb:GetItem', 'dynamodb:ConditionCheckItem'],

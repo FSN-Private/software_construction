@@ -1,6 +1,6 @@
 # ADR-0017: Extend exact media-version retention on reuse
 
-**Status**: Proposed; specific local design/IAM approval pending
+**Status**: Accepted for the explicitly approved local design/IAM implementation and tests on 2026-10-08; deployment and live mutations remain unauthorized
 **Date**: 2026-10-08
 **Decision owner**: Product owner
 **Related feature**: [011 backup and disaster recovery](../../features/011-backup-disaster-recovery/spec.md), T009/T018/T035/T036

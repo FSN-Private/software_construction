@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
-  "status": "authorization_pending_unattached",
+  "status": "approved_local_definition",
+  "approvedAtUtc": "2026-10-08",
+  "attachedToCdk": true,
   "roleConstruct": "RecoveryCopyRole",
   "statement": {
     "Effect": "Allow",
@@ -19,7 +21,7 @@
     "Never shorten retention, change mode, set legal holds, bypass governance, create another payload version or weaken the existing 90-day check",
     "Re-read exact-version retention before settling or signing a receipt; unknown/denied writes remain pending and retry the same version",
     "An expired logical obligation does not override a provider lock: purge waits until both independently established eligibility and observed S3 retention permit deletion",
-    "No primary resources, new KMS/secrets/signing/delete permissions or deployment/live mutation are authorized by this proposal"
+    "The owner explicitly approved this exact local design and tests on 2026-10-08. No primary resources, new KMS/secrets/signing/delete permissions or deployment/live mutation are authorized"
   ],
   "sources": [
     "https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html",
