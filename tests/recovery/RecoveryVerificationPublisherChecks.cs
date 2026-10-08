@@ -175,6 +175,21 @@ internal static class RecoveryVerificationPublisherChecks
         catch (RecoveryWorkerException exception) when (exception.SafeCode == "owner_access_proof_required_for_healthy_catalog") { }
         Check(sqs.Sends.Count == deliveredSendCount,
             "An access-incomplete point must not send any healthy catalog or observations.");
+        var historical = point with { HistoricalOwnerAccess = true };
+        try
+        {
+            await RecoveryVerificationPublisher.PublishAsync(database, queue, configuration, signer, trust,
+                historical, head, CancellationToken.None);
+            throw new InvalidOperationException("Historical access evidence granted current healthy authority");
+        }
+        catch (RecoveryWorkerException error) when (error.SafeCode == "owner_access_proof_required_for_healthy_catalog") { }
+        try
+        {
+            _ = RecoveryVerificationPublisher.BuildCatalog(configuration, historical, DateTimeOffset.UtcNow);
+            throw new InvalidOperationException("Historical access evidence created a current catalog");
+        }
+        catch (RecoveryWorkerException error) when (error.SafeCode == "owner_access_proof_required_for_healthy_catalog") { }
+        Check(sqs.Sends.Count == deliveredSendCount, "Historical access evidence published a healthy message");
         var failedPoint = Guid.NewGuid();
         var failedCapture = Guid.NewGuid();
         sqs.FailOnceAfterAcceptingCall = sqs.Sends.Count + 1;
