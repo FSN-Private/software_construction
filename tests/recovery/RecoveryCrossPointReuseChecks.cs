@@ -52,8 +52,34 @@ internal static class RecoveryCrossPointReuseChecks
         var expiredStore = new RecoveryObjectStore(primary, expiredPayload, "primary-media", "recovery-payload",
             "recovery-fixture", fixture.DestinationRegion, "kms-fixture", fixture.WorkerBuildDigest,
             new FrozenTimeProvider(fixture.Now));
-        await ThrowsAsync<InvalidDataException>(() => expiredStore.ReuseVerifiedReceiptAsync(
-            fixture.MediaReference, identity.DestinationKey, candidate, currentAdmission, CancellationToken.None));
+        var extended = await expiredStore.ReuseVerifiedReceiptAsync(
+            fixture.MediaReference, identity.DestinationKey, candidate, currentAdmission, CancellationToken.None);
+        Check(extended.DestinationVersionId == candidate.DestinationVersionId && expiredPayload.RetentionWrites == 1 &&
+            expiredPayload.RetainUntilUtc == fixture.Now.AddDays(91).UtcDateTime && expiredPayload.FullReadBytes == 0,
+            "Fenced reuse extends only the same exact media version, preserving byte verification cadence.");
+        Check(payload.RetentionWrites == 0, "Sufficient protection must not issue a retention write.");
+        foreach (var fault in new[] { "denied", "lost_response", "insufficient", "compliance", "missing_mode" })
+        {
+            var failing = new ReuseS3 { RetainUntilUtc = currentAdmission.AddDays(89).UtcDateTime, RetentionFault = fault };
+            failing.Add("recovery-payload", identity.DestinationKey, "payload-v1", fixture.MediaBytes);
+            var failingStore = new RecoveryObjectStore(primary, failing, "primary-media", "recovery-payload",
+                "recovery-fixture", fixture.DestinationRegion, "kms-fixture", fixture.WorkerBuildDigest,
+                new FrozenTimeProvider(fixture.Now));
+            if (fault is "denied" or "lost_response")
+                await ThrowsAsync<AmazonS3Exception>(() => failingStore.ReuseVerifiedReceiptAsync(
+                    fixture.MediaReference, identity.DestinationKey, candidate, currentAdmission, default));
+            else await ThrowsAsync<InvalidDataException>(() => failingStore.ReuseVerifiedReceiptAsync(
+                fixture.MediaReference, identity.DestinationKey, candidate, currentAdmission, default));
+            if (fault == "lost_response")
+            {
+                var settled = await failingStore.ReuseVerifiedReceiptAsync(fixture.MediaReference,
+                    identity.DestinationKey, candidate, currentAdmission, default);
+                Check(settled.DestinationVersionId == "payload-v1" && failing.RetentionWrites == 1,
+                    "Accepted-but-lost retention response is reconciled by exact reread, without another write.");
+            }
+            if (fault is "compliance" or "missing_mode") Check(failing.RetentionWrites == 0,
+                "An unknown or different lock mode cannot be extended.");
+        }
 
         var noHeadDynamo = new ReuseDynamo(fixture.ControlItems, includeHead: false);
         var noHead = await RecoveryCopyReceiptReuse.ReadLatestAsync(noHeadDynamo, evidence, "control",
@@ -318,7 +344,9 @@ internal static class RecoveryCrossPointReuseChecks
             ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true
         }) { }
 
-        public DateTime? RetainUntilUtc { get; init; }
+        public DateTime? RetainUntilUtc { get; set; }
+        public string? RetentionFault { get; init; }
+        public int RetentionWrites { get; private set; }
         public long FullReadBytes { get; private set; }
         public long RangeReadBytes { get; private set; }
         public void Add(string bucket, string key, string version, byte[] bytes) => objects[(bucket, key, version)] = bytes;
@@ -356,10 +384,25 @@ internal static class RecoveryCrossPointReuseChecks
             {
                 Retention = new ObjectLockRetention
                 {
-                    Mode = ObjectLockRetentionMode.Governance,
+                    Mode = RetentionFault == "missing_mode" ? null : RetentionFault == "compliance" ?
+                        ObjectLockRetentionMode.Compliance : ObjectLockRetentionMode.Governance,
                     RetainUntilDate = RetainUntilUtc ?? DateTime.UtcNow.AddDays(100)
                 }
             });
+
+        public override Task<PutObjectRetentionResponse> PutObjectRetentionAsync(PutObjectRetentionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Check(request.BucketName == "recovery-payload" && request.Key.StartsWith("payload/sha256/", StringComparison.Ordinal) &&
+                request.VersionId == "payload-v1" && request.BypassGovernanceRetention is false &&
+                request.Retention.Mode == ObjectLockRetentionMode.Governance,
+                "Retention extension escaped exact approved scope or bypassed governance.");
+            RetentionWrites++;
+            if (RetentionFault == "denied") throw new AmazonS3Exception("fixture denied") { StatusCode = HttpStatusCode.Forbidden };
+            if (RetentionFault != "insufficient") RetainUntilUtc = request.Retention.RetainUntilDate;
+            if (RetentionFault == "lost_response") throw new AmazonS3Exception("fixture accepted but response lost");
+            return Task.FromResult(new PutObjectRetentionResponse());
+        }
 
         public override Task<GetObjectResponse> GetObjectAsync(GetObjectRequest request,
             CancellationToken cancellationToken = default)

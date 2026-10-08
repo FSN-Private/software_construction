@@ -230,7 +230,7 @@ public sealed class RecoveryObjectStore(
                 throw new InvalidDataException("recovery_destination_access_probe_invalid");
         }
 
-        await VerifyRetentionAtAsync(destinationKey, signedReceipt.DestinationVersionId, admittedAtUtc, cancellationToken);
+        await EnsureReuseRetentionAsync(source, destinationKey, signedReceipt.DestinationVersionId, admittedAtUtc, cancellationToken);
         var receipt = new RecoveryCopyReceipt(source, recoveryBucket, destinationKey,
             signedReceipt.DestinationVersionId, recoveryAccountAlias, recoveryRegion, admittedAtUtc,
             clock.GetUtcNow(), verifierBuild, RetentionPolicyVerified: true, AccessPolicyVerified: true);
@@ -328,6 +328,34 @@ public sealed class RecoveryObjectStore(
             await using var scratch = CreateTempFile("recovery-verify");
             await CopyAndHashAsync(response.ResponseStream, scratch, expected, cancellationToken);
         }
+    }
+
+    private async Task EnsureReuseRetentionAsync(RecoveryObjectReference source, string key, string version,
+        DateTimeOffset admittedAtUtc, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        if (admittedAtUtc > now || now.Offset != TimeSpan.Zero ||
+            source.DataClass is not (RecoveryDataClass.OriginalImage or RecoveryDataClass.XmpSidecar) ||
+            key != "payload/sha256/" + source.Sha256)
+            throw new InvalidDataException("recovery_retention_extension_scope_invalid");
+        var current = await recoveryS3.GetObjectRetentionAsync(new GetObjectRetentionRequest
+        { BucketName = recoveryBucket, Key = key, VersionId = version }, cancellationToken);
+        var until = current.Retention?.RetainUntilDate?.ToUniversalTime();
+        if (until is null || current.Retention?.Mode != ObjectLockRetentionMode.Governance &&
+            current.Retention?.Mode != ObjectLockRetentionMode.Compliance)
+            throw new InvalidDataException("recovery_object_retention_unverified");
+        if (until.Value >= admittedAtUtc.AddDays(90).UtcDateTime) return;
+        if (current.Retention?.Mode != ObjectLockRetentionMode.Governance)
+            throw new InvalidDataException("recovery_retention_extension_governance_required");
+        await recoveryS3.PutObjectRetentionAsync(new PutObjectRetentionRequest
+        {
+            BucketName = recoveryBucket, Key = key, VersionId = version, BypassGovernanceRetention = false,
+            Retention = new ObjectLockRetention { Mode = ObjectLockRetentionMode.Governance,
+                RetainUntilDate = now.AddDays(91).UtcDateTime }
+        }, cancellationToken);
+        // Only the reread establishes protection. An unknown write response leaves
+        // the caller's existing fenced intent pending and cannot produce a receipt.
+        await VerifyRetentionAtAsync(key, version, admittedAtUtc, cancellationToken);
     }
 
     private async Task VerifyRetentionAtAsync(string key, string version, DateTimeOffset protectedFromUtc, CancellationToken cancellationToken)

@@ -28,6 +28,27 @@ const roleLogicalId = role => Object.entries(recovery.Resources).find(([, value]
 const policiesForRole = role => resources
   .filter(([, value]) => value.Type === 'AWS::IAM::Policy' && values(value.Properties.Roles).includes(roleLogicalId(role)))
   .map(([, value]) => value.Properties.PolicyDocument);
+const retentionCopyRole = resourceOf('AWS::IAM::Role', value => values(value.Properties.Description).includes('Recovery-side copy identity'));
+const retentionStatements = policiesForRole(retentionCopyRole).flatMap(policy => policy.Statement)
+  .filter(statement => [statement.Action].flat().includes('s3:PutObjectRetention'));
+assert.equal(retentionStatements.length, 1, 'Only the reviewed exact media retention statement is permitted.');
+assert.deepEqual([retentionStatements[0].Action].flat(), ['s3:PutObjectRetention']);
+assert.ok(values(retentionStatements[0].Resource).includes('/payload/sha256/*'));
+const retentionProtectedBucketId = resources.find(([, value]) => value.Type === 'AWS::S3::Bucket' &&
+  value.Properties?.ObjectLockConfiguration?.Rule?.DefaultRetention?.Mode === 'GOVERNANCE')?.[0];
+assert.ok(retentionProtectedBucketId && values(retentionStatements[0].Resource).includes(retentionProtectedBucketId));
+assert.ok(!values(retentionStatements[0].Resource).includes('/snapshots/') && !values(retentionStatements[0].Resource).includes('/evidence/'));
+assert.deepEqual(retentionStatements[0].Condition, {
+  StringEquals: { 's3:object-lock-mode': 'GOVERNANCE' },
+  NumericGreaterThanEquals: { 's3:object-lock-remaining-retention-days': '90' },
+  NumericLessThanEquals: { 's3:object-lock-remaining-retention-days': '92' },
+});
+for (const [, resource] of resources.filter(([, value]) => value.Type === 'AWS::IAM::Policy')) {
+  assert.ok(!values(resource.Properties.PolicyDocument).includes('s3:BypassGovernanceRetention'));
+  if (resource.Properties.PolicyDocument.Statement.some(statement => [statement.Action].flat().includes('s3:PutObjectRetention') &&
+    values(statement.Resource).includes(retentionProtectedBucketId)))
+    assert.ok(values(resource.Properties.Roles).includes(roleLogicalId(retentionCopyRole)), 'No other role receives retention changes.');
+}
 const captureTask = Object.entries(foundation.Resources).find(([, value]) => value.Type === 'AWS::ECS::TaskDefinition' && value.Properties?.Family?.includes('recovery-capture'))?.[1];
 assert.ok(captureTask, 'Missing primary read-only capture task');
 const fenceTable = resourceOf('AWS::DynamoDB::Table', value => values(value.Properties?.TableName).includes('recovery-fence'));
