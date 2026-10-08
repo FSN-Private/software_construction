@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "status": "authorization_pending_unattached",
+  "roleConstruct": "RecoveryCopyRole",
+  "statement": {
+    "Effect": "Allow",
+    "Action": "s3:PutObjectRetention",
+    "Resource": "${RecoveryBucket.Arn}/payload/sha256/*",
+    "Condition": {
+      "StringEquals": { "s3:object-lock-mode": "GOVERNANCE" },
+      "NumericGreaterThanEquals": { "s3:object-lock-remaining-retention-days": "90" },
+      "NumericLessThanEquals": { "s3:object-lock-remaining-retention-days": "92" }
+    }
+  },
+  "constraints": [
+    "Only reuse of an independently authenticated media receipt under an already admitted, fenced writer intent may request extension",
+    "Verify exact destination version, length and S3/KMS access first; preserve full-byte verification cadence",
+    "If protection is insufficient for the new admission plus 90 days, extend that exact version to recovery UTC now plus 91 days",
+    "Never shorten retention, change mode, set legal holds, bypass governance, create another payload version or weaken the existing 90-day check",
+    "Re-read exact-version retention before settling or signing a receipt; unknown/denied writes remain pending and retry the same version",
+    "An expired logical obligation does not override a provider lock: purge waits until both independently established eligibility and observed S3 retention permit deletion",
+    "No primary resources, new KMS/secrets/signing/delete permissions or deployment/live mutation are authorized by this proposal"
+  ],
+  "sources": [
+    "https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html",
+    "https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-managing.html"
+  ]
+}

@@ -38,6 +38,31 @@ internal static class RecoveryLatestPointDiscoveryChecks
                 ["INDEX", RecoveryOwnerPointIndex.PointSortKey(first.PointId), "COPY", "INDEX"]),
             "The bounded read touches only the index head, exact membership, exact copy pointer, and head recheck.");
 
+        var selectedDatabase = new LatestDynamo(factory.Rows(first, second));
+        selectedDatabase.ReplaceIndex(factory.Index(second, 2));
+        var selected = await RecoveryLatestPointDiscovery.ReadIndexedPointAsync(selectedDatabase.Client,
+            factory.S3(first, second), "control", FixtureFactory.Owner, FixtureFactory.Library, first.PointId,
+            trust, CancellationToken.None);
+        Check(selected.Pointer.PointId == first.PointId && selectedDatabase.GetCalls == 3 &&
+            selectedDatabase.QueryCalls == 0 && selectedDatabase.ScanCalls == 0 && selectedDatabase.UpdateCalls == 0,
+            "Explicit historical-point discovery followed the latest head or enumerated/wrote history.");
+        var noMember = new LatestDynamo(factory.Rows(first));
+        noMember.Remove(RecoveryOwnerPointIndex.PartitionKey(FixtureFactory.Owner, FixtureFactory.Library), RecoveryOwnerPointIndex.PointSortKey(first.PointId));
+        var noMemberS3 = factory.S3(first);
+        await ExpectSafeCode(() => RecoveryLatestPointDiscovery.ReadIndexedPointAsync(noMember.Client,
+            noMemberS3, "control", FixtureFactory.Owner, FixtureFactory.Library, first.PointId, trust, CancellationToken.None),
+            "selected_copy_membership_missing_or_foreign");
+        Check(noMemberS3.GetCalls == 0 && noMember.GetCalls == 2,
+            "Missing/foreign selected membership caused payload reads or cross-owner discovery.");
+        RecoveryLatestPointDiscovery.RequireSelectedPoint(first.PointId, first.PointId);
+        RecoveryLatestPointDiscovery.RequireSelectedPoint(null, second.PointId);
+        try
+        {
+            RecoveryLatestPointDiscovery.RequireSelectedPoint(second.PointId, first.PointId);
+            throw new InvalidOperationException("Selected-point change reused an unrelated completed/launch journal.");
+        }
+        catch (RecoveryWorkerException error) when (error.SafeCode == "drill_run_selected_point_conflict") { }
+
         var future = factory.Create(3, DateTimeOffset.UtcNow.AddYears(1), 98, "copied");
         var futureDynamo = new LatestDynamo(factory.Rows(future));
         await ExpectSafeCode(() => RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(futureDynamo.Client,

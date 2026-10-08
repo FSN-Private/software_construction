@@ -29,6 +29,7 @@ internal static class RecoveryDrillRunner
             throw new RecoveryWorkerException("drill_recovery_only_required");
         if (!Guid.TryParse(configuration.Required("DrillRunId"), out var runId) || runId == Guid.Empty)
             throw new RecoveryWorkerException("drill_run_id_invalid");
+        var selectedPoint = RecoveryLatestPointDiscovery.SelectedPoint(configuration);
         var accessInputs = await RecoveryCandidateAccessRunner.ReadInputsAsync(configuration, cancellationToken);
 
         var region = configuration.RequiredRegion("DestinationRegion");
@@ -46,6 +47,7 @@ internal static class RecoveryDrillRunner
         var completion = await RecoveryDrillCompletion.ReadAsync(s3, configuration, runId, signer.Trust, cancellationToken, approvalSha256);
         if (completion is not null)
         {
+            RecoveryLatestPointDiscovery.RequireSelectedPoint(selectedPoint, completion.PointId);
             Console.WriteLine($"recovery_drill_completed_replay run={runId:D} point={completion.PointId:D} state={completion.State}");
             if (completion.State == "interrupted_cleaned_unqualified")
                 throw new RecoveryWorkerException("drill_interrupted_cleaned_unqualified");
@@ -55,6 +57,7 @@ internal static class RecoveryDrillRunner
             approvalSha256, cancellationToken);
         if (interruptedLaunch is not null)
         {
+            RecoveryLatestPointDiscovery.RequireSelectedPoint(selectedPoint, interruptedLaunch.PointId);
             var reconcileDirectory = Path.Combine(configuration.Optional("ScratchDirectory") ?? Path.GetTempPath(), "recovery-reconcile", runId.ToString("N"));
             Directory.CreateDirectory(reconcileDirectory);
             try
@@ -71,9 +74,13 @@ internal static class RecoveryDrillRunner
             finally { try { Directory.Delete(reconcileDirectory, recursive: true); } catch { } }
             throw new RecoveryWorkerException("drill_interrupted_cleaned_unqualified");
         }
-        var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
-            configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
-            configuration.Required("LibraryId"), signer.Trust, cancellationToken);
+        var latest = selectedPoint is { } selectedId
+            ? await RecoveryLatestPointDiscovery.ReadIndexedPointAsync(dynamo, s3,
+                configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
+                configuration.Required("LibraryId"), selectedId, signer.Trust, cancellationToken)
+            : await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
+                configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
+                configuration.Required("LibraryId"), signer.Trust, cancellationToken);
         var auditGenesis = await RecoveryVerifierRunner.ReadAuditGenesisAsync(configuration, s3, signer.Trust,
             cancellationToken);
 

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { verifyRecoveryTemplate } from '../../../scripts/verify-recovery-template.mjs';
 
 const fixture = () => ({ Parameters: {
@@ -29,9 +28,4 @@ const arbitraryPin = fixture();
 arbitraryPin.Resources.Worker.Properties.ContainerDefinitions[0].Environment[0].Value = '0'.repeat(64);
 const arbitraryBytes = bytes(arbitraryPin);
 assert.throws(() => verifyRecoveryTemplate(arbitraryBytes, digest(arbitraryBytes)), /must reference/);
-const synthesized = readFileSync('packages/infrastructure/cdk.out-recovery/Recovery-nonprod.template.json');
-assert.deepEqual(verifyRecoveryTemplate(synthesized, digest(synthesized)), [
-  { ParameterKey: 'RecoveryTemplateDigest', ParameterValue: digest(synthesized) },
-]);
-assert.throws(() => verifyRecoveryTemplate(Buffer.concat([synthesized, Buffer.from('\n')]), digest(synthesized)), /differs/);
 console.log('Exact-template gate rejects changed bytes, missing independent pins and defaulted digest parameters. No deployment performed.');

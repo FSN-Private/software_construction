@@ -71,6 +71,8 @@ The capture interval is not the RPO. Measure the conservative loss window as dec
 
 ### Cold policy and cost gate
 
+T035's concrete replacement proposal is [ADR-0017](../../architecture/decisions/0017-recovery-media-retention-extension.md) and `packages/infrastructure/policy-proposals/recovery-retention-extension.v1.json`. It extends an already admitted exact media version when fresh-admission protection is insufficient, preserving the current 90-day checks and all purge/hold gates. It remains proposed and unattached until specifically approved; no lock check is removed.
+
 Keep recovery payload versions in S3 Standard for their first 90 days, then transition only the recovery-account payload to S3 Glacier Instant Retrieval. Individual objects remain online with millisecond access, but retrieval has per-GB/request fees, a 128 KB minimum billable size, and a 90-day minimum duration; bulk transfer speed still affects RTO. Keep database dumps, manifests/catalog, config/release artifacts, ECR images, access inputs, and signed audit/purge/checkpoint evidence warm. Do not expire the final verified copy. AWS Backup cold tier is not used for this design.
 
 Build the estimate from the measured 100,000-image / 1,000,000-record inventory: bytes by class, small-object histogram, versions, growth, dump size/duration, seed/recovery bandwidth, API/KMS request counts, Glacier minimum-size/retrieval costs, ECR retention, and recovery compute/database hours. Use current Sydney pricing and an owner-approved monthly budget. Do not invent average photo sizes or present an unsupported dollar total.
