@@ -326,16 +326,38 @@ internal static class RecoveryIntegrationChecks
                 "requested", "restoring", DateTimeOffset.UtcNow);
             await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
                 "restoring", "validating", DateTimeOffset.UtcNow);
+            async Task RejectReady()
+            {
+                try
+                {
+                    await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
+                        "validating", "ready", DateTimeOffset.UtcNow);
+                }
+                catch (InvalidOperationException error) when (error.Message == "restore_session_state_conflict") { return; }
+                throw new InvalidOperationException("Unvalidated or failed restore became ready");
+            }
+            await RejectReady();
+            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                point.FullManifestSha256, new string('b', 64), "failed", ["integrity_failed"], DateTimeOffset.UtcNow) == 1,
+                "Failed restore validation is retained as an immutable revision.");
+            await RejectReady();
             var materialized = new RecoveryMaterializedObjectV1("source-library", "sha256/" + sha,
                 "source-exact-version", sha, byteLength, "isolated-target", "sha256/" + sha, "target-exact-version");
             Check(await RestoreSessionStore.RebindMaterializedObjectsAsync(connection, transaction,
                 proposal.SessionId, [materialized]) == 1,
                 "Isolated restore rebinds the exact source version to a distinct target version.");
             Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
-                point.FullManifestSha256, new string('b', 64), "verified", [], DateTimeOffset.UtcNow) == 1,
+                point.FullManifestSha256, new string('b', 64), "verified", [], DateTimeOffset.UtcNow) == 2,
                 "Validation revision binds the source manifest to the target namespace digest.");
             await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
                 "validating", "ready", DateTimeOffset.UtcNow);
+            try
+            {
+                await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
+                    "ready", "promoting", DateTimeOffset.UtcNow);
+                throw new InvalidOperationException("A state update granted promotion without owner authority");
+            }
+            catch (InvalidDataException error) when (error.Message == "restore_promotion_authority_required") { }
             await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal);
             await transaction.CommitAsync();
         }
@@ -358,7 +380,7 @@ internal static class RecoveryIntegrationChecks
             "Only the isolated content locator is rebound to the materialized target object version.");
         Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_materialization_receipts WHERE session_id=$1 AND source_version_id='source-exact-version' AND destination_version_id='target-exact-version'", proposal.SessionId))! == 1,
             "The exact source-to-target mapping remains as immutable recovery-local evidence.");
-        Check((string)(await ScalarAsync(db, "SELECT target_digest FROM recovery_validation_revisions WHERE session_id=$1 AND revision=1", proposal.SessionId))! == new string('b', 64),
+        Check((string)(await ScalarAsync(db, "SELECT target_digest FROM recovery_validation_revisions WHERE session_id=$1 AND revision=2", proposal.SessionId))! == new string('b', 64),
             "An immutable validation revision records the target digest explicitly.");
     }
 

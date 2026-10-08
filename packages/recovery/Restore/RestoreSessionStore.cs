@@ -252,11 +252,21 @@ public static class RestoreSessionStore
             throw new InvalidDataException("restore_session_state_invalid");
         RecoveryValidation.Utc(atUtc, nameof(atUtc));
         if (!AllowedTransition(expectedState, nextState)) throw new InvalidDataException("restore_session_transition_invalid");
+        if (nextState is "promoting" or "promoted")
+            throw new InvalidDataException("restore_promotion_authority_required");
         await using var command = new NpgsqlCommand("""
-            UPDATE recovery_sessions
+            UPDATE recovery_sessions s
             SET state=$3,completed_at_utc=CASE WHEN $3 IN ('ready','promoted','aborted','failed','expired') THEN $4 ELSE completed_at_utc END
             WHERE session_id=$1 AND state=$2 AND
               (($3='expired' AND expires_at_utc<=$4) OR ($3<>'expired' AND expires_at_utc>$4))
+              AND ($3<>'ready' OR EXISTS (
+                SELECT 1 FROM recovery_validation_revisions v
+                JOIN recovery_points p ON p.point_id=s.recovery_point_id
+                WHERE v.session_id=s.session_id AND v.validation_digest=s.validation_digest
+                  AND v.revision=(SELECT max(revision) FROM recovery_validation_revisions WHERE session_id=s.session_id)
+                  AND v.state='verified' AND v.findings='[]'::jsonb AND v.target_digest IS NOT NULL
+                  AND v.source_manifest_sha256=p.manifest_sha256 AND v.validated_at_utc<=$4
+                  AND p.state='verified' AND p.owner_id=s.owner_id AND p.library_id=s.library_id))
             """, connection, transaction);
         command.Parameters.AddWithValue(sessionId);
         command.Parameters.AddWithValue(expectedState);
