@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "status": "proposal-only",
+  "status": "approved-local-definition",
   "deployable": false,
-  "attachedToCdk": false,
+  "attachedToCdk": true,
   "roleName": "platform-__ENVIRONMENT__-recovery-verify-publisher",
   "task": {
     "command": ["verify"],
@@ -22,7 +22,7 @@
       "pointInTimeRecovery": true,
       "deletionProtection": true,
       "removalPolicy": "RETAIN",
-      "roleAttached": false
+      "roleAttached": true
     }
   ],
   "scopeBindings": {
@@ -258,13 +258,13 @@
     ]
   },
   "reviewConstraints": [
-    "This document is not attached to any stack or role and its __PLACEHOLDER__ bindings make it non-deployable.",
+    "The owner approved this local policy definition on 2026-10-08; the recovery stack binds its policy statements. The standalone __PLACEHOLDER__ document is non-deployable. No AWS deployment or live operation is authorized.",
     "The verifier strongly Gets only the configured OWNER#<owner/library hash>/INDEX and exact latest OWNER#<scope>/POINT#<id> membership, then Gets the corresponding POINT#<id>/COPY row; routine verification does not Query or Scan history.",
-    "ControlTable is read-only to this role: it strongly Queries the configured OWNER# partition and Gets exact POINT#<id>/COPY items. All verifier writes and the audit head use the separate retained VerificationTable.",
-    "DynamoDB IAM LeadingKeys constrains only the partition key, not a sort key. Because the separate VerificationTable contains only verifier records, this no longer permits overwriting ControlTable COPY/index rows; the worker must still use exact POINT/VERIFY, POINT/AUDIT_VERIFY, and OWNER/VERIFIED sort keys, immutable point records, and conditional monotonic owner updates.",
+    "ControlTable is read-only to this role: it Gets the configured OWNER# index/membership and exact POINT#<id>/COPY items without Query or Scan. All verifier writes and the audit head use the separate retained VerificationTable.",
+    "DynamoDB IAM LeadingKeys constrains only the partition key, not a sort key. The separate VerificationTable permits exact POINT/VERIFY, POINT/AUDIT_VERIFY, immutable POINT/CYCLE event outboxes, OWNER/VERIFIED and the scoped OWNER/CYCLE_PENDING pointer. Cycle bookkeeping uses only the already allowed owner/library/pointId/payloadSha256 fields; it cannot alter ControlTable COPY/index rows or advance healthy/audit authority.",
     "POINT/AUDIT_VERIFY stores only the signed historical audit-head proof envelope and its fixed identity/digest/state fields; drill reads that exact item and verifies its signature and point bindings.",
     "The OWNER#<scope hash>/VERIFIED update conditionally advances auditHeadSequence/auditHeadEventSha256 only after proving the previous pair occurs in the verified audit chain; no separate AUDIT namespace is authorized.",
     "Signed safe summaries are published only to the exact primary recovery observation queue. The signed schema is limited to approved IDs, digests, times, class counts, and status codes; it carries no media bytes, object locators, credentials, or raw errors.",
-    "The cross-region SQS network path, task scheduling authority, template-digest binding, and runtime behavior require separate review; this proposal grants no task-launch, deployment, or schedule authority."
+    "The fixed verifier task uses the existing private egress network, pinned image and opt-in fifteen-minute schedule. Its runtime role has no task-launch, deployment or schedule authority. Local template-digest binding was separately approved on 2026-10-08; live runtime/network qualification remains required."
   ]
 }

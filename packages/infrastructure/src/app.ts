@@ -181,6 +181,8 @@ if (recoveryEnabled) {
     auditGenesisVersionId: requiredContext('recoveryAuditGenesisVersionId', 'offline-audit-genesis-version'),
     auditGenesisSha256: requiredContext('recoveryAuditGenesisSha256', 'abababababababababababababababababababababababababababababababab'),
     auditGenesisByteLength: numericContext('recoveryAuditGenesisByteLength', '512'),
+    auditMinimumSequence: Number(requiredContext('recoveryAuditMinimumSequence', '0')),
+    auditMinimumEventSha256: requiredContext('recoveryAuditMinimumEventSha256', '0'.repeat(64)),
     recoverySigningPublicKeySpkiBase64: requiredContext('recoveryObservationPublicKeySpkiBase64', offlinePlaceholderSpkiBase64),
     recoverySigningPublicKeySha256: requiredContext('recoveryObservationPublicKeySha256', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'),
     ownerApprovalRoleArn: requiredContext('recoveryOwnerApprovalRoleArn', 'arn:aws:iam::444455556666:role/platform-recovery-owner-approval'),

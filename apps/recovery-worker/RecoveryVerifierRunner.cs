@@ -34,76 +34,106 @@ internal static class RecoveryVerifierRunner
         using var secrets = new AmazonSecretsManagerClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), cancellationToken);
-        var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
-            configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
-            configuration.Required("LibraryId"), signer.Trust, cancellationToken);
-
-        var latestMarker = await RecoveryVerificationPublisher.ReadOwnerMarkerAsync(dynamo, configuration,
-            configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
-        var auditRequirement = RecoveryVerificationPublisher.ReadAuditHeadRequirement(configuration, latestMarker);
-        var auditGenesis = await ReadAuditGenesisAsync(configuration, s3, signer.Trust, cancellationToken);
-        var scratchDirectory = configuration.Optional("ScratchDirectory") ?? Path.Combine(Path.GetTempPath(), "recovery-verify");
-        Directory.CreateDirectory(scratchDirectory);
-        var runDirectory = Path.Combine(scratchDirectory, Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(runDirectory);
+        Guid? cyclePointId = null;
+        Guid? cycleCaptureId = null;
+        var cycleId = Guid.NewGuid();
+        var cycleStage = "verification";
         try
         {
-            var database = await RecoveryDrillRunner.ReadRecoveryDatabaseAsync(configuration, secrets,
-                runDirectory, cancellationToken);
-            var pgRestore = configuration.Optional("PgRestorePath") ?? "pg_restore";
-            await CaptureRunner.RequirePostgres18Async(pgRestore, cancellationToken);
-            var completed = 0;
-            long verifiedItems = 0;
-            foreach (var candidate in new[] { latest })
-            {
-                var point = await VerifyPointAsync(configuration, s3, candidate.Pointer, signer.Trust,
-                    cancellationToken, verifyDatabaseSnapshotBytes: false, forceFullMediaRead: false);
-                await VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
-                verifiedItems = checked(verifiedItems + point.Receipts.Count);
-                var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
-                    receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString())
-                    ?? throw new RecoveryWorkerException("database_snapshot_receipt_missing");
-                var dumpPath = Path.Combine(runDirectory, $"{point.Pointer.PointId:N}.dump");
-                await RecoveryDrillRunner.DownloadExactFileAsync(s3, dumpReceipt, dumpPath, cancellationToken);
+            await RecoveryCyclePublisher.ReplayPendingAsync(dynamo, sqs, configuration, signer, signer.Trust, cancellationToken);
+            var latest = await RecoveryLatestPointDiscovery.ReadLatestSealedPointAsync(dynamo, s3,
+                configuration.Required("ControlTableName"), configuration.Required("OwnerId"),
+                configuration.Required("LibraryId"), signer.Trust, cancellationToken);
+            cyclePointId = latest.Pointer.PointId;
+            cycleCaptureId = latest.Pointer.CaptureId;
 
-                var scratchDatabase = "recovery_verify_" + point.Pointer.PointId.ToString("N");
-                await RecoveryDrillRunner.CreateDatabaseAsync(database, scratchDatabase, cancellationToken);
-                try
+            var latestMarker = await RecoveryVerificationPublisher.ReadOwnerMarkerAsync(dynamo, configuration,
+                configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
+            var auditRequirement = RecoveryVerificationPublisher.ReadAuditHeadRequirement(configuration, latestMarker);
+            var auditGenesis = await ReadAuditGenesisAsync(configuration, s3, signer.Trust, cancellationToken);
+            var scratchDirectory = configuration.Optional("ScratchDirectory") ?? Path.Combine(Path.GetTempPath(), "recovery-verify");
+            Directory.CreateDirectory(scratchDirectory);
+            var runDirectory = Path.Combine(scratchDirectory, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(runDirectory);
+            try
+            {
+                var database = await RecoveryDrillRunner.ReadRecoveryDatabaseAsync(configuration, secrets,
+                    runDirectory, cancellationToken);
+                var pgRestore = configuration.Optional("PgRestorePath") ?? "pg_restore";
+                await CaptureRunner.RequirePostgres18Async(pgRestore, cancellationToken);
+                var completed = 0;
+                long verifiedItems = 0;
+                foreach (var candidate in new[] { latest })
                 {
-                    await RecoveryTrustedDumpRestore.RestoreAsync(database, scratchDatabase, dumpPath,
-                        configuration.Optional("MigrationDirectory") ?? "/app/migrations",
-                        configuration.RequiredHash("MigrationDigest"), configuration.Optional("PgDumpPath") ?? "pg_dump",
-                        pgRestore, cancellationToken);
-                    var auditHead = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database,
-                        scratchDatabase, point.SourceManifest, signer.Trust, auditGenesis,
-                        configuration.RequiredHash("MigrationDigest"),
-                        configuration.Optional("MigrationDirectory") ?? "/app/migrations", expectedAccount,
-                        auditRequirement, configuration, cancellationToken);
-                    await RecoveryAuditHeadProofStore.PersistAsync(dynamo, configuration, signer, point,
-                        auditHead, auditRequirement, auditGenesis, cancellationToken);
-                    completed++;
-                    if (point.OwnerAccess is null)
+                    var point = await VerifyPointAsync(configuration, s3, candidate.Pointer, signer.Trust,
+                        cancellationToken, verifyDatabaseSnapshotBytes: false, forceFullMediaRead: false);
+                    await VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
+                    verifiedItems = checked(verifiedItems + point.Receipts.Count);
+                    var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
+                        receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString())
+                        ?? throw new RecoveryWorkerException("database_snapshot_receipt_missing");
+                    var dumpPath = Path.Combine(runDirectory, $"{point.Pointer.PointId:N}.dump");
+                    await RecoveryDrillRunner.DownloadExactFileAsync(s3, dumpReceipt, dumpPath, cancellationToken);
+
+                    var scratchDatabase = "recovery_verify_" + Guid.NewGuid().ToString("N") + "_" + point.Pointer.PointId.ToString("N")[..8];
+                    await RecoveryDrillRunner.CreateDatabaseAsync(database, scratchDatabase, cancellationToken);
+                    try
                     {
-                        Console.WriteLine($"recovery_verification_validated_unqualified point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} reason=owner_access_pending");
-                        continue;
+                        await RecoveryTrustedDumpRestore.RestoreAsync(database, scratchDatabase, dumpPath,
+                            configuration.Optional("MigrationDirectory") ?? "/app/migrations",
+                            configuration.RequiredHash("MigrationDigest"), configuration.Optional("PgDumpPath") ?? "pg_dump",
+                            pgRestore, cancellationToken);
+                        var auditHead = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database,
+                            scratchDatabase, point.SourceManifest, signer.Trust, auditGenesis,
+                            configuration.RequiredHash("MigrationDigest"),
+                            configuration.Optional("MigrationDirectory") ?? "/app/migrations", expectedAccount,
+                            auditRequirement, configuration, cancellationToken);
+                        await RecoveryAuditHeadProofStore.PersistAsync(dynamo, configuration, signer, point,
+                            auditHead, auditRequirement, auditGenesis, cancellationToken);
+                        completed++;
+                        if (point.OwnerAccess is null)
+                        {
+                            await RecoveryCyclePublisher.PublishAsync(dynamo, sqs, configuration, signer, signer.Trust,
+                            cyclePointId, cycleCaptureId, "verification", "incomplete", "owner_access_pending", cancellationToken, cycleId: cycleId);
+                        RecoveryWorkerMetrics.Emit("VerificationFailures", 1, configuration);
+                            Console.WriteLine($"recovery_verification_validated_unqualified point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} reason=owner_access_pending");
+                            continue;
+                        }
+                        cycleStage = "publication";
+                        await RecoveryVerificationPublisher.PublishAsync(dynamo, sqs, configuration, signer,
+                            point, auditHead, cancellationToken);
+                        Console.WriteLine($"recovery_verification_published point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} receipts={point.Receipts.Count}");
                     }
-                    await RecoveryVerificationPublisher.PublishAsync(dynamo, sqs, configuration, signer,
-                        point, auditHead, cancellationToken);
-                    Console.WriteLine($"recovery_verification_published point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} receipts={point.Receipts.Count}");
+                    finally
+                    {
+                        await RecoveryDrillRunner.DropDatabaseAsync(database, scratchDatabase, CancellationToken.None);
+                    }
                 }
-                finally
-                {
-                    await RecoveryDrillRunner.DropDatabaseAsync(database, scratchDatabase, cancellationToken);
-                }
+                RecoveryWorkerMetrics.Emit("VerifiedRestoreChecks", completed, configuration);
+                RecoveryWorkerMetrics.Emit("VerifiedRestoreObjects", verifiedItems, configuration);
+                await EmitVerifiedPointAgeAsync(dynamo, configuration, cancellationToken);
             }
-            RecoveryWorkerMetrics.Emit("VerifiedRestoreChecks", completed, configuration);
-            RecoveryWorkerMetrics.Emit("VerifiedRestoreObjects", verifiedItems, configuration);
-            await EmitVerifiedPointAgeAsync(dynamo, configuration, cancellationToken);
+            finally
+            {
+                try { Directory.Delete(runDirectory, recursive: true); }
+                catch { }
+            }
         }
-        finally
+        catch (Exception exception)
         {
-            try { Directory.Delete(runDirectory, recursive: true); }
-            catch { }
+            var safeCode = RecoveryCyclePublisher.FailureCode(cycleStage, exception);
+            using var failureTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                await RecoveryCyclePublisher.PublishAsync(dynamo, sqs, configuration, signer, signer.Trust,
+                    cyclePointId, cycleCaptureId, cycleStage, "failed", safeCode, failureTimeout.Token, cycleId: cycleId);
+            }
+            catch
+            {
+                RecoveryWorkerMetrics.Emit("CyclePublicationFailures", 1, configuration);
+                Console.Error.WriteLine("recovery_cycle_publication_pending code=cycle_publication_unavailable");
+            }
+            throw;
         }
     }
 

@@ -84,11 +84,12 @@ assert.equal(drillEnvironment.Recovery__SourceRegion, 'ap-southeast-1');
 assert.ok(drillEnvironment.Recovery__SourceBucket);
 for (const environment of [copyEnvironment, drillEnvironment]) {
   for (const name of ['Recovery__ApiBuildDigest', 'Recovery__IngestWorkerBuildDigest', 'Recovery__RecoveryWorkerBuildDigest',
-    'Recovery__RendererBuildDigest', 'Recovery__RecoveryTemplateDigest', 'Recovery__MigrationDigest',
+    'Recovery__RendererBuildDigest', 'Recovery__MigrationDigest',
     'Recovery__ConfigurationDigest', 'Recovery__DatabaseRootCertificateSha256']) {
     assert.match(environment[name] ?? '', /^[a-f0-9]{64}$/, `${name} must be deployment-pinned`);
   }
   assert.equal(environment.Recovery__SourceRevision?.length, 40);
+  assert.deepEqual(environment.Recovery__RecoveryTemplateDigest, { Ref: 'RecoveryTemplateDigest' });
   assert.equal(environment.Recovery__LibraryId, '00000000-0000-0000-0000-000000000011');
   assert.ok(environment.Recovery__OwnerUserPoolId);
   assert.ok(environment.Recovery__OwnerUserPoolClientId);
@@ -104,11 +105,15 @@ assert.ok(apiTask.Properties.NetworkMode === 'awsvpc');
 assert.ok(!values(recoveryTask.Properties.ContainerDefinitions[0].Environment).includes('Recovery__PrimaryReadRoleArn'), 'Recovery-only drill configuration must not carry a primary read-role ARN.');
 assert.ok(!values(apiTask.Properties.ContainerDefinitions[0].Environment).includes('Recovery__PrimaryReadRoleArn'), 'Recovery API configuration must not carry a primary read-role ARN.');
 for (const name of ['Recovery__ApiBuildDigest', 'Recovery__IngestWorkerBuildDigest', 'Recovery__RecoveryWorkerBuildDigest',
-  'Recovery__RendererBuildDigest', 'Recovery__RecoveryTemplateDigest', 'Recovery__MigrationDigest',
+  'Recovery__RendererBuildDigest', 'Recovery__MigrationDigest',
   'Recovery__ConfigurationDigest', 'Recovery__DatabaseRootCertificateSha256']) {
   assert.match(apiEnvironment[name] ?? '', /^[a-f0-9]{64}$/, `Recovery API ${name} must be deployment-pinned`);
 }
 const captureEnvironment = Object.fromEntries(captureTask.Properties.ContainerDefinitions[0].Environment.map(({ Name, Value }) => [Name, Value]));
+assert.deepEqual(apiEnvironment.Recovery__RecoveryTemplateDigest, { Ref: 'RecoveryTemplateDigest' });
+assert.equal(recovery.Parameters.RecoveryTemplateDigest.Type, 'String');
+assert.equal(recovery.Parameters.RecoveryTemplateDigest.AllowedPattern, '^[a-f0-9]{64}$');
+assert.equal(Object.hasOwn(recovery.Parameters.RecoveryTemplateDigest, 'Default'), false);
 assert.equal(captureEnvironment.Recovery__LibraryId, '00000000-0000-0000-0000-000000000011');
 const canonicalLibraryId = captureEnvironment.Recovery__LibraryId;
 for (const family of ['platform-nonprod-api', 'platform-nonprod-ingest-worker', 'platform-nonprod-render-worker', 'platform-nonprod-ingest-migration']) {
@@ -285,6 +290,12 @@ const ageAlarm = resourceOf('AWS::CloudWatch::Alarm', value => value.Properties.
 assert.equal(ageAlarm.Properties.Threshold, 2700);
 assert.equal(ageAlarm.Properties.Period, 300);
 assert.equal(ageAlarm.Properties.TreatMissingData, 'breaching');
+assert.ok(ageAlarm.Properties.Dimensions.some(item => item.Name === 'WorkerId' && item.Value === 'verify'));
+const verifierFailureAlarm = resourceOf('AWS::CloudWatch::Alarm', value => value.Properties.MetricName === 'VerificationFailures');
+assert.ok(verifierFailureAlarm.Properties.Dimensions.some(item => item.Name === 'WorkerId' && item.Value === 'verify'));
+const verifierHeartbeat = resourceOf('AWS::CloudWatch::Alarm', value => value.Properties.MetricName === 'RecoveryWorkerHeartbeat' &&
+  value.Properties.Dimensions.some(item => item.Name === 'WorkerId' && item.Value === 'verify'));
+assert.equal(verifierHeartbeat.Properties.EvaluationPeriods * verifierHeartbeat.Properties.Period, 900);
 const heartbeatAlarm = resourceOf('AWS::CloudWatch::Alarm', value => values(value.Properties).includes('RecoveryWorkerHeartbeat'));
 assert.equal(heartbeatAlarm.Properties.TreatMissingData, 'breaching');
 

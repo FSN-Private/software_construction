@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "status": "approved-local-definition",
+  "attachedToCdk": true,
+  "authorization": "Owner explicitly approved these two scoped local support statements on 2026-10-08; no deployment or live operations",
+  "purpose": "Support only the approved encrypted verification workflow; no write, primary or deployment authority is added here",
+  "verifierAddition": {
+    "roleConstruct": "RecoveryVerifierPublisherRole",
+    "statement": {
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "${RecoveryEncryptionKey.Arn}",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "dynamodb.ap-southeast-2.amazonaws.com",
+          "kms:CallerAccount": "${RecoveryAccountId}",
+          "kms:EncryptionContext:aws:dynamodb:tableName": ["${RecoveryControlTable.Name}", "${RecoveryVerificationTable.Name}"],
+          "kms:EncryptionContext:aws:dynamodb:subscriberId": "${RecoveryAccountId}"
+        }
+      }
+    }
+  },
+  "drillReaderAddition": {
+    "roleConstruct": "RecoveryOnlyTaskRole",
+    "statement": {
+      "Effect": "Allow",
+      "Action": "dynamodb:GetItem",
+      "Resource": "${RecoveryVerificationTable.Arn}",
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": ["POINT#*", "OWNER#${ConfiguredOwnerLibraryScopeSha256}"]
+        }
+      }
+    }
+  },
+  "constraints": [
+    "Bind only existing recovery account, Sydney region, recovery encryption key and the two named tables",
+    "Verifier decrypt cannot be invoked directly or through S3/SecretsManager, and has no key administration or grant creation",
+    "Drill reads only exact POINT/AUDIT_VERIFY and configured OWNER/VERIFIED records in executable code; IAM LeadingKeys does not constrain sort keys",
+    "Drill verifies signatures and point/owner/configuration bindings before trusting proof bytes",
+    "No DynamoDB writes, primary resources, signing, secrets, task-launch, deployment or live operations are added by this proposal"
+  ]
+}
