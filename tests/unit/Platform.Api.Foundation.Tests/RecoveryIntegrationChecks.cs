@@ -346,9 +346,29 @@ internal static class RecoveryIntegrationChecks
             Check(await RestoreSessionStore.RebindMaterializedObjectsAsync(connection, transaction,
                 proposal.SessionId, [materialized]) == 1,
                 "Isolated restore rebinds the exact source version to a distinct target version.");
+            var verifiedAt = DateTimeOffset.UtcNow;
             Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
-                point.FullManifestSha256, new string('b', 64), "verified", [], DateTimeOffset.UtcNow) == 2,
+                point.FullManifestSha256, new string('b', 64), "verified", [], verifiedAt) == 2,
                 "Validation revision binds the source manifest to the target namespace digest.");
+            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                point.FullManifestSha256, new string('b', 64), "failed", ["integrity_failed"], DateTimeOffset.UtcNow) == 3,
+                "A later failed validation supersedes the earlier successful revision.");
+            await RejectReady();
+            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                point.FullManifestSha256, new string('b', 64), "verified", [], verifiedAt) == 2,
+                "Old validation retries return their immutable revision without moving the head.");
+            await using (var head = new NpgsqlCommand("""
+                SELECT v.revision FROM recovery_sessions s JOIN recovery_validation_revisions v
+                  ON v.session_id=s.session_id AND v.validation_digest=s.validation_digest WHERE s.session_id=$1
+                """, connection, transaction))
+            {
+                head.Parameters.AddWithValue(proposal.SessionId);
+                Check(await head.ExecuteScalarAsync() is 3L, "An old successful replay cannot replace the latest failed validation head.");
+            }
+            await RejectReady();
+            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                point.FullManifestSha256, new string('b', 64), "verified", [], DateTimeOffset.UtcNow) == 4,
+                "Readiness requires a new successful validation after the latest failure.");
             await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
                 "validating", "ready", DateTimeOffset.UtcNow);
             try
@@ -380,7 +400,7 @@ internal static class RecoveryIntegrationChecks
             "Only the isolated content locator is rebound to the materialized target object version.");
         Check((long)(await ScalarAsync(db, "SELECT count(*) FROM recovery_materialization_receipts WHERE session_id=$1 AND source_version_id='source-exact-version' AND destination_version_id='target-exact-version'", proposal.SessionId))! == 1,
             "The exact source-to-target mapping remains as immutable recovery-local evidence.");
-        Check((string)(await ScalarAsync(db, "SELECT target_digest FROM recovery_validation_revisions WHERE session_id=$1 AND revision=2", proposal.SessionId))! == new string('b', 64),
+        Check((string)(await ScalarAsync(db, "SELECT target_digest FROM recovery_validation_revisions WHERE session_id=$1 AND revision=4", proposal.SessionId))! == new string('b', 64),
             "An immutable validation revision records the target digest explicitly.");
     }
 
@@ -452,8 +472,10 @@ internal static class RecoveryIntegrationChecks
         ], "test");
         var denied = await transform.TransformAsync(new ClaimsPrincipal(foreign));
         Check(!OwnerAuthorization.TryGetOwner(denied, out _) &&
-            !denied.Claims.Any(claim => claim.Type == "platform:recovery-identity-bound"),
+            denied.Identity?.IsAuthenticated is true && !denied.Claims.Any(),
             "A foreign owner and a forged custom binding marker cannot bypass independent mapping verification.");
+        await RecoveryOwnerAccessHttpChecks.RunAsync(db, config, clock, approval, receipt, approvalRsa, trust: new(
+            keyId, Convert.ToBase64String(spki), fingerprint));
     }
 
     private static async Task TamperChecksAsync(NpgsqlDataSource db, RecoveryHealthService health,

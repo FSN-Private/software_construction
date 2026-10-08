@@ -27,7 +27,11 @@ public sealed class RecoveryOwnerClaimsTransformation(
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             var preservedOwner = await resolver.ResolveAsync(principal, timeout.Token);
-            if (string.IsNullOrWhiteSpace(preservedOwner)) return new ClaimsPrincipal(new ClaimsIdentity());
+            // Retain the JWT authentication result so middleware can distinguish
+            // an authenticated foreign identity (403) from an invalid token (401).
+            // No subject, group, role or caller-supplied binding claim survives.
+            if (string.IsNullOrWhiteSpace(preservedOwner))
+                return new ClaimsPrincipal(new ClaimsIdentity([], principal.Identity.AuthenticationType));
 
             var identities = principal.Identities.Select(identity =>
             {
