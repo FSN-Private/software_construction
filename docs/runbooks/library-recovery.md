@@ -65,6 +65,8 @@ Use the protected GitHub `recovery-drill` environment and the recovery-account O
 
 ### Independent owner-access attestation
 
+Historical drills authenticate the retained owner-access signature at its original signed copy-checkpoint time. This permits inspecting older protected points after the historical attestation expires; it does not renew owner authentication, report healthy protection or authorize promotion. The new clone still needs separately approved current identity mapping and actual probes. Routine verification continues to require an unexpired proof.
+
 The worker now materializes exact payload versions and can launch the private recovery API and probe preserved-owner/foreign access when the separately approved mapping and token inputs are mounted. These paths produce unqualified private evidence; actual AWS qualification remains required.
 
 An independently authorized recovery operator retrieves the exact signed `evidence/drills/<run-id>/access-probes/<probe-id>.v1.json` version into a private workspace. The OIDC safe-evidence exporter does not have this access. Retain the already MFA-signed identity mapping used by that probe and independently pinned canonical JSON files for the worker signing trust, owner signing trust, and `RecoveryOwnerAccessExpectationV1` release/owner/pool binding. Never obtain trust pins from the probe itself. Newly generated probes include the complete expectation; older probes without that binding require another actual probe.

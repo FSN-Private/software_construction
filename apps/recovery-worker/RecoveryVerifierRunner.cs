@@ -270,7 +270,8 @@ internal static class RecoveryVerifierRunner
         RecoverySigningTrust signerTrust,
         CancellationToken cancellationToken,
         bool verifyDatabaseSnapshotBytes = true,
-        bool forceFullMediaRead = true)
+        bool forceFullMediaRead = true,
+        bool historicalOwnerAccess = false)
     {
         var sourceAccount = configuration.RequiredAccountId("SourceAccountId");
         var recoveryAccount = configuration.RequiredAccountId("DestinationAccountId");
@@ -361,10 +362,11 @@ internal static class RecoveryVerifierRunner
         }
 
         var ownerAccess = payload.OwnerAccessProof is null ? null : await VerifyOwnerAccessProofAsync(configuration, s3,
-            payload.OwnerAccessProof, pointer.OwnerId, pointer.LibraryId, cancellationToken);
+            payload.OwnerAccessProof, pointer.OwnerId, pointer.LibraryId,
+            historicalOwnerAccess ? payload.VerifiedAtUtc : DateTimeOffset.UtcNow, cancellationToken);
         VerifyClassCoverage(finalManifest ?? sourceManifest, receiptRows);
         return new(pointer, sourceManifest, finalManifest, payload, receiptRows, checkpoint.PayloadSha256,
-            checkpoint.EnvelopeSha256, ownerAccess);
+            checkpoint.EnvelopeSha256, ownerAccess, historicalOwnerAccess);
     }
 
     private static async Task<VerifiedRecoveryOwnerAccessEvidence> VerifyOwnerAccessProofAsync(
@@ -373,6 +375,7 @@ internal static class RecoveryVerifierRunner
         PrivateArtifactReceiptV1 receipt,
         string ownerId,
         string libraryId,
+        DateTimeOffset verificationAtUtc,
         CancellationToken cancellationToken)
     {
         if (receipt.SourceBucket != receipt.DestinationBucket || receipt.SourceKey != receipt.DestinationKey ||
@@ -390,7 +393,7 @@ internal static class RecoveryVerifierRunner
             configuration.WorkerBuildDigest, configuration.RequiredHash("RecoveryTemplateDigest"),
             configuration.Required("OwnerUserPoolId"), configuration.Required("OwnerUserPoolClientId"),
             configuration.Required("OwnerUserPoolIssuer"));
-        return RecoveryOwnerAccessCodec.Verify(envelope, trust, expected, DateTimeOffset.UtcNow);
+        return RecoveryOwnerAccessCodec.Verify(envelope, trust, expected, verificationAtUtc);
     }
 
     private static IReadOnlyList<PrivateCopyReceiptV1> BuildExpectedReceipts(
@@ -688,7 +691,8 @@ internal sealed record VerifiedCopiedPoint(
     IReadOnlyList<PrivateCopyReceiptV1> Receipts,
     string CheckpointPayloadSha256,
     string CheckpointEnvelopeSha256,
-    VerifiedRecoveryOwnerAccessEvidence? OwnerAccess);
+    VerifiedRecoveryOwnerAccessEvidence? OwnerAccess,
+    bool HistoricalOwnerAccess = false);
 
 internal sealed record CopyPointer(
     Guid PointId,

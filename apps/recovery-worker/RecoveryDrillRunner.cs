@@ -103,7 +103,7 @@ internal static class RecoveryDrillRunner
             foreach (var candidate in new[] { latest })
             {
                 var point = await RecoveryVerifierRunner.VerifyPointAsync(configuration, s3,
-                    candidate.Pointer, signer.Trust, cancellationToken);
+                    candidate.Pointer, signer.Trust, cancellationToken, historicalOwnerAccess: true);
                 await RecoveryVerifierRunner.VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
                 var auditProof = await RecoveryAuditHeadProofStore.ReadAsync(dynamo,
                     configuration.Required("VerificationTableName"), point.Pointer.PointId, signer.Trust,

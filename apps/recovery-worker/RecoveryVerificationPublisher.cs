@@ -32,7 +32,7 @@ internal static class RecoveryVerificationPublisher
     {
         if (signer.KeyId != trust.KeyId || signer.PublicKeySha256 != trust.PublicKeySha256)
             throw new RecoveryWorkerException("verification_signer_mismatch");
-        if (point.Pointer.State != "copied" || point.FinalManifest is null || point.OwnerAccess is null)
+        if (point.Pointer.State != "copied" || point.FinalManifest is null || point.OwnerAccess is null || point.HistoricalOwnerAccess)
             throw new RecoveryWorkerException("owner_access_proof_required_for_healthy_catalog");
         var queueUrl = ValidateDestination(configuration);
         var table = configuration.Required("VerificationTableName");
@@ -121,7 +121,7 @@ internal static class RecoveryVerificationPublisher
     internal static RecoveryCatalogPayloadV1 BuildCatalog(RecoveryWorkerConfiguration configuration,
         VerifiedCopiedPoint point, DateTimeOffset verifiedAtUtc)
     {
-        if (point.Pointer.State != "copied" || point.FinalManifest is null || point.OwnerAccess is null)
+        if (point.Pointer.State != "copied" || point.FinalManifest is null || point.OwnerAccess is null || point.HistoricalOwnerAccess)
             throw new RecoveryWorkerException("owner_access_proof_required_for_healthy_catalog");
         var manifest = point.SourceManifest;
         var finalDigest = point.Pointer.ManifestSha256;

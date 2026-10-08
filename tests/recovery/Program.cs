@@ -159,6 +159,9 @@ static void OwnerAccessEvidenceChecks()
         "Pinned owner approval attestation binds the actual owner success and foreign denial transcript.");
 
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddMonths(3).AddTicks(1)));
+    Check(RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddMinutes(1)).Payload == payload,
+        "Historical access evidence is authenticated at the original signed checkpoint, without extending expiry.");
+    RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddSeconds(-1)));
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust,
         expected with { RecoveryTemplateDigest = new string('f', 64) }, now));
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed with { SigningKeyId = "untrusted" }, trust, expected, now));
