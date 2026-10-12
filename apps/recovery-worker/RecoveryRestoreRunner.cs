@@ -127,9 +127,7 @@ internal static class RecoveryRestoreRunner
         {
             if (existing)
             {
-                try { _ = await RestoreSessionStore.ReadBoundSessionStateAsync(connection, transaction, proposal, DateTimeOffset.UtcNow, ct); }
-                catch (Exception error) when (error is InvalidDataException || error is PostgresException { SqlState: "42P01" or "42703" })
-                { throw new RecoveryWorkerException("restore_clone_reconciliation_required", error); }
+                _ = await ReadExistingCloneStateAsync(connection, transaction, proposal, ct);
             }
             await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, catalog, trust, ct);
             await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal, ct);
@@ -163,6 +161,14 @@ internal static class RecoveryRestoreRunner
 
     internal static string DatabaseName(RecoveryRestoreProposalV1 proposal) =>
         "recovery_drill_" + proposal.SessionId.ToString("N") + "_" + proposal.RecoveryPointId.ToString("N")[..8];
+
+    internal static async Task<string> ReadExistingCloneStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        RecoveryRestoreProposalV1 proposal, CancellationToken ct)
+    {
+        try { return await RestoreSessionStore.ReadBoundSessionStateAsync(connection, transaction, proposal, DateTimeOffset.UtcNow, ct); }
+        catch (Exception error) when (error is InvalidDataException || error is PostgresException { SqlState: "42P01" or "42703" })
+        { throw new RecoveryWorkerException("restore_clone_reconciliation_required", error); }
+    }
 
     internal static string CreateScratchDirectory(RecoveryWorkerConfiguration configuration, Guid sessionId)
     {

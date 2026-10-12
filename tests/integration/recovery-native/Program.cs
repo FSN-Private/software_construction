@@ -333,6 +333,7 @@ try
     await ValidateRecovered();
 
     await CandidateChecks(target, manifest, auditRsa, auditTrust, genesis, trustedAuditHeads, migrationDigest, recoveryAccountId, ct);
+    await RetainedRestoreChecks(target, manifest, auditRsa, auditTrust, ct);
 
     await using (var corruption = new NpgsqlCommand("UPDATE vc_commit_parents SET parent_id=$1 WHERE commit_id=$2", target))
     {
@@ -457,6 +458,59 @@ static async Task RejectCode(Func<Task> action, string safeCode)
     catch (RecoveryWorkerException exception) when (exception.SafeCode == safeCode) { return; }
     throw new InvalidOperationException("Expected native rejection: " + safeCode);
 }
+static async Task RetainedRestoreChecks(NpgsqlConnection connection, RecoveryPointManifestV1 manifest,
+    RSA rsa, RecoverySigningTrust trust, CancellationToken ct)
+{
+    var hash = new string('a', 64);
+    var source = manifest with { Components = [
+        new("database", RecoveryDataClass.DatabaseSnapshot, "capture/database.dump", "dump-v1", hash, 1),
+        new("inventory", RecoveryDataClass.ObjectInventory, "capture/objects.json", "inventory-v1", hash, 1)] };
+    var final = source with { Components = [.. source.Components,
+        new("owner-access", RecoveryDataClass.AccessEvidence, "evidence/access.json", "access-v1", hash, 1)] };
+    Check(source.Digest() != final.Digest(), "Native retained restore fixture must have distinct source/final manifests.");
+    var now = DateTimeOffset.UtcNow;
+    var coverage = RecoveryEvidenceCodec.ObservationClasses.Select(dataClass =>
+        new RecoveryCatalogCoverageV1(dataClass, 0, 0, 0, 0, "healthy", [])).ToArray();
+    var catalog = new RecoveryCatalogPayloadV1(1, manifest.RecoveryPointId, manifest.CaptureId,
+        manifest.OwnerId, manifest.LibraryId, "111122223333", "ap-southeast-1", "444455556666", "ap-southeast-2",
+        manifest.CapturedAtUtc, manifest.SnapshotCutoffUtc, manifest.SnapshotId, manifest.SnapshotLsn,
+        manifest.ChangeWatermark.LastSequence, manifest.ChangeWatermark.LatestChangedAtUtc, manifest.MigrationDigest,
+        hash, hash, hash, hash, hash, final.Digest(), hash, now, "native-fixture", coverage);
+    var catalogBytes = RecoveryCatalogCodec.SerializePayload(catalog);
+    var envelope = RecoveryCatalogCodec.CreateEnvelope(catalog, "native-fixture", new(trust.KeyId, trust.PublicKeySha256,
+        rsa.SignHash(SHA256.HashData(catalogBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)));
+    var verified = RecoveryCatalogCodec.Verify(envelope, trust);
+    var proposal = RecoveryRestoreProposalV1.Create(Guid.NewGuid(), manifest.OwnerId, manifest.LibraryId,
+        manifest.RecoveryPointId, new("full_library", null, null), now.AddHours(1));
+    await using var transaction = await connection.BeginTransactionAsync(ct);
+    await RejectCode(async () => { _ = await RecoveryRestoreRunner.ReadExistingCloneStateAsync(connection, transaction, proposal, ct); },
+        "restore_clone_reconciliation_required");
+    await using (var retained = new NpgsqlCommand("SELECT count(*) FROM assets WHERE owner_id=$1", connection, transaction))
+    {
+        retained.Parameters.AddWithValue(manifest.OwnerId);
+        Check(Convert.ToInt64(await retained.ExecuteScalarAsync(ct)) > 0, "Unbound clone rejection erased the restored assets.");
+    }
+    await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, envelope, trust, ct);
+    await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal, ct);
+    Check(await RecoveryRestoreRunner.ReadExistingCloneStateAsync(connection, transaction, proposal, ct) == "requested",
+        "Native clone cannot resume its exact immutable request.");
+    var changed = RecoveryRestoreProposalV1.Create(proposal.SessionId, proposal.OwnerId, proposal.LibraryId,
+        proposal.RecoveryPointId, proposal.RequestedScope with { Reason = "changed input" }, proposal.ExpiresAtUtc);
+    await RejectCode(async () => { _ = await RecoveryRestoreRunner.ReadExistingCloneStateAsync(connection, transaction, changed, ct); },
+        "restore_clone_reconciliation_required");
+    await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId, "requested", "restoring", now, ct);
+    await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId, "restoring", "validating", now, ct);
+    Check(await RecoveryRestoreRunner.AppendValidatedCloneAsync(connection, transaction, proposal, verified, hash, now, ct) == 1,
+        "Native retained clone did not persist a final-manifest validation revision.");
+    Check(await RecoveryRestoreRunner.AppendValidatedCloneAsync(connection, transaction, proposal, verified, hash, now, ct) == 1,
+        "Native retained clone validation replay added a revision.");
+    Check(await RecoveryRestoreRunner.ReadExistingCloneStateAsync(connection, transaction, proposal, ct) == "validating",
+        "Native retained validation granted normal access or promotion.");
+    // Leave the native corruption corpus unchanged. These fixture attestations are
+    // database-boundary tests, not real owner access or full ExecuteAsync evidence.
+    await transaction.RollbackAsync(ct);
+}
+
 static async Task CandidateChecks(NpgsqlConnection connection, RecoveryPointManifestV1 manifest,
     RSA auditRsa, RecoverySigningTrust auditTrust, VerifiedRecoveryAuditGenesis genesis, RecoveryAuditHeadRequirementV1 heads,
     string migrationDigest, string recoveryAccountId, CancellationToken ct)
