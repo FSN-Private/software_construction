@@ -34,6 +34,12 @@ Reviewer: **gpt-6-astra**, read-only alternate-model follow-up against `8b2a121.
 
 The whole-feature gate remains **BLOCKED** on T029/T034/T035/T036 and external qualification. The reviewer reported one non-blocking documentation note: the paragraph labeled current checkpoint still described approvals as pending. It is now explicitly historical and records that both scoped approvals arrived. Earlier results remain preserved.
 
+## Implementation round 3 — 2026-10-12
+
+Reviewer: **gpt-6-astra**, read-only follow-up against `8b2a121..b762494`. No new supported blocking finding in the inspected private FULL_VERIFY implementation: canonical signatures bind exact point/capture/owner/library/checkpoint/build/time; replay, unknown outcomes and concurrency preserve original read time; ordinary metadata/retention/access checks and forced drill reads remain. No IAM, publication, hold-release, purge or promotion authority was added. Tests were inspected, not independently rerun.
+
+**R1-001 remains valid and fixed.** The reviewer confirmed that the round 2 record accurately describes its agreement and limitations and that the historical approval-state documentation note is resolved. The whole-feature gate remains **BLOCKED** on the tracked restore, purge, hold-release/convergence and external qualification work. This round does not review subsequent retained-restore changes.
+
 ## Archived specification-only review (2026-09-03)
 
 The following pre-existing review is retained unchanged. Its PASS applies only to the September specification and does not override the current implementation BLOCKED gate.

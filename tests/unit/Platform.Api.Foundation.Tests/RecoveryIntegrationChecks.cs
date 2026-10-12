@@ -322,6 +322,23 @@ internal static class RecoveryIntegrationChecks
             await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, envelope, trust);
             await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction, envelope, trust);
             await RestoreSessionStore.ImportProposalAsync(connection, transaction, proposal);
+            Check(await RestoreSessionStore.ReadBoundSessionStateAsync(connection, transaction, proposal, DateTimeOffset.UtcNow) == "requested",
+                "A retained restore retry authenticates the complete immutable request before mutation.");
+            foreach (var altered in new[]
+            {
+                RecoveryRestoreProposalV1.Create(proposal.SessionId, "foreign-restore-owner", proposal.LibraryId, proposal.RecoveryPointId, proposal.RequestedScope, proposal.ExpiresAtUtc),
+                RecoveryRestoreProposalV1.Create(proposal.SessionId, proposal.OwnerId, proposal.LibraryId, Guid.NewGuid(), proposal.RequestedScope, proposal.ExpiresAtUtc),
+                RecoveryRestoreProposalV1.Create(proposal.SessionId, proposal.OwnerId, proposal.LibraryId, proposal.RecoveryPointId, proposal.RequestedScope with { Reason = "changed request" }, proposal.ExpiresAtUtc),
+                RecoveryRestoreProposalV1.Create(Guid.NewGuid(), proposal.OwnerId, proposal.LibraryId, proposal.RecoveryPointId, proposal.RequestedScope, proposal.ExpiresAtUtc)
+            })
+            {
+                try
+                {
+                    _ = await RestoreSessionStore.ReadBoundSessionStateAsync(connection, transaction, altered, DateTimeOffset.UtcNow);
+                    throw new InvalidOperationException("A changed or foreign retained restore request was accepted");
+                }
+                catch (InvalidDataException error) when (error.Message == "restore_clone_request_binding_invalid") { }
+            }
             await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,
                 "requested", "restoring", DateTimeOffset.UtcNow);
             await RestoreSessionStore.RecordStateAsync(connection, transaction, proposal.SessionId,

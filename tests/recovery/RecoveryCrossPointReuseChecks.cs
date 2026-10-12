@@ -13,6 +13,9 @@ internal static class RecoveryCrossPointReuseChecks
     public static async Task RunAsync()
     {
         await VerifyPointCadenceAsync();
+        var excessive = Fixture.Create(receiptCountOverride: 2_000_001);
+        await ThrowsAsync<InvalidDataException>(() => Task.Run(() => WorkerArtifactCodec.VerifyCheckpoint(
+            excessive.EvidenceObjects.Single(item => item.Key == excessive.CheckpointKey).Bytes, excessive.Trust)));
         var fixture = Fixture.Create();
         var dynamo = new ReuseDynamo(fixture.ControlItems);
         var evidence = new ReuseS3();
@@ -201,7 +204,7 @@ internal static class RecoveryCrossPointReuseChecks
         public required IReadOnlyList<StoredObject> EvidenceObjects { get; init; }
         public required Dictionary<(string Pk, string Sk), Dictionary<string, AttributeValue>> ControlItems { get; init; }
 
-        public static Fixture Create(bool verification = false, bool fresh = false)
+        public static Fixture Create(bool verification = false, bool fresh = false, int? receiptCountOverride = null)
         {
             const string owner = "owner-reuse";
             const string library = "library-reuse";
@@ -281,8 +284,8 @@ internal static class RecoveryCrossPointReuseChecks
             var trust = new RecoverySigningTrust(keyId, Convert.ToBase64String(publicSpki), fingerprint);
             var payload = new PrivateCopyCheckpointPayloadV1(1, captureId, pointId, owner, library,
                 sourceManifestSha, finalManifestSha, sourceRegion, destinationRegion, destinationAccount,
-                now.AddMinutes(-4), workerDigest, receipts.Length,
-                [new PrivateReceiptChunkV1(0, receipts.Length, chunkKey, chunkVersion, chunkSha, chunkBytes.LongLength)],
+                now.AddMinutes(-4), workerDigest, receiptCountOverride ?? receipts.Length,
+                [new PrivateReceiptChunkV1(0, receiptCountOverride ?? receipts.Length, chunkKey, chunkVersion, chunkSha, chunkBytes.LongLength)],
                 sourceManifestReceipt, verification ? null : ownerProofReceipt, verification ? null : finalManifestReceipt);
             var payloadBytes = RecoveryEvidenceCodec.SerializeCanonical(payload);
             var signature = rsa.SignHash(SHA256.HashData(payloadBytes), HashAlgorithmName.SHA256,

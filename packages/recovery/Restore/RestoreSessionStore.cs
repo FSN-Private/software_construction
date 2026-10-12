@@ -276,6 +276,29 @@ public static class RestoreSessionStore
             throw new InvalidOperationException("restore_session_state_conflict");
     }
 
+    /// <summary>Authenticate an existing clone's immutable request before any retry mutation.</summary>
+    public static async Task<string> ReadBoundSessionStateAsync(NpgsqlConnection connection,
+        NpgsqlTransaction transaction, RecoveryRestoreProposalV1 proposal, DateTimeOffset nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTransaction(connection, transaction);
+        proposal.Validate(nowUtc);
+        await using var command = new NpgsqlCommand("""
+            SELECT state FROM recovery_sessions WHERE session_id=$1 AND owner_id=$2 AND library_id=$3
+              AND recovery_point_id=$4 AND request_digest=$5 AND expires_at_utc>$6
+              AND isolated_namespace='restore/'||replace($1::text,'-','')
+              AND scope=$7::jsonb AND expires_at_utc=$8 AND idempotency_key=replace($1::text,'-','') FOR UPDATE
+            """, connection, transaction);
+        foreach (var value in new object[] { proposal.SessionId, proposal.OwnerId, proposal.LibraryId,
+            proposal.RecoveryPointId, proposal.RequestDigest, nowUtc }) command.Parameters.AddWithValue(value);
+        command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Jsonb,
+            Value = System.Text.Encoding.UTF8.GetString(RecoveryEvidenceCodec.SerializeCanonical(proposal.RequestedScope)) });
+        command.Parameters.AddWithValue(TruncateToMicrosecond(proposal.ExpiresAtUtc));
+        var state = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (state is null || !SessionStates.Contains(state)) throw new InvalidDataException("restore_clone_request_binding_invalid");
+        return state;
+    }
+
     public static async Task<long> AppendValidationAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
