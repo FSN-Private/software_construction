@@ -12,6 +12,7 @@ using Platform.Api.Features.Gallery.Browse;
 using Platform.Api.Features.Recovery;
 using Platform.Contracts;
 using Platform.Recovery;
+using Platform.Recovery.Worker;
 using Platform.Storage;
 
 internal static class RecoveryIntegrationChecks
@@ -302,9 +303,31 @@ internal static class RecoveryIntegrationChecks
         DateTimeOffset now)
     {
         var point = Catalog("restore-store-owner", "main", now.AddMilliseconds(-500), Guid.NewGuid(), Guid.NewGuid());
+        var sourceManifest = new RecoveryPointManifestV1(1, point.RecoveryPointId, point.CaptureId,
+            point.OwnerId, point.LibraryId, point.SourceRegion, point.CapturedAtUtc, point.SnapshotCutoffUtc,
+            point.SnapshotId, point.SnapshotLsn, point.MigrationDigest,
+            new(point.ChangeSequence, point.LatestChangedAtUtc),
+            [new("database", RecoveryDataClass.DatabaseSnapshot, "capture/database.dump", "database-v1", new string('d', 64), 1),
+             new("inventory", RecoveryDataClass.ObjectInventory, "capture/inventory.json", "inventory-v1", new string('e', 64), 1)], [],
+            Enum.GetValues<RecoveryDataClass>().Where(value => value != RecoveryDataClass.PreviewDerivative)
+                .Select(value => new RecoveryClassCoverage(value, 0, 0)).ToArray());
+        var finalManifest = sourceManifest with
+        {
+            Components = [.. sourceManifest.Components,
+                new("owner-access", RecoveryDataClass.AccessEvidence, "evidence/access.json", "access-v1", new string('f', 64), 1)]
+        };
+        Check(sourceManifest.Digest() != finalManifest.Digest(), "Adding owner-access evidence changes the final manifest identity.");
+        point = point with { FullManifestSha256 = finalManifest.Digest() };
         var envelope = SignCatalog(point, evidenceRsa, evidenceKeyId, evidenceFingerprint);
         var proposal = RecoveryRestoreProposalV1.Create(Guid.NewGuid(), point.OwnerId, point.LibraryId,
             point.RecoveryPointId, new RecoveryRestoreScopeV1("full_library", null, null), now.AddHours(1));
+        await using (var winningLease = await db.OpenConnectionAsync())
+        {
+            Check(await RecoveryRestoreRunner.TryAcquireSessionLeaseAsync(winningLease, proposal.SessionId, default), "First retained restore must acquire its lease.");
+            await using var losingLease = await db.OpenConnectionAsync();
+            Check(!await RecoveryRestoreRunner.TryAcquireSessionLeaseAsync(losingLease, proposal.SessionId, default), "Concurrent retained restore must fail before clone mutation.");
+            Check(await RecoveryRestoreRunner.TryAcquireSessionLeaseAsync(losingLease, Guid.NewGuid(), default), "An unrelated retained restore has its own lease.");
+        }
         var sha = RecoveryEvidenceCodec.Hash("isolated restored object"u8);
         const long byteLength = 24;
         await using var connection = await db.OpenConnectionAsync();
@@ -364,9 +387,19 @@ internal static class RecoveryIntegrationChecks
                 proposal.SessionId, [materialized]) == 1,
                 "Isolated restore rebinds the exact source version to a distinct target version.");
             var verifiedAt = DateTimeOffset.UtcNow;
-            Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
-                point.FullManifestSha256, new string('b', 64), "verified", [], verifiedAt) == 2,
-                "Validation revision binds the source manifest to the target namespace digest.");
+            try
+            {
+                await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+                    sourceManifest.Digest(), new string('b', 64), "verified", [], verifiedAt);
+                throw new InvalidOperationException("The source capture digest incorrectly matched the final catalog identity");
+            }
+            catch (InvalidOperationException error) when (error.Message == "restore_validation_session_or_manifest_mismatch") { }
+            Check(await RecoveryRestoreRunner.AppendValidatedCloneAsync(connection, transaction, proposal,
+                RecoveryCatalogCodec.Verify(envelope, trust), new string('b', 64), verifiedAt, default) == 2,
+                "The actual retained runner persists the catalog's final manifest identity after materialization.");
+            Check(await RecoveryRestoreRunner.AppendValidatedCloneAsync(connection, transaction, proposal,
+                RecoveryCatalogCodec.Verify(envelope, trust), new string('b', 64), verifiedAt, default) == 2,
+                "The retained runner's exact validation replay preserves its original immutable revision.");
             Check(await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
                 point.FullManifestSha256, new string('b', 64), "failed", ["integrity_failed"], DateTimeOffset.UtcNow) == 3,
                 "A later failed validation supersedes the earlier successful revision.");
