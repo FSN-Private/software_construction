@@ -37,8 +37,7 @@ internal static class RecoveryRestoreRunner
         using var secrets = new AmazonSecretsManagerClient(Amazon.RegionEndpoint.GetBySystemName(region));
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), ct);
-        var directory = Path.Combine(configuration.Optional("ScratchDirectory") ?? Path.GetTempPath(), "recovery-restore", proposal.SessionId.ToString("N"));
-        Directory.CreateDirectory(directory);
+        var directory = CreateScratchDirectory(configuration, proposal.SessionId);
         try
         {
             var database = await RecoveryDrillRunner.ReadRecoveryDatabaseAsync(configuration, secrets, directory, ct);
@@ -99,11 +98,9 @@ internal static class RecoveryRestoreRunner
         // request never grants permission to overwrite or delete an existing database.
         var name = DatabaseName(proposal);
         proposal.Validate();
-        await using var administration = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString) { Database = "postgres" }.ConnectionString);
+        await using var administration = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString) { Database = "postgres", Pooling = false }.ConnectionString);
         await administration.OpenAsync(ct);
-        await using var lease = new NpgsqlCommand("SELECT pg_try_advisory_lock($1)", administration);
-        lease.Parameters.AddWithValue(BitConverter.ToInt64(SHA256.HashData(proposal.SessionId.ToByteArray()), 0));
-        if (await lease.ExecuteScalarAsync(ct) is not true) throw new RecoveryWorkerException("restore_session_busy");
+        if (!await TryAcquireSessionLeaseAsync(administration, proposal.SessionId, ct)) throw new RecoveryWorkerException("restore_session_busy");
         await using var exists = new NpgsqlCommand("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", administration);
         exists.Parameters.AddWithValue(name);
         var existing = await exists.ExecuteScalarAsync(ct) is true;
@@ -158,8 +155,7 @@ internal static class RecoveryRestoreRunner
         { name, targetBucket = configuration.Required("TargetBucket"), application = configuration.RequiredHash("ApiBuildDigest"), validation }));
         await using (var transaction = await connection.BeginTransactionAsync(ct))
         {
-            await RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId, point.SourceManifest.Digest(),
-                targetDigest, "verified", [], DateTimeOffset.UtcNow, ct);
+            await AppendValidatedCloneAsync(connection, transaction, proposal, verifiedCatalog, targetDigest, DateTimeOffset.UtcNow, ct);
             await transaction.CommitAsync(ct);
         }
         Console.WriteLine($"recovery_restore_retained session={proposal.SessionId:D} point={proposal.RecoveryPointId:D} state=validating access=owner_access_pending");
@@ -167,6 +163,34 @@ internal static class RecoveryRestoreRunner
 
     internal static string DatabaseName(RecoveryRestoreProposalV1 proposal) =>
         "recovery_drill_" + proposal.SessionId.ToString("N") + "_" + proposal.RecoveryPointId.ToString("N")[..8];
+
+    internal static string CreateScratchDirectory(RecoveryWorkerConfiguration configuration, Guid sessionId)
+    {
+        if (sessionId == Guid.Empty) throw new RecoveryWorkerException("restore_session_invalid");
+        var directory = Path.Combine(configuration.Optional("ScratchDirectory") ?? Path.GetTempPath(),
+            "recovery-restore", sessionId.ToString("N"), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    internal static async Task<bool> TryAcquireSessionLeaseAsync(NpgsqlConnection connection, Guid sessionId, CancellationToken ct)
+    {
+        if (sessionId == Guid.Empty) throw new RecoveryWorkerException("restore_session_invalid");
+        await using var lease = new NpgsqlCommand("SELECT pg_try_advisory_lock($1)", connection);
+        lease.Parameters.AddWithValue(BitConverter.ToInt64(SHA256.HashData(sessionId.ToByteArray()), 0));
+        return await lease.ExecuteScalarAsync(ct) is true;
+    }
+
+    internal static Task<long> AppendValidatedCloneAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        RecoveryRestoreProposalV1 proposal, VerifiedRecoveryCatalog catalog, string targetDigest, DateTimeOffset atUtc, CancellationToken ct)
+    {
+        if (catalog.Payload.RecoveryPointId != proposal.RecoveryPointId || catalog.Payload.OwnerId != proposal.OwnerId ||
+            catalog.Payload.LibraryId != proposal.LibraryId) throw new RecoveryWorkerException("restore_catalog_checkpoint_mismatch");
+        // The imported point identity is the authenticated final manifest (including
+        // owner-access evidence). Source closure validation above remains source-bound.
+        return RestoreSessionStore.AppendValidationAsync(connection, transaction, proposal.SessionId,
+            catalog.Payload.FullManifestSha256, targetDigest, "verified", [], atUtc, ct);
+    }
 
     private static async Task RequireRequestedScopeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         RecoveryRestoreProposalV1 proposal, CancellationToken ct)
