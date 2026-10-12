@@ -28,6 +28,12 @@ T029 retained restore/promotion; T034 sanitized replacement/purge journals/clean
 No additional supported blocker found in the inspected offline signature/binding checks, historical-proof separation, readiness/latest-validation guard, full-read retention checks, trusted schema/COPY restore, exact-version materialization or release qualification bindings. No non-blocking notes were reported. The reviewer explicitly returned **BLOCKED** for the entire feature because the tracked requirements remain open.
 
 
+## Implementation round 2 — 2026-10-08
+
+Reviewer: **gpt-6-astra**, read-only alternate-model follow-up against `8b2a121..3fc994e`, including the pending review record. **R1-001 disposition accepted: valid and fixed.** The reviewer inspected the actual JWT/middleware/probe/independent-attestation test and confirmed the authenticated foreign denial without owner authority. No new blocker was found in the inspected authorization, immutable validation replay or scoped retention extension. Tests were inspected, not independently rerun; no cloud evidence was certified.
+
+The whole-feature gate remains **BLOCKED** on T029/T034/T035/T036 and external qualification. The reviewer reported one non-blocking documentation note: the paragraph labeled current checkpoint still described approvals as pending. It is now explicitly historical and records that both scoped approvals arrived. Earlier results remain preserved.
+
 ## Archived specification-only review (2026-09-03)
 
 The following pre-existing review is retained unchanged. Its PASS applies only to the September specification and does not override the current implementation BLOCKED gate.

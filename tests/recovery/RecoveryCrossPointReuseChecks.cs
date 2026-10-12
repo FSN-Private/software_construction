@@ -12,6 +12,7 @@ internal static class RecoveryCrossPointReuseChecks
 {
     public static async Task RunAsync()
     {
+        await VerifyPointCadenceAsync();
         var fixture = Fixture.Create();
         var dynamo = new ReuseDynamo(fixture.ControlItems);
         var evidence = new ReuseS3();
@@ -120,6 +121,50 @@ internal static class RecoveryCrossPointReuseChecks
             "An out-of-order older copy cannot roll the sealed-copy head backward.");
     }
 
+    private static async Task VerifyPointCadenceAsync()
+    {
+        var names = new[] { "SourceAccountId", "SourceRegion", "DestinationAccountId", "DestinationRegion", "DestinationBucket", "SourceBucket", "RecoveryWorkerBuildDigest", "Environment" };
+        var saved = names.ToDictionary(name => name, name => Environment.GetEnvironmentVariable("Recovery__" + name));
+        try
+        {
+            foreach (var fresh in new[] { false, true })
+            {
+                var fixture = Fixture.Create(verification: true, fresh: fresh);
+                var values = new[] { fixture.SourceAccountId, fixture.SourceRegion, fixture.DestinationAccountId,
+                    fixture.DestinationRegion, "recovery-payload", "primary-media", fixture.WorkerBuildDigest, "test" };
+                for (var i = 0; i < names.Length; i++) Environment.SetEnvironmentVariable("Recovery__" + names[i], values[i]);
+                var configuration = RecoveryWorkerConfiguration.Load("verify");
+                var pointer = CopyPointer.From(fixture.ControlItems.Single(item => item.Key.Sk == "COPY").Value)!;
+                using var s3 = new ReuseS3();
+                foreach (var item in fixture.EvidenceObjects) s3.Add("recovery-evidence", item.Key, item.Version, item.Bytes);
+                s3.Add("recovery-payload", "payload/sha256/" + fixture.MediaReference.Sha256, "payload-v1", fixture.MediaBytes);
+                s3.Add("recovery-payload", $"snapshots/{pointer.PointId:D}/database", "component-v1", [4, 5, 6, 7]);
+                var point = await RecoveryVerifierRunner.VerifyPointAsync(configuration, s3, pointer, fixture.Trust,
+                    default, forceFullMediaRead: false);
+                Check((point.FullMediaVerifiedAtUtc is null) == fresh && s3.MediaFullReadBytes == (fresh ? 0 : fixture.MediaBytes.Length),
+                    "The real point verifier must preserve fresh signed-copy cadence and fully rehash legacy receipts.");
+                var fullAt = point.FullMediaVerifiedAtUtc ?? fixture.Now;
+                var before = s3.MediaFullReadBytes;
+                var repeated = await RecoveryVerifierRunner.VerifyPointAsync(configuration, s3, pointer, fixture.Trust,
+                    default, forceFullMediaRead: false, priorFullMediaVerifiedAtUtc: fullAt);
+                Check(repeated.FullMediaVerifiedAtUtc is null && s3.MediaFullReadBytes == before,
+                    "Ordinary cycles must not mint another proof or transfer full media after authenticated full verification.");
+                foreach (var fault in new[] { "corrupt", "unavailable", "version" })
+                {
+                    s3.MediaFault = fault;
+                    await ThrowsAsync<Exception>(() => RecoveryVerifierRunner.VerifyPointAsync(configuration, s3, pointer,
+                        fixture.Trust, default, forceFullMediaRead: true));
+                }
+                s3.MediaFault = null;
+                var retried = await RecoveryVerifierRunner.VerifyPointAsync(configuration, s3, pointer, fixture.Trust,
+                    default, forceFullMediaRead: true);
+                Check(retried.FullMediaVerifiedAtUtc >= fullAt && retried.OwnerAccess is null,
+                    "A failed full read returns no proof; a successful retry still cannot qualify owner access.");
+            }
+        }
+        finally { foreach (var item in saved) Environment.SetEnvironmentVariable("Recovery__" + item.Key, item.Value); }
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
@@ -156,7 +201,7 @@ internal static class RecoveryCrossPointReuseChecks
         public required IReadOnlyList<StoredObject> EvidenceObjects { get; init; }
         public required Dictionary<(string Pk, string Sk), Dictionary<string, AttributeValue>> ControlItems { get; init; }
 
-        public static Fixture Create()
+        public static Fixture Create(bool verification = false, bool fresh = false)
         {
             const string owner = "owner-reuse";
             const string library = "library-reuse";
@@ -174,6 +219,14 @@ internal static class RecoveryCrossPointReuseChecks
                 "objects/media/original.jpg", "source-media-v7", mediaHash, mediaBytes.LongLength,
                 [new RecoveryLogicalReference(owner, library, Guid.NewGuid())]);
             var manifest = MakeManifest(pointId, captureId, owner, library, now, mediaReference);
+            if (verification) manifest = manifest with
+            {
+                SnapshotCutoffUtc = now.AddMinutes(-10),
+                CapturedAtUtc = now.AddMinutes(-9),
+                ChangeWatermark = new RecoveryChangeWatermark(7, now.AddMinutes(-11)),
+                Coverage = manifest.Coverage.Select(item => item.DataClass is RecoveryDataClass.DatabaseSnapshot or RecoveryDataClass.ObjectInventory
+                    ? new RecoveryClassCoverage(item.DataClass, 1, 4) : item).ToArray()
+            };
             var sourceManifestBytes = manifest.SerializeCanonical();
             var sourceManifestSha = RecoveryEvidenceCodec.Hash(sourceManifestBytes);
             var sourceManifestKey = $"captures/{captureId:D}/scopes/{ScopeHash(owner, library)}/manifest.json";
@@ -202,7 +255,15 @@ internal static class RecoveryCrossPointReuseChecks
             var ownerReceipt = new PrivateCopyReceiptV1("recovery-evidence", ownerProofKey, "owner-proof-v1",
                 ownerProofSha, ownerProofBytes.LongLength, "recovery-evidence", ownerProofKey, "owner-proof-v1",
                 RecoveryDataClass.AccessEvidence.ToString(), now.AddMinutes(-5));
-            var chunkBytes = RecoveryEvidenceCodec.SerializeCanonical(new[] { mediaReceipt, ownerReceipt });
+            if (fresh) mediaReceipt = mediaReceipt with { FullByteVerifiedAtUtc = now.AddMinutes(-5) };
+            var receipts = verification ? new[] { mediaReceipt }.Concat(manifest.Components.Select(component =>
+                new PrivateCopyReceiptV1("primary-capture", component.SourceKey["s3://primary-capture/".Length..],
+                    component.SourceVersionId, component.Sha256, component.ByteLength,
+                    component.DataClass == RecoveryDataClass.DatabaseSnapshot ? "recovery-payload" : "recovery-evidence",
+                    component.DataClass == RecoveryDataClass.DatabaseSnapshot ? $"snapshots/{pointId:D}/{component.Name}" :
+                        $"points/{pointId:D}/components/{component.Name}", "component-v1", component.DataClass.ToString(), now.AddMinutes(-5)))).ToArray()
+                : new[] { mediaReceipt, ownerReceipt };
+            var chunkBytes = RecoveryEvidenceCodec.SerializeCanonical(receipts);
             var chunkSha = RecoveryEvidenceCodec.Hash(chunkBytes);
             var sourceManifestReceipt = new PrivateArtifactReceiptV1("primary-capture", sourceManifestKey,
                 "source-manifest-v7", "recovery-evidence", sourceManifestObjectKey, "source-manifest-copy-v1",
@@ -220,9 +281,9 @@ internal static class RecoveryCrossPointReuseChecks
             var trust = new RecoverySigningTrust(keyId, Convert.ToBase64String(publicSpki), fingerprint);
             var payload = new PrivateCopyCheckpointPayloadV1(1, captureId, pointId, owner, library,
                 sourceManifestSha, finalManifestSha, sourceRegion, destinationRegion, destinationAccount,
-                now.AddMinutes(-4), workerDigest, 2,
-                [new PrivateReceiptChunkV1(0, 2, chunkKey, chunkVersion, chunkSha, chunkBytes.LongLength)],
-                sourceManifestReceipt, ownerProofReceipt, finalManifestReceipt);
+                now.AddMinutes(-4), workerDigest, receipts.Length,
+                [new PrivateReceiptChunkV1(0, receipts.Length, chunkKey, chunkVersion, chunkSha, chunkBytes.LongLength)],
+                sourceManifestReceipt, verification ? null : ownerProofReceipt, verification ? null : finalManifestReceipt);
             var payloadBytes = RecoveryEvidenceCodec.SerializeCanonical(payload);
             var signature = rsa.SignHash(SHA256.HashData(payloadBytes), HashAlgorithmName.SHA256,
                 RSASignaturePadding.Pss);
@@ -256,7 +317,7 @@ internal static class RecoveryCrossPointReuseChecks
                 ["manifestVersionId"] = S(finalVersion), ["manifestSha256"] = S(finalManifestSha),
                 ["checkpointKey"] = S(checkpointKey), ["checkpointVersionId"] = S("checkpoint-v1"),
                 ["checkpointSha256"] = S(checkpointSha), ["checkpointByteLength"] = N(checkpointBytes.LongLength),
-                ["copiedAtUtc"] = S(now.AddMinutes(-3).ToString("O")), ["state"] = S("copied")
+                ["copiedAtUtc"] = S(now.AddMinutes(-3).ToString("O")), ["state"] = S(verification ? "access_incomplete" : "copied")
             };
             var controlItems = new Dictionary<(string Pk, string Sk), Dictionary<string, AttributeValue>>
             {
@@ -279,14 +340,15 @@ internal static class RecoveryCrossPointReuseChecks
                 Manifest = manifest,
                 SourceManifestSha256 = sourceManifestSha,
                 CheckpointKey = checkpointKey,
-                EvidenceObjects =
-                [
+                EvidenceObjects = new StoredObject[]
+                {
                     new(sourceManifestObjectKey, "source-manifest-copy-v1", sourceManifestBytes),
                     new(chunkKey, chunkVersion, chunkBytes),
                     new(ownerProofKey, "owner-proof-v1", ownerProofBytes),
                     new(finalManifestKey, finalVersion, finalManifestBytes),
                     new(checkpointKey, "checkpoint-v1", checkpointBytes)
-                ],
+                }.Concat(verification ? receipts.Where(item => item.DataClass == nameof(RecoveryDataClass.ObjectInventory))
+                    .Select(item => new StoredObject(item.DestinationKey, item.DestinationVersionId, [4, 5, 6, 7])) : []).ToArray(),
                 ControlItems = controlItems
             };
         }
@@ -349,6 +411,8 @@ internal static class RecoveryCrossPointReuseChecks
         public int RetentionWrites { get; private set; }
         public long FullReadBytes { get; private set; }
         public long RangeReadBytes { get; private set; }
+        public long MediaFullReadBytes { get; private set; }
+        public string? MediaFault { get; set; }
         public void Add(string bucket, string key, string version, byte[] bytes) => objects[(bucket, key, version)] = bytes;
 
         public override Task<GetBucketVersioningResponse> GetBucketVersioningAsync(
@@ -410,6 +474,12 @@ internal static class RecoveryCrossPointReuseChecks
             if (!objects.TryGetValue((request.BucketName, request.Key, request.VersionId ?? string.Empty), out var bytes))
                 throw new AmazonS3Exception("fixture exact version missing") { StatusCode = HttpStatusCode.NotFound };
             var body = request.ByteRange is null ? bytes : bytes[..Math.Min(1, bytes.Length)];
+            if (request.Key.StartsWith("payload/sha256/", StringComparison.Ordinal) && request.ByteRange is null)
+            {
+                MediaFullReadBytes += body.LongLength;
+                if (MediaFault == "corrupt") { body = body.ToArray(); body[0] ^= 1; }
+                if (MediaFault == "unavailable") throw new IOException("fixture full read unavailable");
+            }
             if (request.ByteRange is null) FullReadBytes += body.LongLength;
             else RangeReadBytes += body.LongLength;
             return Task.FromResult(new GetObjectResponse
@@ -425,7 +495,11 @@ internal static class RecoveryCrossPointReuseChecks
             if (!objects.TryGetValue((request.BucketName, request.Key, request.VersionId ?? string.Empty), out var bytes))
                 throw new AmazonS3Exception("fixture exact version missing") { StatusCode = HttpStatusCode.NotFound };
             return Task.FromResult(new GetObjectMetadataResponse
-            { VersionId = request.VersionId, ContentLength = bytes.LongLength });
+            {
+                VersionId = MediaFault == "version" && request.Key.StartsWith("payload/sha256/", StringComparison.Ordinal) ? "swapped" : request.VersionId,
+                ContentLength = bytes.LongLength, ObjectLockMode = ObjectLockMode.Governance,
+                ObjectLockRetainUntilDate = DateTime.UtcNow.AddDays(100)
+            });
         }
     }
 
