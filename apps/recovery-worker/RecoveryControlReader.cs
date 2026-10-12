@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -117,11 +118,18 @@ internal static class RecoveryControlReader
     internal static async Task<RecoveryCatalogPayloadV1?> ReadPointAsync(IAmazonDynamoDB dynamo,
         RecoveryWorkerConfiguration configuration,RecoverySigningTrust trust,Guid pointId,CancellationToken ct)
     {
+        var envelope = await ReadCatalogEnvelopeAsync(dynamo, configuration, trust, pointId, ct);
+        return envelope is null ? null : RecoveryCatalogCodec.Verify(envelope, trust).Payload;
+    }
+
+    internal static async Task<RecoveryCatalogEnvelopeV1?> ReadCatalogEnvelopeAsync(IAmazonDynamoDB dynamo,
+        RecoveryWorkerConfiguration configuration,RecoverySigningTrust trust,Guid pointId,CancellationToken ct)
+    {
         var key=new Dictionary<string,AttributeValue> { ["pk"]=S("POINT#"+pointId.ToString("D")),["sk"]=S("VERIFY") };
         var item=await GetAsync(dynamo,configuration.Required("VerificationTableName"),key,ct);
         if(item is null) return null;
         if(Text(item,"pk")!=key["pk"].S || Text(item,"sk")!="VERIFY") throw new RecoveryWorkerException("control_point_binding_invalid");
-        var (catalog,_)=RecoveryVerificationPublisher.ReadSignedOutbox(item,trust);
+        var (catalog,messages)=RecoveryVerificationPublisher.ReadSignedOutbox(item,trust);
         var now=DateTimeOffset.UtcNow;
         if(catalog.RecoveryPointId!=pointId || catalog.OwnerId!=configuration.Required("OwnerId") ||
             catalog.LibraryId!=configuration.Required("LibraryId") || catalog.RecoveryAccountId!=configuration.RequiredAccountId("DestinationAccountId") ||
@@ -129,7 +137,7 @@ internal static class RecoveryControlReader
             catalog.SourceRegion!=configuration.RequiredRegion("SourceRegion") || catalog.CapturedAtUtc>now ||
             catalog.SnapshotCutoffUtc>now || catalog.VerifiedAtUtc>now)
             throw new RecoveryWorkerException("control_point_binding_invalid");
-        return catalog;
+        return RecoveryCatalogCodec.ParseEnvelope(Encoding.UTF8.GetBytes(messages[0]));
     }
     private static RecoveryControlPoint SafePoint(RecoveryCatalogPayloadV1 catalog)=>new(catalog.RecoveryPointId,"verified",
         catalog.CapturedAtUtc,catalog.SnapshotCutoffUtc,catalog.VerifiedAtUtc,catalog.FullManifestSha256,catalog.Coverage);

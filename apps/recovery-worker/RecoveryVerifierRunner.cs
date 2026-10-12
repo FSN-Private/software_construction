@@ -345,8 +345,9 @@ internal static class RecoveryVerifierRunner
                 throw new RecoveryWorkerException("final_manifest_binding_invalid");
         }
 
-        var receiptRows = await ReadReceiptChunksAsync(s3, pointer.EvidenceBucket, payload, cancellationToken);
         var expected = BuildExpectedReceipts(sourceManifest, finalManifest, pointer, configuration);
+        if (payload.CopyCount != expected.Count) throw new RecoveryWorkerException("copy_receipt_count_mismatch");
+        var receiptRows = await ReadReceiptChunksAsync(s3, pointer.EvidenceBucket, payload, cancellationToken);
         ValidateReceiptSet(receiptRows, expected);
         if (priorFullMediaVerifiedAtUtc is { } priorFull &&
             (priorFull.Offset != TimeSpan.Zero || priorFull > DateTimeOffset.UtcNow || priorFull < pointer.CopiedAtUtc))

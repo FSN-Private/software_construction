@@ -171,7 +171,8 @@ internal static class WorkerArtifactCodec
             throw new InvalidDataException("checkpoint_account_invalid");
         RequireUtc(payload.VerifiedAtUtc, nameof(payload.VerifiedAtUtc));
         RequireHash(payload.RecoveryWorkerBuildDigest, nameof(payload.RecoveryWorkerBuildDigest));
-        if (payload.CopyCount < 0 || payload.ReceiptChunks is null || payload.SourceManifest is null)
+        if (payload.CopyCount is < 0 or > 2_000_000) throw new InvalidDataException("checkpoint_receipt_count_limit");
+        if (payload.ReceiptChunks is null || payload.SourceManifest is null)
             throw new InvalidDataException("checkpoint_artifacts_required");
         long receiptCount = 0;
         for (var index = 0; index < payload.ReceiptChunks.Count; index++)

@@ -118,7 +118,7 @@ internal static class RecoveryApiLaunchJournal
         { throw new RecoveryWorkerException("api_launch_journal_invalid"); }
     }
 
-    private static async Task PersistAsync<T>(IAmazonS3 s3,RecoveryWorkerConfiguration configuration,
+    internal static async Task PersistAsync<T>(IAmazonS3 s3,RecoveryWorkerConfiguration configuration,
         string key,string type,T value,IRecoveryEvidenceSigner signer,RecoverySigningTrust trust,CancellationToken ct)
     {
         var payload=RecoveryEvidenceCodec.SerializeCanonical(value);
@@ -136,7 +136,7 @@ internal static class RecoveryApiLaunchJournal
             RecoveryEvidenceCodec.SerializeCanonical(envelope),configuration.Required("EvidenceKmsKeyId"),ct);
     }
     private static string Key(Guid runId,string name)=>$"evidence/drills/{runId:D}/{name}.v1.json";
-    private static async Task<byte[]?> ReadOptionalAsync(IAmazonS3 s3,RecoveryWorkerConfiguration configuration,string key,CancellationToken ct)
+    internal static async Task<byte[]?> ReadOptionalAsync(IAmazonS3 s3,RecoveryWorkerConfiguration configuration,string key,CancellationToken ct)
     {
         try { return await RecoveryDrillCompletion.ReadExactAsync(s3,configuration.Required("EvidenceBucket"),key,null,64*1024,ct); }
         catch(AmazonS3Exception error) when(error.StatusCode==HttpStatusCode.NotFound || error.ErrorCode=="NoSuchKey") { return null; }
