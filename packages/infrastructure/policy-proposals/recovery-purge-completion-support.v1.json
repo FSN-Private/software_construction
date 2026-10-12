@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
-  "status": "proposed-local-definition",
-  "attachedToCdk": false,
+  "status": "approved-local-definition",
+  "attachedToCdk": true,
+  "authorization": "Owner explicitly approved the scoped local protocol and IAM definition on 2026-10-12; no deployment or live operations",
   "roleConstruct": "RecoveryPurgeExecutorRole",
   "statements": [
     {

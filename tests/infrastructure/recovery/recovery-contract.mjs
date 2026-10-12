@@ -247,21 +247,36 @@ assert.equal(fenceDeletes.length, 1);
 assert.ok(values(fenceDeletes[0].Condition).includes('SNAPSHOT#*'));
 assert.ok(!values(fenceDeletes[0].Condition).includes('MEDIA#*'), 'Permanent media fences must never be deletable by the executor.');
 assert.ok(purgeFences.some(statement => values(statement.Action).includes('dynamodb:PutItem') && values(statement.Condition).includes('MEDIA#*')));
-const payloadDelete = purgeStatements.find(statement => values(statement.Action).includes('s3:DeleteObjectVersion'));
+const payloadDelete = purgeStatements.find(statement => values(statement.Action).includes('s3:DeleteObjectVersion') && values(statement.Resource).includes('payload/sha256/*'));
 assert.ok(payloadDelete);
 assert.ok(values(payloadDelete.Resource).includes('payload/sha256/*'));
 assert.ok(values(payloadDelete.Resource).includes('snapshots/*'));
 assert.ok(!values(payloadDelete.Resource).includes('points/*'));
 assert.ok(!values(purgeStatements).match(/"s3:DeleteObject"/), 'The executor can delete exact versions only, not create delete markers.');
 const versionDeletes = purgeStatements.filter(statement => values(statement.Action).includes('s3:DeleteObjectVersion'));
-assert.ok(versionDeletes.every(statement => values(statement.Resource).includes('payload/sha256/*') &&
-  values(statement.Resource).includes('snapshots/*') && !values(statement.Resource).includes('points/*')));
+assert.equal(versionDeletes.length, 2);
+const liveBucketId = roleLogicalId(liveBucket);
+assert.ok(versionDeletes.every(statement => !values(statement.Resource).includes('points/*') &&
+  (values(statement.Resource).includes('payload/sha256/*') && values(statement.Resource).includes('snapshots/*') ||
+   values(statement.Resource).includes(liveBucketId) && values(statement.Resource).includes('/sha256/*'))));
+assert.ok(purgeStatements.some(statement => values(statement.Action).includes('s3:ListBucketVersions') &&
+  values(statement.Resource).includes(liveBucketId) && values(statement.Condition).includes('sha256/*')));
 assert.ok(purgeStatements.some(statement => values(statement.Action).includes('s3:GetObjectVersion') && values(statement.Resource).includes('points/*')));
 assert.ok(!values(purgePolicies).includes('evidence/drills/'));
 const purgeDecrypt = purgeStatements.filter(statement => values(statement.Action).includes('kms:Decrypt'));
-assert.equal(purgeDecrypt.length, 2);
-assert.ok(purgeDecrypt.every(statement => values(statement.Condition).includes('s3.ap-southeast-2.amazonaws.com') &&
+assert.equal(purgeDecrypt.length, 4);
+const purgeS3Decrypt = purgeDecrypt.filter(statement => values(statement.Condition).includes('s3.ap-southeast-2.amazonaws.com'));
+assert.equal(purgeS3Decrypt.length, 3);
+assert.ok(purgeS3Decrypt.every(statement =>
   values(statement.Condition).includes('kms:CallerAccount') && values(statement.Condition).includes('kms:EncryptionContext:aws:s3:arn')));
+assert.ok(purgeS3Decrypt.some(statement => values(statement.Condition).includes(liveBucketId) && values(statement.Condition).includes('/sha256/*')));
+const purgeDynamoDecrypt = purgeDecrypt.find(statement => statement.Sid === 'DecryptOnlyPurgeTablesThroughDynamoDb');
+assert.ok(purgeDynamoDecrypt);
+assert.equal(purgeDynamoDecrypt.Condition.StringEquals['kms:ViaService'], 'dynamodb.ap-southeast-2.amazonaws.com');
+assert.equal(purgeDynamoDecrypt.Condition.StringEquals['kms:CallerAccount'], '444455556666');
+assert.deepEqual(purgeDynamoDecrypt.Condition.StringEquals['kms:EncryptionContext:aws:dynamodb:tableName'],
+  [{ Ref: controlId }, { Ref: intentId }, { Ref: protectedFenceTableId }]);
+assert.equal(purgeDynamoDecrypt.Condition.StringEquals['kms:EncryptionContext:aws:dynamodb:subscriberId'], '444455556666');
 assert.ok(purgeDecrypt.some(statement => values(statement.Condition).includes('payload/sha256/*') && values(statement.Condition).includes('snapshots/*')));
 assert.ok(purgeDecrypt.some(statement => values(statement.Condition).includes('points/*')));
 assert.ok(!values(purgePolicies).match(/kms:(?:Sign|Verify|GetPublicKey)|secretsmanager:|sts:AssumeRole/));

@@ -71,7 +71,7 @@ internal static class RecoveryPurgePointVerifier
             payload.OwnerId != pointer.OwnerId || payload.LibraryId != pointer.LibraryId ||
             payload.DestinationAccountId != recoveryAccount || payload.SourceRegion != sourceRegion ||
             payload.DestinationRegion != recoveryRegion || payload.RecoveryWorkerBuildDigest != configuration.WorkerBuildDigest ||
-            payload.FinalManifest is null || payload.OwnerAccessProof is null)
+            payload.FinalManifest is null || payload.OwnerAccessProof is null || payload.VerifiedAtUtc > DateTimeOffset.UtcNow)
             throw new RecoveryWorkerException("purge_checkpoint_binding_invalid");
 
         var sourceReceipt = payload.SourceManifest;
@@ -85,7 +85,7 @@ internal static class RecoveryPurgePointVerifier
         var sourceManifest = RecoveryPointManifestV1.ParseCanonical(sourceManifestBytes);
         if (sourceManifest.RecoveryPointId != pointer.PointId || sourceManifest.CaptureId != pointer.CaptureId ||
             sourceManifest.OwnerId != pointer.OwnerId || sourceManifest.LibraryId != pointer.LibraryId ||
-            sourceManifest.SourceRegion != sourceRegion)
+            sourceManifest.SourceRegion != sourceRegion || payload.VerifiedAtUtc < sourceManifest.CapturedAtUtc)
             throw new RecoveryWorkerException("purge_source_manifest_binding_invalid");
 
         var finalReceipt = payload.FinalManifest;
@@ -111,7 +111,7 @@ internal static class RecoveryPurgePointVerifier
         var receipts = await ReadReceiptChunksAsync(s3, pointer.EvidenceBucket, payload, cancellationToken);
         var expected = BuildExpectedReceipts(configuration, pointer, sourceManifest, finalManifest);
         RecoveryVerifierRunner.ValidateReceiptSet(receipts, expected);
-        var authorizedMissing = BuildAuthorizedMissingSet(resumeContext, pointer, receipts);
+        var authorizedMissing = BuildAuthorizedMissingSet(resumeContext, pointer.PointId, receipts);
         foreach (var receipt in receipts)
         {
             var identity = (pointer.PointId, receipt.DestinationBucket, receipt.DestinationKey, receipt.DestinationVersionId);
@@ -125,7 +125,7 @@ internal static class RecoveryPurgePointVerifier
         }
 
         await VerifyOwnerAccessProofAsync(configuration, s3, payload.OwnerAccessProof,
-            pointer.OwnerId, pointer.LibraryId, cancellationToken);
+            pointer.OwnerId, pointer.LibraryId, payload.VerifiedAtUtc, cancellationToken);
         return new(pointer, sourceManifest, finalManifest, payload, receipts,
             checkpoint.PayloadSha256, checkpoint.EnvelopeSha256);
     }
@@ -186,20 +186,23 @@ internal static class RecoveryPurgePointVerifier
         return receipts;
     }
 
-    private static HashSet<(Guid, string, string, string)> BuildAuthorizedMissingSet(
+    internal static HashSet<(Guid, string, string, string)> BuildAuthorizedMissingSet(
         VerifiedRecoveryPurgeResumeContext? context,
-        CopyPointer pointer,
+        Guid pointId,
         IReadOnlyList<PrivateCopyReceiptV1> receipts)
     {
         var missing = new HashSet<(Guid, string, string, string)>();
         if (context is null) return missing;
         var byDestination = receipts.ToDictionary(receipt =>
-            (pointer.PointId, receipt.DestinationBucket, receipt.DestinationKey, receipt.DestinationVersionId));
+            (pointId, receipt.DestinationBucket, receipt.DestinationKey, receipt.DestinationVersionId));
         foreach (var item in context.MissingTargets)
         {
             var target = item.Target;
-            if (target.PointId != pointer.PointId) continue;
-            var identity = (target.PointId, target.Bucket, target.Key, target.VersionId);
+            // A deduplicated immutable destination version can be referenced by
+            // several independently signed points. Bind each point's receipt to
+            // the exact journalled physical version, not only the plan's first point.
+            var identity = (pointId, target.Bucket, target.Key, target.VersionId);
+            if (!byDestination.ContainsKey(identity)) continue;
             var classMatches = target.Kind switch
             {
                 "media" => receiptClassIsMedia(byDestination, identity),
@@ -246,7 +249,7 @@ internal static class RecoveryPurgePointVerifier
 
     private static async Task VerifyOwnerAccessProofAsync(RecoveryWorkerConfiguration configuration,
         IAmazonS3 s3, PrivateArtifactReceiptV1 receipt, string ownerId, string libraryId,
-        CancellationToken cancellationToken)
+        DateTimeOffset signedCheckpointAtUtc, CancellationToken cancellationToken)
     {
         if (receipt.SourceBucket != receipt.DestinationBucket || receipt.SourceKey != receipt.DestinationKey ||
             receipt.SourceVersionId != receipt.DestinationVersionId)
@@ -263,7 +266,17 @@ internal static class RecoveryPurgePointVerifier
             configuration.WorkerBuildDigest, configuration.RequiredHash("RecoveryTemplateDigest"),
             configuration.Required("OwnerUserPoolId"), configuration.Required("OwnerUserPoolClientId"),
             configuration.Required("OwnerUserPoolIssuer"));
-        _ = RecoveryOwnerAccessCodec.Verify(envelope, trust, expected, DateTimeOffset.UtcNow);
+        VerifyHistoricalOwnerAccess(envelope, trust, expected, signedCheckpointAtUtc);
+    }
+
+    internal static void VerifyHistoricalOwnerAccess(RecoveryOwnerAccessEnvelopeV1 envelope, RecoverySigningTrust trust,
+        RecoveryOwnerAccessExpectationV1 expected, DateTimeOffset signedCheckpointAtUtc)
+    {
+        if (signedCheckpointAtUtc.Offset != TimeSpan.Zero || signedCheckpointAtUtc > DateTimeOffset.UtcNow)
+            throw new InvalidDataException("purge_checkpoint_time_invalid");
+        // Old owner-access evidence proves the original sealed point only. Current
+        // deletion authority still comes from the separate fresh MFA plan approval.
+        _ = RecoveryOwnerAccessCodec.Verify(envelope, trust, expected, signedCheckpointAtUtc);
     }
 
     private static (string Bucket, string Key) ParseS3Uri(string value)
