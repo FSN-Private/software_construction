@@ -29,7 +29,7 @@ try
     await RecoveryVerificationPublisherChecks.RunAsync();
     RecoveryObjectClosureChecks.Run();
     RecoveryMaterializedClosureChecks.Run();
-    RecoveryRetentionHistoryChecks.Run();
+    await RecoveryRetentionHistoryChecks.RunAsync();
     await RecoveryMaterializerChecks.RunAsync();
     await RecoveryApiTaskChecks.RunAsync();
     RecoveryCandidateIdentityChecks.Run();

@@ -3,8 +3,26 @@ using Platform.Recovery.Worker;
 
 internal static class RecoveryRetentionHistoryChecks
 {
-    internal static void Run()
+    internal static async Task RunAsync()
     {
+        var artifact = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllBytesAsync(artifact, [1, 2, 3]);
+            if (!(await RecoveryPurgeRunner.ReadBoundedArtifactAsync(artifact, 3, default)).AsSpan().SequenceEqual(new byte[] { 1, 2, 3 }))
+                throw new InvalidOperationException("Bounded purge input changed bytes");
+            foreach (var length in new[] { 0L, 4L, 1_000_000L })
+            {
+                using (var file = new FileStream(artifact, FileMode.Open, FileAccess.Write)) file.SetLength(length);
+                try
+                {
+                    _ = await RecoveryPurgeRunner.ReadBoundedArtifactAsync(artifact, 3, default);
+                    throw new InvalidOperationException("Empty or oversized purge input was allocated/read");
+                }
+                catch (RecoveryWorkerException error) when (error.SafeCode == "purge_artifact_size_invalid") { }
+            }
+        }
+        finally { File.Delete(artifact); }
         var now = new DateTimeOffset(2026, 10, 7, 0, 0, 0, TimeSpan.Zero);
         var first = now.AddDays(-100);
         var asset = Guid.NewGuid();

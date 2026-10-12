@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed-local-definition",
+  "attachedToCdk": false,
+  "roleConstruct": "RecoveryPurgeExecutorRole",
+  "statements": [
+    {
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "${RecoveryEncryptionKey.Arn}",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "dynamodb.ap-southeast-2.amazonaws.com",
+          "kms:CallerAccount": "${RecoveryAccountId}",
+          "kms:EncryptionContext:aws:dynamodb:tableName": ["${RecoveryControlTable.Name}", "${RecoveryIntentTable.Name}", "${RecoveryFenceTable.Name}"],
+          "kms:EncryptionContext:aws:dynamodb:subscriberId": "${RecoveryAccountId}"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObjectVersion", "s3:DeleteObjectVersion"],
+      "Resource": "${RecoveryLiveBucket.Arn}/sha256/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "${RecoveryLiveBucket.Arn}",
+      "Condition": { "StringLike": { "s3:prefix": "sha256/*" } }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "${RecoveryEncryptionKey.Arn}",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "s3.ap-southeast-2.amazonaws.com", "kms:CallerAccount": "${RecoveryAccountId}" },
+        "StringLike": { "kms:EncryptionContext:aws:s3:arn": "${RecoveryLiveBucket.Arn}/sha256/*" }
+      }
+    }
+  ],
+  "constraints": [
+    "Local proposal only; no deployment or live operations",
+    "No primary access, signing, secrets, evidence deletion, object-lock bypass or key administration",
+    "Existing journal writes stay in authorized MEDIA partitions of the recovery FenceTable",
+    "Deletion requires the independently approved exact plan, current holds and shared-reference checks, durable admission and fresh approval",
+    "Keep snapshot preservation guard until the reviewed media-free snapshot and old-point exclusion protocol passes validation"
+  ]
+}

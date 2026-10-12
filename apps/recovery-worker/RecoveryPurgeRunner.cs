@@ -28,7 +28,7 @@ internal static class RecoveryPurgeRunner
             throw new RecoveryWorkerException("purge_usage_invalid");
 
         await VerifyExecutorIdentityAsync(configuration, cancellationToken);
-        var proposalBytes = await File.ReadAllBytesAsync(arguments[0], cancellationToken);
+        var proposalBytes = await ReadBoundedArtifactAsync(arguments[0], 64 * 1024, cancellationToken);
         var proposal = RecoveryPurgeProposalV1.ParseCanonical(proposalBytes);
         var region = configuration.RequiredRegion("DestinationRegion");
         using var s3 = new AmazonS3Client(Amazon.RegionEndpoint.GetBySystemName(region));
@@ -49,8 +49,8 @@ internal static class RecoveryPurgeRunner
         if (arguments[1] == "execute")
         {
             if (arguments.Count != 5) throw new RecoveryWorkerException("purge_usage_invalid");
-            var plan = RecoveryPurgePlanV1.ParseCanonical(await File.ReadAllBytesAsync(arguments[2], cancellationToken));
-            var approval = RecoveryPurgeApprovalCodec.ParseEnvelope(await File.ReadAllBytesAsync(arguments[3], cancellationToken));
+            var plan = RecoveryPurgePlanV1.ParseCanonical(await ReadBoundedArtifactAsync(arguments[2], 64 * 1024 * 1024, cancellationToken));
+            var approval = RecoveryPurgeApprovalCodec.ParseEnvelope(await ReadBoundedArtifactAsync(arguments[3], 64 * 1024, cancellationToken));
             var verifiedApproval = RecoveryPurgeApprovalCodec.Verify(approval, ownerTrust, plan, DateTimeOffset.UtcNow);
             EnsurePlanMatchesProposal(plan, proposal);
             var receipt = await ExecuteAsync(configuration, s3, dynamo, proposal, plan, verifiedApproval,
@@ -623,7 +623,7 @@ internal static class RecoveryPurgeRunner
             !dump.DestinationKey.StartsWith("snapshots/", StringComparison.Ordinal))
             throw new RecoveryWorkerException("purge_snapshot_identity_invalid");
 
-        var directory = Path.Combine(Path.GetTempPath(), "recovery-purge", proposal.OperationId.ToString("N"));
+        var directory = Path.Combine(Path.GetTempPath(), "recovery-purge", proposal.OperationId.ToString("N"), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var dumpPath = Path.Combine(directory, point.Pointer.PointId.ToString("N") + ".dump");
         var extracted = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -940,6 +940,17 @@ internal static class RecoveryPurgeRunner
             TableName = table, Key = key, ConsistentRead = true
         }, cancellationToken);
         return response.Item is { Count: > 0 } item ? item : null;
+    }
+
+    internal static async Task<byte[]> ReadBoundedArtifactAsync(string path, int maximumBytes, CancellationToken ct)
+    {
+        if (maximumBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+        await using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (input.Length is < 1 || input.Length > maximumBytes) throw new RecoveryWorkerException("purge_artifact_size_invalid");
+        var bytes = new byte[checked((int)input.Length)];
+        await input.ReadExactlyAsync(bytes, ct);
+        if (input.ReadByte() != -1) throw new RecoveryWorkerException("purge_artifact_size_invalid");
+        return bytes;
     }
 
     private static async Task WritePrivateArtifactAsync(string path, byte[] bytes,
