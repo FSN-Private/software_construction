@@ -37,6 +37,7 @@ try
     await RecoveryOwnerAccessProbeChecks.RunAsync();
     await RecoveryCandidateAccessInputChecks.RunAsync();
     await RecoveryMediaVerificationChecks.RunAsync();
+    await RecoveryFullMediaProofStoreChecks.RunAsync();
     await RecoveryTrustedDumpChecks.RunAsync();
     await RecoveryDrillCompletionChecks.RunAsync();
     await RecoveryXmpContentChecks.RunAsync();

@@ -65,9 +65,15 @@ internal static class RecoveryVerifierRunner
                 long verifiedItems = 0;
                 foreach (var candidate in new[] { latest })
                 {
+                    var fullMediaAt = await RecoveryFullMediaProofStore.ReadAsync(dynamo, configuration,
+                        candidate.Pointer, signer.Trust, DateTimeOffset.UtcNow, cancellationToken);
+                    var fullReadDue = fullMediaAt is { } prior && DateTimeOffset.UtcNow - prior >= TimeSpan.FromHours(24);
                     var point = await VerifyPointAsync(configuration, s3, candidate.Pointer, signer.Trust,
-                        cancellationToken, verifyDatabaseSnapshotBytes: false, forceFullMediaRead: false);
+                        cancellationToken, verifyDatabaseSnapshotBytes: false, forceFullMediaRead: fullReadDue,
+                        priorFullMediaVerifiedAtUtc: fullReadDue ? null : fullMediaAt);
                     await VerifyReleaseBindingsAsync(configuration, s3, point, cancellationToken);
+                    if (point.FullMediaVerifiedAtUtc is not null)
+                        await RecoveryFullMediaProofStore.PersistAsync(dynamo, configuration, signer, signer.Trust, point, cancellationToken);
                     verifiedItems = checked(verifiedItems + point.Receipts.Count);
                     var dumpReceipt = point.Receipts.SingleOrDefault(receipt =>
                         receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString())
@@ -271,7 +277,8 @@ internal static class RecoveryVerifierRunner
         CancellationToken cancellationToken,
         bool verifyDatabaseSnapshotBytes = true,
         bool forceFullMediaRead = true,
-        bool historicalOwnerAccess = false)
+        bool historicalOwnerAccess = false,
+        DateTimeOffset? priorFullMediaVerifiedAtUtc = null)
     {
         var sourceAccount = configuration.RequiredAccountId("SourceAccountId");
         var recoveryAccount = configuration.RequiredAccountId("DestinationAccountId");
@@ -341,6 +348,16 @@ internal static class RecoveryVerifierRunner
         var receiptRows = await ReadReceiptChunksAsync(s3, pointer.EvidenceBucket, payload, cancellationToken);
         var expected = BuildExpectedReceipts(sourceManifest, finalManifest, pointer, configuration);
         ValidateReceiptSet(receiptRows, expected);
+        if (priorFullMediaVerifiedAtUtc is { } priorFull &&
+            (priorFull.Offset != TimeSpan.Zero || priorFull > DateTimeOffset.UtcNow || priorFull < pointer.CopiedAtUtc))
+            throw new RecoveryWorkerException("full_media_proof_time_invalid");
+        // Preserve existing signed-copy cadence for new checkpoints. If any media
+        // is due, read the entire closure before minting one point-wide proof.
+        if (!forceFullMediaRead && priorFullMediaVerifiedAtUtc is null && receiptRows.Any(receipt =>
+            receipt.DataClass is nameof(RecoveryDataClass.OriginalImage) or nameof(RecoveryDataClass.XmpSidecar) &&
+            RecoveryMediaVerification.FullReadRequired(receipt, DateTimeOffset.UtcNow)))
+            forceFullMediaRead = true;
+        var fullMediaStartedAt = forceFullMediaRead ? DateTimeOffset.UtcNow : (DateTimeOffset?)null;
         foreach (var receipt in receiptRows)
         {
             if (receipt.DataClass == RecoveryDataClass.DatabaseSnapshot.ToString() && !verifyDatabaseSnapshotBytes)
@@ -355,7 +372,14 @@ internal static class RecoveryVerifierRunner
                     throw new RecoveryWorkerException("database_snapshot_identity_mismatch");
             }
             else if (receipt.DataClass is nameof(RecoveryDataClass.OriginalImage) or nameof(RecoveryDataClass.XmpSidecar))
-                await RecoveryMediaVerification.VerifyAsync(s3, receipt, forceFullMediaRead, DateTimeOffset.UtcNow, cancellationToken);
+            {
+                var effective = priorFullMediaVerifiedAtUtc is { } fullTime ? receipt with
+                {
+                    VerifiedAtUtc = fullTime > receipt.VerifiedAtUtc ? fullTime : receipt.VerifiedAtUtc,
+                    FullByteVerifiedAtUtc = fullTime
+                } : receipt;
+                await RecoveryMediaVerification.VerifyAsync(s3, effective, forceFullMediaRead, DateTimeOffset.UtcNow, cancellationToken);
+            }
             else
                 await S3ArtifactWriter.VerifyExactAsync(s3, receipt.DestinationBucket, receipt.DestinationKey,
                     receipt.DestinationVersionId, receipt.Sha256, receipt.ByteLength, cancellationToken);
@@ -366,7 +390,7 @@ internal static class RecoveryVerifierRunner
             historicalOwnerAccess ? payload.VerifiedAtUtc : DateTimeOffset.UtcNow, cancellationToken);
         VerifyClassCoverage(finalManifest ?? sourceManifest, receiptRows);
         return new(pointer, sourceManifest, finalManifest, payload, receiptRows, checkpoint.PayloadSha256,
-            checkpoint.EnvelopeSha256, ownerAccess, historicalOwnerAccess);
+            checkpoint.EnvelopeSha256, ownerAccess, historicalOwnerAccess, fullMediaStartedAt);
     }
 
     private static async Task<VerifiedRecoveryOwnerAccessEvidence> VerifyOwnerAccessProofAsync(
@@ -692,7 +716,8 @@ internal sealed record VerifiedCopiedPoint(
     string CheckpointPayloadSha256,
     string CheckpointEnvelopeSha256,
     VerifiedRecoveryOwnerAccessEvidence? OwnerAccess,
-    bool HistoricalOwnerAccess = false);
+    bool HistoricalOwnerAccess = false,
+    DateTimeOffset? FullMediaVerifiedAtUtc = null);
 
 internal sealed record CopyPointer(
     Guid PointId,
