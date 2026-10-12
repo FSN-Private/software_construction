@@ -1,6 +1,6 @@
 # ADR-0018: Preserve recovery metadata while completing media purge
 
-**Status**: Proposed
+**Status**: Accepted for local implementation/tests by explicit owner approval on 2026-10-12; no deployment or live operations
 **Date**: 2026-10-12
 **Decision owner**: Product owner
 **Related feature**: [011](../../features/011-backup-disaster-recovery/spec.md), T029/T034/T035

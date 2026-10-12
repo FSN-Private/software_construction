@@ -235,6 +235,15 @@ internal static class RecoveryPurgeRunner
         await InstallFencesAsync(dynamo, configuration.Required("FenceTableName"), proposal, plan,
             approval, mediaScopeId, snapshotScopeId, nowUtc, cancellationToken);
 
+        var journal = new RecoveryPurgeDeletionJournal(dynamo, s3, configuration.Required("FenceTableName"),
+            mediaScopeId, plan, configuration.WorkerBuildDigest);
+        var confirmedMissing = new List<VerifiedRecoveryPurgeMissingVersion>();
+        foreach (var target in plan.TargetVersions.Where(item => !item.RetainedForSharedIdentity))
+            if (await journal.ReadMissingAsync(target, cancellationToken) is { } missing) confirmedMissing.Add(missing);
+        var resume = confirmedMissing.Count == 0 ? null : new VerifiedRecoveryPurgeResumeContext(
+            plan.OperationId, plan.Digest(), plan.Generation, confirmedMissing);
+        var missingVersions = confirmedMissing.Select(item => (item.Target.Bucket, item.Target.Key, item.Target.VersionId)).ToHashSet();
+
         // The immutable snapshot fence closes admission before the point-set equality check.
         var inventory = await ReadStrongPointInventoryAsync(dynamo, configuration.Required("ControlTableName"),
             proposal.OwnerId, proposal.LibraryId, cancellationToken);
@@ -243,7 +252,7 @@ internal static class RecoveryPurgeRunner
         foreach (var pointer in inventory.Pointers)
         {
             var point = await RecoveryPurgePointVerifier.VerifyAsync(configuration, s3, pointer, recoveryTrust,
-                null, cancellationToken);
+                resume, cancellationToken);
             verified.Add(point);
         }
         var latest = verified.OrderByDescending(item => item.SourceManifest.SnapshotCutoffUtc)
@@ -277,6 +286,7 @@ internal static class RecoveryPurgeRunner
                 target.Kind == "media" && !target.Key.StartsWith("payload/sha256/", StringComparison.Ordinal) ||
                 target.Kind == "database_snapshot" && !target.Key.StartsWith("snapshots/", StringComparison.Ordinal))
                 throw new RecoveryWorkerException("purge_target_outside_recovery_namespace");
+            if (missingVersions.Contains((target.Bucket, target.Key, target.VersionId))) continue;
             await S3ArtifactWriter.VerifyExactAsync(s3, target.Bucket, target.Key, target.VersionId,
                 target.Sha256, target.ByteLength, cancellationToken);
         }
@@ -292,20 +302,7 @@ internal static class RecoveryPurgeRunner
             var deletionAt = DateTimeOffset.UtcNow;
             plan.Validate(deletionAt);
             RequireFreshApproval(approval, deletionAt);
-            var existed = await ExactVersionExistsAsync(s3, target, cancellationToken);
-            if (existed)
-            {
-                var response = await s3.DeleteObjectAsync(new DeleteObjectRequest
-                {
-                    BucketName = target.Bucket,
-                    Key = target.Key,
-                    VersionId = target.VersionId
-                }, cancellationToken);
-                if (response.VersionId is not null && response.VersionId != target.VersionId)
-                    throw new RecoveryWorkerException("purge_delete_version_mismatch");
-            }
-            if (await ExactVersionExistsAsync(s3, target, cancellationToken))
-                throw new RecoveryWorkerException("purge_exact_version_still_present");
+            await journal.DeleteAsync(target, approval, cancellationToken);
             deletedCount = checked(deletedCount + 1);
             deletedBytes = checked(deletedBytes + target.ByteLength);
         }
@@ -806,29 +803,6 @@ internal static class RecoveryPurgeRunner
         }
         return output.ToString();
     }
-
-    private static async Task<bool> ExactVersionExistsAsync(IAmazonS3 s3,
-        RecoveryPurgeTargetVersionV1 target, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var metadata = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
-            {
-                BucketName = target.Bucket, Key = target.Key, VersionId = target.VersionId
-            }, cancellationToken);
-            if (metadata.VersionId != target.VersionId || metadata.ContentLength != target.ByteLength)
-                throw new RecoveryWorkerException("purge_exact_version_identity_mismatch");
-            return true;
-        }
-        catch (AmazonS3Exception exception) when (IsExactVersionAbsent(exception))
-        {
-            return false;
-        }
-    }
-
-    private static bool IsExactVersionAbsent(AmazonS3Exception exception) =>
-        exception.StatusCode == System.Net.HttpStatusCode.NotFound &&
-        exception.ErrorCode is "NoSuchVersion" or "NotFound";
 
     private static bool SameTargetPlan(IReadOnlyList<RecoveryPurgeTargetVersionV1> left,
         IReadOnlyList<RecoveryPurgeTargetVersionV1> right)

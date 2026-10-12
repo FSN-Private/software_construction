@@ -305,6 +305,32 @@ export class RecoveryStack extends Stack {
       conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['OWNER#*', 'POINT#*'] } },
     }));
     purgeExecutorRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      sid: 'DecryptOnlyPurgeTablesThroughDynamoDb',
+      actions: ['kms:Decrypt'], resources: [encryptionKey.keyArn],
+      conditions: { StringEquals: {
+        'kms:ViaService': 'dynamodb.ap-southeast-2.amazonaws.com',
+        'kms:CallerAccount': props.recoveryAccountId,
+        'kms:EncryptionContext:aws:dynamodb:tableName': [controlTable.tableName, intentTable.tableName, fenceTable.tableName],
+        'kms:EncryptionContext:aws:dynamodb:subscriberId': props.recoveryAccountId,
+      } },
+    }));
+    purgeExecutorRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:GetObjectVersion', 's3:DeleteObjectVersion'],
+      resources: [liveBucket.arnForObjects('sha256/*')],
+    }));
+    purgeExecutorRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      actions: ['s3:ListBucketVersions'], resources: [liveBucket.bucketArn],
+      conditions: { StringLike: { 's3:prefix': ['sha256/*'] } },
+    }));
+    purgeExecutorRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
+      sid: 'DecryptOnlyIsolatedPayloadThroughS3',
+      actions: ['kms:Decrypt'], resources: [encryptionKey.keyArn],
+      conditions: { StringEquals: {
+        'kms:ViaService': 's3.ap-southeast-2.amazonaws.com',
+        'kms:CallerAccount': props.recoveryAccountId,
+      }, StringLike: { 'kms:EncryptionContext:aws:s3:arn': [liveBucket.arnForObjects('sha256/*')] } },
+    }));
+    purgeExecutorRole.addToPrincipalPolicy(new aws_iam.PolicyStatement({
       actions: ['dynamodb:Query'],
       resources: [controlTable.tableArn],
       conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['OWNER#*'] } },

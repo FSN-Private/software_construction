@@ -1,6 +1,6 @@
 # T034/T035: Recovery purge completion and independent hold release
 
-**Status**: Proposed; local implementation authorization requested for the concrete additions below
+**Status**: Specifically approved by the owner for local implementation/tests on 2026-10-12; implementation in progress
 **Date**: 2026-10-12
 
 The approved data model permits media-only purge while retaining media-free PostgreSQL snapshots, graph manifests, hashes, paths, metadata and audit. T034 instead assumes every affected snapshot needs replacement. The current executor therefore rejects every normally generated plan before deletion. This proposal reconciles that task with the approved policy without removing the current preservation guard until the replacement checks pass. It does not authorize metadata erasure.
@@ -28,6 +28,10 @@ Bind each observed hold to its ID, kind, owner/library/logical scope, creation U
 The independent owner key signs an exact release approval with hold definition digest, owner/library/scope, approval ID, issue/expiry UTC and separate MFA identity. The recovery verifier accepts it against authenticated checkpoint history and writes a private signed `POINT#<id>/HOLD_RELEASE#<definition-digest>` proof using its existing VerificationTable attributes/actions/signing key. The proof binds approval digest, hold identity/definition, owner/library, exact checkpoint, original recovery-observed UTC and worker digest. Replays preserve the first observed UTC; no backdated primary/owner timestamp shortens the 90-day obligation. An active or changed hold in later trusted history still blocks deletion. No hold release advances health or authorizes purge/promotion by itself. The proof is never published to the primary queue.
 
 ## Additional local IAM definition
+
+Evidence custody uses an existing-authority private-file handoff. The existing recovery verifier principal, which already has the pinned recovery database secret and native-validation/signing authority, produces a bounded canonical signed snapshot-preservation artifact only after the checks above. A distinct `recovery_snapshot_media_free` message type binds point/capture/owner/library, exact dump version/hash/length, copy checkpoint and manifest digests, pinned migration/schema inventory digest, graph/class/audit validation digest, original verification UTC and worker/release digest. This artifact is written to an explicitly requested private local output file, not a new cloud record namespace or the primary queue. Repeating verification does not change the identity of the retained dump. The purge executor receives the artifact as an explicit bounded input, independently verifies the recovery signature and complete planned snapshot bindings, and rehashes the exact retained dump before trusting it. It receives no database secret.
+
+The verifier also exports the canonical signed HOLD_RELEASE envelopes from its existing strongly read VerificationTable records to an explicit bounded private file set. The purge executor receives these files through the operator handoff and authenticates their signatures, checkpoint/history/hold-definition bindings and original UTC. It does not query VerificationTable. Missing or omitted release evidence leaves the hold active; an incomplete handoff cannot weaken protection. No file-supplied timestamp, unsigned index or caller boolean establishes release or snapshot preservation. The additional IAM proposal therefore needs neither VerificationTable reads nor secret retrieval for the purge role.
 
 The unattached proposal `packages/infrastructure/policy-proposals/recovery-purge-completion-support.v1.json` contains only:
 

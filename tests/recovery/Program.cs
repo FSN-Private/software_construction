@@ -30,6 +30,7 @@ try
     RecoveryObjectClosureChecks.Run();
     RecoveryMaterializedClosureChecks.Run();
     await RecoveryRetentionHistoryChecks.RunAsync();
+    await RecoveryPurgeDeletionJournalChecks.RunAsync();
     await RecoveryMaterializerChecks.RunAsync();
     await RecoveryApiTaskChecks.RunAsync();
     RecoveryCandidateIdentityChecks.Run();
@@ -164,6 +165,25 @@ static void OwnerAccessEvidenceChecks()
     Check(RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddMinutes(1)).Payload == payload,
         "Historical access evidence is authenticated at the original signed checkpoint, without extending expiry.");
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust, expected, now.AddSeconds(-1)));
+    var historicalTranscript = transcript with
+    {
+        OwnerLoginAtUtc = transcript.OwnerLoginAtUtc.AddMonths(-4),
+        OwnerRequestAtUtc = transcript.OwnerRequestAtUtc.AddMonths(-4),
+        ForeignRequestAtUtc = transcript.ForeignRequestAtUtc.AddMonths(-4)
+    };
+    var historicalPayload = payload with
+    {
+        VerifiedAtUtc = now.AddMonths(-4), ExpiresAtUtc = now.AddMonths(-1), Transcript = historicalTranscript,
+        TranscriptSha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(historicalTranscript))
+    };
+    var historicalBytes = RecoveryOwnerAccessCodec.SerializePayload(historicalPayload);
+    var historicalEnvelope = RecoveryOwnerAccessCodec.CreateEnvelope(historicalPayload, new(ownerKeyId, ownerFingerprint,
+        ownerKey.SignHash(SHA256.HashData(historicalBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)));
+    RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.VerifiedAtUtc.AddMinutes(1));
+    RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(historicalEnvelope, trust, expected, DateTimeOffset.UtcNow));
+    RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.ExpiresAtUtc));
+    RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.VerifiedAtUtc.AddSeconds(-1)));
+    RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, DateTimeOffset.UtcNow.AddMinutes(1)));
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed, trust,
         expected with { RecoveryTemplateDigest = new string('f', 64) }, now));
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(parsed with { SigningKeyId = "untrusted" }, trust, expected, now));
