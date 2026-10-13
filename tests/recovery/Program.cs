@@ -31,6 +31,7 @@ try
     RecoveryMaterializedClosureChecks.Run();
     await RecoveryRetentionHistoryChecks.RunAsync();
     await RecoveryHoldReleaseChecks.RunAsync();
+    RecoverySnapshotPreservationChecks.Run();
     await RecoveryPurgeDeletionJournalChecks.RunAsync();
     await RecoveryMaterializerChecks.RunAsync();
     await RecoveryApiTaskChecks.RunAsync();

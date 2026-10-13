@@ -301,7 +301,7 @@ internal static class RecoveryDatabaseValidator
         return new RecoveryAuditHeadV1(finalSequence, previousHash);
     }
 
-    private static async Task ValidateCanonicalCommitsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+    internal static async Task ValidateCanonicalCommitsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         string ownerId, string libraryId, CancellationToken cancellationToken)
     {
         var commits = new Dictionary<string, StoredCommit>(StringComparer.Ordinal);

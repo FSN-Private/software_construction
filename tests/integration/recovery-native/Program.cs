@@ -256,15 +256,66 @@ Task ValidateRecovered() => RecoveryDrillRunner.ValidateRestoredPointAsync(recov
 await RecoveryDrillRunner.CreateDatabaseAsync(recovery, targetName, ct);
 try
 {
-    await RecoveryTrustedDumpRestore.RestoreAsync(recovery,targetName,dump,"/migrations",migrationDigest,"pg_dump","pg_restore",ct);
+    var trustedInventorySha256 = await RecoveryTrustedDumpRestore.RestoreAsync(recovery,targetName,dump,"/migrations",migrationDigest,"pg_dump","pg_restore",ct);
     var targetString = new NpgsqlConnectionStringBuilder(connectionString) { Database = targetName }.ConnectionString;
     await using var target = new NpgsqlConnection(targetString);
     await target.OpenAsync(ct);
+    await using (var classification = await target.BeginTransactionAsync(ct))
+    {
+        Check(await RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification, "/migrations",
+            trustedInventorySha256, ct) == trustedInventorySha256, "Pinned native snapshot inventory was not preserved.");
+        const string changedMigrationDirectory = "/tmp/unclassified-media-migrations";
+        Directory.CreateDirectory(changedMigrationDirectory);
+        await File.WriteAllTextAsync(Path.Combine(changedMigrationDirectory, "001_changed.sql"),
+            "CREATE TABLE embedded_media(payload bytea);", ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification,
+            changedMigrationDirectory, trustedInventorySha256, ct), "snapshot_media_classification_required");
+        await using var largeObject = new NpgsqlCommand("SELECT lo_create(0)", target, classification);
+        await largeObject.ExecuteScalarAsync(ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification, "/migrations",
+            trustedInventorySha256, ct), "snapshot_large_objects_not_classified");
+        await classification.RollbackAsync(ct);
+    }
+    await using (var classification = await target.BeginTransactionAsync(ct))
+    {
+        await using var added = new NpgsqlCommand("ALTER TABLE assets ADD COLUMN unclassified_media bytea", target, classification);
+        await added.ExecuteNonQueryAsync(ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification, "/migrations",
+            trustedInventorySha256, ct), "snapshot_schema_inventory_changed");
+        await classification.RollbackAsync(ct);
+    }
+    await using (var classification = await target.BeginTransactionAsync(ct))
+    {
+        // The pinned schema itself permits arbitrary binary evidence. Such bytes
+        // cannot receive media-free authority just because coverage includes them.
+        await using var injected = new NpgsqlCommand("""
+            INSERT INTO recovery_points(point_id,capture_id,owner_id,library_id,source_region,captured_at_utc,
+                snapshot_id,snapshot_lsn,snapshot_cutoff_utc,change_sequence,migration_digest,manifest_schema_version,
+                manifest_sha256,manifest_bytes,manifest,state)
+            VALUES(gen_random_uuid(),gen_random_uuid(),'native-owner','native-library','ap-southeast-1',now(),
+                'fixture','0/0',now(),0,repeat('a',64),1,repeat('b',64),decode('ffd8ffe000104a464946','hex'),'{}','capturing')
+            """, target, classification);
+        await injected.ExecuteNonQueryAsync(ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification, "/migrations",
+            trustedInventorySha256, ct), "snapshot_binary_evidence_not_classified");
+        await classification.RollbackAsync(ct);
+    }
     Check((string?)await Scalar(target, "SELECT display_path FROM asset_paths WHERE owner_id='native-owner'", ct) == "before.dng",
         "Native dump included a mutation committed after its exported snapshot.");
     Check(Convert.ToInt64(await Scalar(target, "SELECT last_sequence FROM recovery_change_watermarks WHERE owner_id='native-owner'", ct)) == 1,
         "Dump and inventory watermarks differ.");
     await ValidateRecovered();
+    await using (var classification = await target.BeginTransactionAsync(ct))
+    {
+        await using var triggers = new NpgsqlCommand("ALTER TABLE vc_commits DISABLE TRIGGER ALL", target, classification);
+        await triggers.ExecuteNonQueryAsync(ct);
+        await using var corruptForeign = new NpgsqlCommand("UPDATE vc_commits SET manifest_bytes=decode('ffd8ffe000104a464946','hex') WHERE id=$1", target, classification);
+        corruptForeign.Parameters.AddWithValue(foreign);
+        await corruptForeign.ExecuteNonQueryAsync(ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(target, classification, "/migrations",
+            trustedInventorySha256, ct), "restored_version_graph_invalid");
+        await classification.RollbackAsync(ct);
+    }
 
     var originalEventSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_events WHERE sequence=1", ct))!;
     var originalCheckpointSignature = (byte[])(await Scalar(target, "SELECT signature FROM recovery_audit_checkpoints WHERE sequence=2", ct))!;
@@ -370,6 +421,55 @@ try
 finally
 {
     await RecoveryDrillRunner.DropDatabaseAsync(recovery, targetName, ct);
+}
+
+// Payload present before capture has honest coverage and a matching exact dump.
+// Those checks alone cannot authorize a media-free preservation proof.
+var payloadPointId = Guid.NewGuid();
+await using (var injected = IngestDb.Command(source, """
+    INSERT INTO recovery_points(point_id,capture_id,owner_id,library_id,source_region,captured_at_utc,
+        snapshot_id,snapshot_lsn,snapshot_cutoff_utc,change_sequence,migration_digest,manifest_schema_version,
+        manifest_sha256,manifest_bytes,manifest,state)
+    VALUES($1,$2,$3,$4,'ap-southeast-1',now(),'fixture','0/0',now(),0,
+        repeat('a',64),1,repeat('b',64),decode('ffd8ffe000104a464946','hex'),'{}','capturing')
+    """, payloadPointId, Guid.NewGuid(), owner, library))
+    await injected.ExecuteNonQueryAsync(ct);
+const string payloadTarget = "recovery_verify_payload";
+try
+{
+    await using var payloadSnapshot = await source.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
+    var payloadExport = await CaptureRunner.ExportSnapshotAsync(source, payloadSnapshot, ct);
+    var payloadWatermark = await CaptureRunner.ReadAndVerifyWatermarkAsync(source, payloadSnapshot,
+        owner, library, payloadExport.CutoffUtc, ct);
+    var payloadCounts = await CaptureRunner.ReadClassCountsAsync(source, payloadSnapshot, owner, library, objects, ct);
+    var payloadManifest = manifest with { RecoveryPointId = Guid.NewGuid(), CaptureId = Guid.NewGuid(),
+        CapturedAtUtc = DateTimeOffset.UtcNow, SnapshotCutoffUtc = payloadExport.CutoffUtc,
+        SnapshotId = payloadExport.SnapshotId, SnapshotLsn = payloadExport.Lsn, ChangeWatermark = payloadWatermark,
+        Coverage = payloadCounts.Select(pair => new RecoveryClassCoverage(pair.Key, pair.Value.ItemCount, pair.Value.ByteLength)).ToArray() };
+    const string payloadDump = "/tmp/payload-recovery.dump";
+    await CaptureRunner.CreateDatabaseDumpAsync(configuration, credentials, payloadExport.SnapshotId, payloadDump, ct);
+    await payloadSnapshot.CommitAsync(ct);
+    await RecoveryDrillRunner.CreateDatabaseAsync(recovery, payloadTarget, ct);
+    try
+    {
+        var inventory = await RecoveryTrustedDumpRestore.RestoreAsync(recovery, payloadTarget, payloadDump,
+            "/migrations", migrationDigest, "pg_dump", "pg_restore", ct);
+        await RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, payloadTarget, payloadManifest,
+            auditTrust, genesis, migrationDigest, "/migrations", recoveryAccountId, ct);
+        await using var payloadClone = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(connectionString)
+            { Database = payloadTarget }.ConnectionString);
+        await payloadClone.OpenAsync(ct);
+        await using var classification = await payloadClone.BeginTransactionAsync(ct);
+        await RejectCode(() => RecoverySnapshotPreservation.RequireMediaFreeAsync(payloadClone, classification,
+            "/migrations", inventory, ct), "snapshot_binary_evidence_not_classified");
+        await classification.RollbackAsync(ct);
+    }
+    finally { await RecoveryDrillRunner.DropDatabaseAsync(recovery, payloadTarget, ct); }
+}
+finally
+{
+    await using var cleanup = IngestDb.Command(source, "DELETE FROM recovery_points WHERE point_id=$1", payloadPointId);
+    await cleanup.ExecuteNonQueryAsync(ct);
 }
 
 // Captured schema is producer-controlled. A trigger that would execute during
