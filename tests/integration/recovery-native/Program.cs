@@ -45,6 +45,7 @@ const string library = "native-library";
 var asset = Guid.NewGuid();
 var sha = new string('1', 64);
 var foreignAsset = Guid.NewGuid();
+var nativeHoldId = Guid.NewGuid();
 var commitAt = DateTimeOffset.UtcNow;
 commitAt = commitAt.AddTicks(-(commitAt.Ticks % 10));
 var parentManifest = new VersionControlManifest(library, [], owner, commitAt, commitAt, "parent",
@@ -156,6 +157,14 @@ await using (var seed = await source.BeginTransactionAsync(ct))
     await checkpoint.ExecuteNonQueryAsync(ct);
     await IngestDb.RecordRecoveryChangeAsync(source, seed, owner, library, "native-seed", "fixture_seed",
         "asset", asset.ToString(), [sha, generated, lineageBase, lineageTarget, lineageSource], DateTimeOffset.UtcNow, ct);
+    await using (var nativeHold = IngestDb.Command(source, """
+        INSERT INTO recovery_holds(hold_id,owner_id,library_id,asset_id,reason_code,source_reference)
+        VALUES($1,$2,$3,$4,'native_fixture','private-native-operation')
+        """, nativeHoldId, owner, library, asset))
+    {
+        nativeHold.Transaction = seed;
+        await nativeHold.ExecuteNonQueryAsync(ct);
+    }
     await seed.CommitAsync(ct);
 }
 
@@ -222,6 +231,17 @@ await CaptureRunner.CreateDatabaseDumpAsync(configuration, credentials, exported
 await RejectCode(() => CaptureRunner.CreateDatabaseDumpAsync(configuration,
     credentials with { RootCertificatePath = "/fixtures/untrusted-ca.pem" }, exported.SnapshotId, "/tmp/invalid.dump", ct), "postgres_tool_failed");
 await snapshot.CommitAsync(ct);
+const string nativeHoldRows = "/tmp/native-recovery-holds.sql";
+await RecoveryPurgeRunner.RunDumpExtractAsync("pg_restore", "recovery_holds", dump, nativeHoldRows, ct);
+var capturedNativeHoldRow = RecoveryPurgeRunner.ReadCopyRows(nativeHoldRows).Single(row =>
+    row.GetValueOrDefault("hold_id") == nativeHoldId.ToString("D"));
+var capturedNativeHold = RecoveryPurgeRunner.ReadHoldObservation(capturedNativeHoldRow, "recovery", exported.CutoffUtc);
+Check(capturedNativeHold.HoldId == nativeHoldId && capturedNativeHold.ActiveAtSnapshot,
+    "Actual PostgreSQL hold schema/COPY extraction lost the independent hold identity.");
+var primaryReleasedNativeHold = new Dictionary<string, string?>(capturedNativeHoldRow)
+    { ["released_at_utc"] = exported.CutoffUtc.ToString("O") };
+Check(RecoveryPurgeRunner.ReadHoldObservation(primaryReleasedNativeHold, "recovery", exported.CutoffUtc) == capturedNativeHold,
+    "Primary release timestamp changed independently captured protection.");
 Check(Convert.ToInt64(await Scalar(source, "SELECT last_sequence FROM recovery_change_watermarks WHERE owner_id='native-owner'", ct)) == 2,
     "Concurrent source mutation did not commit.");
 

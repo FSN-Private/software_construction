@@ -5,16 +5,16 @@ if (args.Length > 0 && args[0] == "verify-qualification")
 if (args.Length > 0 && args[0] == "owner-access")
     return OfflineOwnerAccessAttestation.Run(args[1..]);
 
-if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "restore" or "bootstrap-index" or "purge" or "health" or "list-points"))
+if (args.Length == 0 || args[0] is not ("capture" or "copy" or "verify" or "drill" or "restore" or "bootstrap-index" or "purge" or "health" or "list-points" or "hold-release"))
 {
-    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index|health|list-points> | recovery-worker restore <proposal> | recovery-worker purge <proposal> <plan|execute> <output> [approval <receipt>] | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
+    Console.Error.WriteLine("usage: recovery-worker <capture|copy|verify|drill|bootstrap-index|health|list-points> | recovery-worker hold-release <approval> <private-proof-output> | recovery-worker restore <proposal> | recovery-worker purge <proposal> <plan|execute> <output> [approval <receipt>] | verify-qualification <envelope> <trust> <binding> <checkpoint> <offline-anchor>");
     return 2;
 }
 
 var mode = args[0];
-if (mode is not ("purge" or "restore") && args.Length != 1 || mode == "restore" && args.Length != 2 || mode == "purge" && args.Length is not (4 or 6))
+if (mode is not ("purge" or "restore" or "hold-release") && args.Length != 1 || mode == "restore" && args.Length != 2 || mode == "purge" && args.Length is not (4 or 6) || mode == "hold-release" && args.Length != 3)
 {
-    Console.Error.WriteLine("usage: recovery-worker restore <proposal> | recovery-worker purge <proposal> plan <plan-output> | recovery-worker purge <proposal> execute <plan> <approval> <receipt-output>");
+    Console.Error.WriteLine("usage: recovery-worker hold-release <approval> <private-proof-output> | recovery-worker restore <proposal> | recovery-worker purge <proposal> plan <plan-output> | recovery-worker purge <proposal> execute <plan> <approval> <receipt-output>");
     return 2;
 }
 try
@@ -22,6 +22,9 @@ try
     var configuration = RecoveryWorkerConfiguration.Load(mode);
     switch (mode)
     {
+        case "hold-release":
+            await RecoveryHoldReleaseRunner.RunAsync(configuration, args[1], args[2], CancellationToken.None);
+            break;
         case "capture":
             await CaptureRunner.RunAsync(configuration, CancellationToken.None);
             break;

@@ -374,28 +374,41 @@ internal static class RecoveryPurgeRunner
     private static Dictionary<string, AttributeValue> BuildFence(string scopeId,
         RecoveryPurgeProposalV1 proposal, RecoveryPurgePlanV1 plan,
         VerifiedRecoveryPurgeApproval approval, DateTimeOffset nowUtc) => new()
-    {
-        ["scopeId"] = S(scopeId), ["recordId"] = S("FENCE"), ["recordType"] = S("active_purge_fence"),
-        ["generation"] = N(proposal.Generation), ["purgeJobId"] = S(proposal.OperationId.ToString("D")),
-        ["eventId"] = S(proposal.EventId.ToString("D")), ["ownerId"] = S(proposal.OwnerId),
-        ["libraryId"] = S(proposal.LibraryId), ["assetId"] = S(proposal.AssetId.ToString("D")),
-        ["editId"] = S(proposal.EditId?.ToString("D") ?? ""), ["category"] = S(proposal.Category),
-        ["contentSha256"] = S(proposal.ContentSha256), ["proposalDigest"] = S(proposal.PlanDigest),
-        ["planDigest"] = S(plan.Digest()), ["approvalSha256"] = S(approval.PayloadSha256),
-        ["installedAtUtc"] = S(nowUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture))
-    };
+        {
+            ["scopeId"] = S(scopeId),
+            ["recordId"] = S("FENCE"),
+            ["recordType"] = S("active_purge_fence"),
+            ["generation"] = N(proposal.Generation),
+            ["purgeJobId"] = S(proposal.OperationId.ToString("D")),
+            ["eventId"] = S(proposal.EventId.ToString("D")),
+            ["ownerId"] = S(proposal.OwnerId),
+            ["libraryId"] = S(proposal.LibraryId),
+            ["assetId"] = S(proposal.AssetId.ToString("D")),
+            ["editId"] = S(proposal.EditId?.ToString("D") ?? ""),
+            ["category"] = S(proposal.Category),
+            ["contentSha256"] = S(proposal.ContentSha256),
+            ["proposalDigest"] = S(proposal.PlanDigest),
+            ["planDigest"] = S(plan.Digest()),
+            ["approvalSha256"] = S(approval.PayloadSha256),
+            ["installedAtUtc"] = S(nowUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture))
+        };
 
     private static Dictionary<string, AttributeValue> BuildFenceHistory(string scopeId,
         RecoveryPurgeProposalV1 proposal, RecoveryPurgePlanV1 plan,
         VerifiedRecoveryPurgeApproval approval, DateTimeOffset nowUtc) => new()
-    {
-        ["scopeId"] = S(scopeId), ["recordId"] = S(HistoryId(proposal.Generation)),
-        ["recordType"] = S("purge_fence_generation"), ["generation"] = N(proposal.Generation),
-        ["purgeJobId"] = S(proposal.OperationId.ToString("D")), ["eventId"] = S(proposal.EventId.ToString("D")),
-        ["ownerId"] = S(proposal.OwnerId), ["libraryId"] = S(proposal.LibraryId),
-        ["planDigest"] = S(plan.Digest()), ["approvalSha256"] = S(approval.PayloadSha256),
-        ["installedAtUtc"] = S(nowUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture))
-    };
+        {
+            ["scopeId"] = S(scopeId),
+            ["recordId"] = S(HistoryId(proposal.Generation)),
+            ["recordType"] = S("purge_fence_generation"),
+            ["generation"] = N(proposal.Generation),
+            ["purgeJobId"] = S(proposal.OperationId.ToString("D")),
+            ["eventId"] = S(proposal.EventId.ToString("D")),
+            ["ownerId"] = S(proposal.OwnerId),
+            ["libraryId"] = S(proposal.LibraryId),
+            ["planDigest"] = S(plan.Digest()),
+            ["approvalSha256"] = S(approval.PayloadSha256),
+            ["installedAtUtc"] = S(nowUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture))
+        };
 
     private static async Task<PointInventory> ReadStrongPointInventoryAsync(
         IAmazonDynamoDB dynamo, string table, string ownerId, string libraryId,
@@ -549,9 +562,37 @@ internal static class RecoveryPurgeRunner
             }
             finally { Directory.Delete(directory, recursive: true); }
         }
+        var releases = await ReadHoldReleaseFilesAsync(configuration, trust, observations, nowUtc, cancellationToken);
         return RetentionService.VerifyHistory(proposal.OwnerId, proposal.LibraryId, proposal.AssetId,
             proposal.EditId, proposal.Category, proposal.ContentSha256, trust.KeyId,
-            points.Select(point => point.Pointer.PointId).ToArray(), observations, nowUtc);
+            points.Select(point => point.Pointer.PointId).ToArray(), observations, nowUtc, releases);
+    }
+
+    internal static async Task<IReadOnlyList<VerifiedRecoveryHoldRelease>> ReadHoldReleaseFilesAsync(
+        RecoveryWorkerConfiguration configuration, RecoverySigningTrust recoveryTrust,
+        IReadOnlyList<RecoveryRetentionPointObservationV1> observations, DateTimeOffset nowUtc, CancellationToken ct)
+    {
+        if (configuration.Optional("HoldReleaseEvidenceFiles") is not { } text) return [];
+        if (text.Length > 64 * 1024) throw new RecoveryWorkerException("hold_release_file_set_invalid");
+        string[] paths;
+        try { paths = JsonSerializer.Deserialize<string[]>(text, JsonOptions) ?? throw new JsonException(); }
+        catch (JsonException error) { throw new RecoveryWorkerException("hold_release_file_set_invalid", error); }
+        if (paths.Length is < 1 or > 256 || paths.Any(path => string.IsNullOrWhiteSpace(path) || path.Length > 4096) ||
+            paths.Distinct(StringComparer.Ordinal).Count() != paths.Length)
+            throw new RecoveryWorkerException("hold_release_file_set_invalid");
+        var ownerTrust = ReadTrust(configuration, "OwnerApprovalTrust");
+        var definitions = observations.SelectMany(item => item.Holds).Select(item => item.ScopeSha256).ToHashSet(StringComparer.Ordinal);
+        var releases = new List<VerifiedRecoveryHoldRelease>();
+        foreach (var path in paths)
+        {
+            var envelope = RecoveryHoldReleaseCodec.ParseEnvelope(await ReadBoundedArtifactAsync(path, 64 * 1024, ct));
+            var release = RecoveryHoldReleaseCodec.VerifyProof(envelope, recoveryTrust, ownerTrust,
+                configuration.WorkerBuildDigest, nowUtc);
+            if (release.Payload.OwnerId != configuration.Required("OwnerId") || release.Payload.LibraryId != configuration.Required("LibraryId"))
+                throw new RecoveryWorkerException("hold_release_foreign_scope");
+            if (definitions.Contains(release.Payload.DefinitionSha256)) releases.Add(release);
+        }
+        return releases;
     }
 
     internal static RecoveryRetentionPointObservationV1 ReadRetentionObservation(
@@ -576,15 +617,7 @@ internal static class RecoveryPurgeRunner
                     Value(hold, "library_id") != proposal.LibraryId ||
                     Value(hold, "asset_id") is { } heldAsset && heldAsset != proposal.AssetId.ToString("D") ||
                     Value(hold, "edit_id") is { } heldEdit && heldEdit != proposal.EditId?.ToString("D"))) continue;
-                var expires = ParseTime(Value(hold, kind == "lifecycle" ? "expires_at" : "expires_at_utc"));
-                var scope = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new
-                {
-                    kind, assetId = Value(hold, "asset_id"), editId = Value(hold, "edit_id"),
-                    ownerId = Value(hold, "owner_id"), libraryId = Value(hold, "library_id"),
-                    sourceReference = Value(hold, "source_reference")
-                }));
-                holds.Add(new(Guid.Parse(Value(hold, "id") ?? throw new RecoveryWorkerException("purge_hold_id_missing")),
-                    kind, scope, expires, expires is null || expires > point.SourceManifest.SnapshotCutoffUtc));
+                holds.Add(ReadHoldObservation(hold, kind, point.SourceManifest.SnapshotCutoffUtc));
             }
         }
         return new(point.Pointer.PointId, point.SourceManifest.SnapshotCutoffUtc, point.Checkpoint.VerifiedAtUtc,
@@ -592,6 +625,25 @@ internal static class RecoveryPurgeRunner
             target is null ? null : Value(target, "state"), ReadVersion(target), ReadVersion(asset),
             target is null ? null : Value(target, proposal.EditId is null ? "original_sha256" : "xmp_sha256")?.Trim(),
             target is null ? null : ParseTime(Value(target, "deleted_until")), holds);
+    }
+
+    internal static RecoveryRetentionHoldObservationV1 ReadHoldObservation(Dictionary<string, string?> row,
+        string kind, DateTimeOffset snapshotCutoffUtc)
+    {
+        if (kind is not ("lifecycle" or "recovery") || snapshotCutoffUtc.Offset != TimeSpan.Zero ||
+            !Guid.TryParse(Value(row, kind == "recovery" ? "hold_id" : "id"), out var id) || id == Guid.Empty)
+            throw new RecoveryWorkerException("purge_hold_id_missing");
+        var expiry = ParseTime(Value(row, kind == "lifecycle" ? "expires_at" : "expires_at_utc"));
+        var created = ParseTime(Value(row, "created_at_utc"));
+        if (kind == "recovery" && created is null || created > snapshotCutoffUtc || expiry < created)
+            throw new RecoveryWorkerException("purge_hold_definition_invalid");
+        // Bind the complete captured definition, including creation, expiry, reason,
+        // point/session scope and future generation columns. Primary release time is
+        // deliberately excluded: it cannot establish independent release authority.
+        var definition = row.Where(pair => pair.Key != "released_at_utc")
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.Value);
+        var digest = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new { kind, definition }));
+        return new(id, kind, digest, expiry, expiry is null || expiry > snapshotCutoffUtc);
     }
 
     private static long ReadVersion(Dictionary<string, string?>? row) => row is null ? 0 :
@@ -644,7 +696,7 @@ internal static class RecoveryPurgeRunner
         }
     }
 
-    private static async Task RunDumpExtractAsync(string pgRestore, string table, string dumpPath,
+    internal static async Task RunDumpExtractAsync(string pgRestore, string table, string dumpPath,
         string outputPath, CancellationToken cancellationToken)
     {
         var start = new System.Diagnostics.ProcessStartInfo(pgRestore)
@@ -654,7 +706,10 @@ internal static class RecoveryPurgeRunner
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        foreach (var argument in new[] { "--data-only", "--table=public." + table, "--file", outputPath, dumpPath })
+        if (table.Length == 0 || table.Any(c => !(char.IsAsciiLetterLower(c) || c == '_')))
+            throw new RecoveryWorkerException("purge_snapshot_table_invalid");
+        // pg_restore -t accepts only a table name; select its schema separately.
+        foreach (var argument in new[] { "--data-only", "--schema=public", "--table=" + table, "--file", outputPath, dumpPath })
             start.ArgumentList.Add(argument);
         using var process = System.Diagnostics.Process.Start(start)
             ?? throw new RecoveryWorkerException("pg_restore_start_failed");
@@ -760,7 +815,7 @@ internal static class RecoveryPurgeRunner
         catch (FormatException exception) { throw new RecoveryWorkerException("purge_snapshot_bytea_invalid", exception); }
     }
 
-    private static IReadOnlyList<Dictionary<string, string?>> ReadCopyRows(string path)
+    internal static IReadOnlyList<Dictionary<string, string?>> ReadCopyRows(string path)
     {
         var lines = File.ReadLines(path);
         string[]? columns = null;
@@ -860,7 +915,7 @@ internal static class RecoveryPurgeRunner
             throw new RecoveryWorkerException("recovery_task_account_mismatch");
     }
 
-    private static RecoverySigningTrust ReadTrust(RecoveryWorkerConfiguration configuration, string prefix)
+    internal static RecoverySigningTrust ReadTrust(RecoveryWorkerConfiguration configuration, string prefix)
     {
         var trust = new RecoverySigningTrust(configuration.Required(prefix + "__KeyId"),
             configuration.Required(prefix + "__PublicKeySpkiBase64"),
@@ -911,7 +966,9 @@ internal static class RecoveryPurgeRunner
     {
         var response = await dynamo.GetItemAsync(new GetItemRequest
         {
-            TableName = table, Key = key, ConsistentRead = true
+            TableName = table,
+            Key = key,
+            ConsistentRead = true
         }, cancellationToken);
         return response.Item is { Count: > 0 } item ? item : null;
     }
@@ -927,7 +984,7 @@ internal static class RecoveryPurgeRunner
         return bytes;
     }
 
-    private static async Task WritePrivateArtifactAsync(string path, byte[] bytes,
+    internal static async Task WritePrivateArtifactAsync(string path, byte[] bytes,
         CancellationToken cancellationToken)
     {
         var fullPath = Path.GetFullPath(path);
