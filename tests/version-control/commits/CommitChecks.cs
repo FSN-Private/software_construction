@@ -87,6 +87,21 @@ internal static class CommitChecks
             {
                 var assets = new AssetService(db, new S3ObjectStore(s3, "not-used", "not-used"));
                 await RejectIngestCodeAsync(() => assets.ChangeAsync("owner-1", Id(1), false, "delete", 1, null, "held-delete", "op_held_delete", default), "retention_hold");
+                var nullableAssetId = Guid.NewGuid();
+                var nullableParentId = Guid.NewGuid();
+                var nullableEditId = Guid.NewGuid();
+                await using var connection = await db.OpenConnectionAsync();
+                await ExecuteAsync(connection, """
+                    INSERT INTO assets(id,owner_id,state) VALUES($1,'nullable-owner','active'),($2,'nullable-owner','active');
+                    INSERT INTO edit_identities(id,asset_id,duplicate_ordinal,association_provenance) VALUES($3,$2,0,'nullable-fixture')
+                    """, default, nullableAssetId, nullableParentId, nullableEditId);
+                var nullableAsset = await assets.ChangeAsync("nullable-owner", nullableAssetId, false, "delete", 1, null, "nullable-asset-delete", "op_nullable_asset", default);
+                var replay = await assets.ChangeAsync("nullable-owner", nullableAssetId, false, "delete", 1, null, "nullable-asset-delete", "op_nullable_asset_replay", default);
+                var nullableEdit = await assets.ChangeAsync("nullable-owner", nullableEditId, true, "delete", 1, null, "nullable-edit-delete", "op_nullable_edit", default);
+                Check(nullableAsset == replay && nullableAsset.State == "recoverable-deleted" && nullableEdit.State == "recoverable-deleted",
+                    "Nullable asset/edit content must preserve lifecycle mutation and immutable replay.");
+                Check((long)(await ScalarAsync(connection, "SELECT count(*) FROM recovery_change_ledger WHERE owner_id='nullable-owner' AND object_references='[]'::jsonb", default))! == 2,
+                    "Metadata-only lifecycle changes must record exactly one empty-reference ledger event per mutation.");
             }
 
             var drifted = await working.PutAsync("owner-1", "library-1", "drift-client", new(Id(20), Id(1020), "main", "modified", Digest(20), Digest(220), null, null, 0), "op_drift", default);

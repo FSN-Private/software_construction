@@ -119,10 +119,9 @@ public sealed class AssetService(NpgsqlDataSource db, S3ObjectStore storage, Tim
             """, ct, asset, edit ? id : null) is not null)
             throw new IngestException("recovery_purge_frozen", 409);
         if (current != version || edit && parentState is not ("active" or "restored")) throw new IngestException("lifecycle_conflict");
-        var contentSha = (string?)await ScalarAsync(connection,
+        var contentSha = await ScalarAsync(connection,
             edit ? "SELECT e.xmp_sha256 FROM edit_identities e JOIN assets a ON a.id=e.asset_id WHERE e.id=$1 AND a.owner_id=$2"
-                : "SELECT original_sha256 FROM assets WHERE id=$1 AND owner_id=$2", ct, id, owner)
-            ?? throw new IngestException("not_found", 404);
+                : "SELECT original_sha256 FROM assets WHERE id=$1 AND owner_id=$2", ct, id, owner) as string;
         var table = edit ? "edit_identities" : "assets";
         string next;
         if (action == "delete")
@@ -151,7 +150,7 @@ public sealed class AssetService(NpgsqlDataSource db, S3ObjectStore storage, Tim
         await ExecuteAsync(connection, $"UPDATE {table} SET state=$2,lifecycle_version=lifecycle_version+1,deleted_until=$3 WHERE id=$1", ct, id, next, deadline);
         await AuditAsync(connection, owner, operation, (edit ? "edit." : "asset.") + action, id, next, ct);
         await RecordRecoveryChangeAsync(connection, transaction, owner, libraryId, operation,
-            (edit ? "edit." : "asset.") + action, edit ? "edit" : "asset", id.ToString("D"), [contentSha], Now, ct);
+            (edit ? "edit." : "asset.") + action, edit ? "edit" : "asset", id.ToString("D"), contentSha is null ? [] : [contentSha], Now, ct);
         var result = new MutationResult(id, next, current + 1, deadline, path);
         await ExecuteAsync(connection, "INSERT INTO asset_mutations(owner_id,idempotency_key,fingerprint,result) VALUES($1,$2,$3,$4::jsonb)", ct, owner, key, fingerprint, JsonSerializer.Serialize(result));
         await transaction.CommitAsync(ct);
