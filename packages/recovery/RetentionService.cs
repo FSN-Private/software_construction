@@ -119,7 +119,8 @@ public static class RetentionService
         string trustedSigningKeyId,
         IReadOnlyList<Guid> completePointIds,
         IReadOnlyList<RecoveryRetentionPointObservationV1> observations,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        IReadOnlyList<VerifiedRecoveryHoldRelease>? independentReleases = null)
     {
         RecoveryValidation.Text(ownerId, nameof(ownerId), 200);
         RecoveryValidation.Text(libraryId, nameof(libraryId), 200);
@@ -191,6 +192,31 @@ public static class RetentionService
             ApplyHolds(holdTracks, observation);
         }
 
+        var releases = independentReleases ?? [];
+        if (releases.Count > 100_000 || releases.Any(item => item is null) ||
+            releases.Select(item => item.Payload.Kind + ":" + item.Payload.HoldId.ToString("D")).Distinct().Count() != releases.Count)
+            throw new InvalidDataException("retention_hold_release_set_invalid");
+        foreach (var release in releases)
+        {
+            var proof = release.Payload;
+            var anchor = ordered.SingleOrDefault(item => item.RecoveryPointId == proof.PointId);
+            var identity = proof.Kind + ":" + proof.HoldId.ToString("D").ToLowerInvariant();
+            if (proof.OwnerId != ownerId || proof.LibraryId != libraryId || proof.ObservedAtUtc > nowUtc ||
+                anchor is null || anchor.CheckpointEnvelopeSha256 != proof.CheckpointSha256 ||
+                anchor.VerifiedAtUtc > proof.ObservedAtUtc || !anchor.Holds.Any(hold => HoldIdentity(hold) == identity &&
+                    hold.ScopeSha256 == proof.DefinitionSha256) ||
+                !holdTracks.TryGetValue(identity, out var track) || track.ScopeSha256 != proof.DefinitionSha256)
+                throw new InvalidDataException("retention_hold_release_history_mismatch");
+            // A later active observation overrides a release. Until trusted history
+            // advances beyond the original observed release UTC, protection stays active.
+            if (ordered[^1].VerifiedAtUtc < proof.ObservedAtUtc || ordered.Any(item =>
+                    item.VerifiedAtUtc >= proof.ObservedAtUtc && item.Holds.Any(hold =>
+                        HoldIdentity(hold) == identity && hold.ActiveAtSnapshot))) continue;
+            track.WasActive = true;
+            track.IsActive = false;
+            track.ReleasedObservedAtUtc = proof.ObservedAtUtc;
+        }
+
         var latest = ordered[^1];
         var activeHold = holdTracks.Values.Any(item => item.IsActive);
         var holdEligibleAt = holdTracks.Values
@@ -241,8 +267,16 @@ public static class RetentionService
         var historySha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(canonicalHistory));
         var holdSetSha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(
             canonicalObservations.Select(item => new { item.RecoveryPointId, item.VerifiedAtUtc, item.Holds }).ToArray()));
+        if (releases.Count > 0)
+        {
+            var releaseDigests = releases.Select(item => item.PayloadSha256).Order(StringComparer.Ordinal).ToArray();
+            historySha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new
+                { schemaVersion = 2, observedHistorySha256 = historySha256, releaseDigests }));
+            holdSetSha256 = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new
+                { schemaVersion = 2, observedHoldSetSha256 = holdSetSha256, releaseDigests }));
+        }
         var firstObservation = firstNonCurrent ?? latest;
-        return new(1, ownerId, libraryId, assetId, editId, category, contentSha256, completePointIds.Count,
+        return new(releases.Count == 0 ? 1 : 2, ownerId, libraryId, assetId, editId, category, contentSha256, completePointIds.Count,
             pointSetSha256, historySha256, holdSetSha256, trustedSigningKeyId,
             firstObservation.RecoveryPointId, firstObservation.CheckpointPayloadSha256, firstObservation.CheckpointEnvelopeSha256,
             firstObservation.VerifiedAtUtc, latest.RecoveryPointId, latest.CheckpointPayloadSha256,
@@ -338,7 +372,7 @@ public static class RetentionService
         string pointSetSha256)
     {
         ArgumentNullException.ThrowIfNull(history);
-        if (history.SchemaVersion != 1 || history.AssetId == Guid.Empty || history.AssetId != assetId ||
+        if (history.SchemaVersion is not (1 or 2) || history.AssetId == Guid.Empty || history.AssetId != assetId ||
             history.EditId != editId || history.OwnerId != ownerId || history.LibraryId != libraryId ||
             history.Category != category || history.ContentSha256 != contentSha256 ||
             history.CompletePointCount != pointCount || history.CompletePointCount is < 1 or > 1_000_000 ||
@@ -454,8 +488,8 @@ public static class RetentionService
             if (hold.Kind == "recovery" || hold.ExpiresAtUtc is null)
             {
                 // Neither primary release timestamps nor row deletion are authority to clear
-                // indefinite or recovery-owned holds. This protocol has no signed hold-release
-                // receipt yet, so preserve them as active and fail closed.
+                // indefinite or recovery-owned holds. Preserve protection until the
+                // independently signed release and later trusted observations agree.
                 track.RequiresIndependentRelease = true;
                 track.WasActive = true;
                 track.IsActive = true;

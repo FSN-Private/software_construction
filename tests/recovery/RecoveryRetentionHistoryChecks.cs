@@ -29,6 +29,41 @@ internal static class RecoveryRetentionHistoryChecks
         var digest = new string('a', 64);
         var other = new string('b', 64);
         var hold = Guid.NewGuid();
+        var holdRow = new Dictionary<string, string?>
+        {
+            ["hold_id"] = hold.ToString("D"),
+            ["owner_id"] = "owner",
+            ["library_id"] = "library",
+            ["asset_id"] = asset.ToString("D"),
+            ["edit_id"] = null,
+            ["reason_code"] = "restore",
+            ["source_reference"] = "private-operation",
+            ["recovery_point_id"] = Guid.NewGuid().ToString("D"),
+            ["session_id"] = null,
+            ["created_at_utc"] = first.AddDays(-1).ToString("O"),
+            ["expires_at_utc"] = null,
+            ["released_at_utc"] = null
+        };
+        var capturedHold = RecoveryPurgeRunner.ReadHoldObservation(holdRow, "recovery", first);
+        Require(capturedHold.HoldId == hold && capturedHold.ActiveAtSnapshot, "captured_recovery_hold_uses_actual_schema_id");
+        foreach (var column in new[] { "created_at_utc", "expires_at_utc", "reason_code", "source_reference",
+                     "recovery_point_id", "session_id", "owner_id", "library_id", "asset_id", "edit_id", "generation" })
+        {
+            var changed = new Dictionary<string, string?>(holdRow);
+            changed[column] = column.EndsWith("_utc", StringComparison.Ordinal) ? first.ToString("O") : "changed";
+            Require(RecoveryPurgeRunner.ReadHoldObservation(changed, "recovery", first).ScopeSha256 != capturedHold.ScopeSha256,
+                "changed_hold_definition_cannot_inherit_release");
+        }
+        var primaryReleased = new Dictionary<string, string?>(holdRow) { ["released_at_utc"] = first.ToString("O") };
+        Require(RecoveryPurgeRunner.ReadHoldObservation(primaryReleased, "recovery", first) == capturedHold,
+            "primary_release_has_no_independent_authority");
+        var missingCreation = new Dictionary<string, string?>(holdRow) { ["created_at_utc"] = null };
+        try
+        {
+            _ = RecoveryPurgeRunner.ReadHoldObservation(missingCreation, "recovery", first);
+            throw new InvalidOperationException("Recovery hold without captured creation was accepted");
+        }
+        catch (RecoveryWorkerException error) when (error.SafeCode == "purge_hold_definition_invalid") { }
         RecoveryRetentionPointObservationV1 Observe(DateTimeOffset time, string? state = "recoverable-deleted",
             long version = 2, long parentVersion = 0, string? content = null,
             IReadOnlyList<RecoveryRetentionHoldObservationV1>? holds = null) =>
