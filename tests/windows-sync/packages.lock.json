@@ -179,11 +179,18 @@
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.4, )",
           "Npgsql": "[10.0.3, )",
           "Platform.Contracts": "[1.0.0, )",
+          "Platform.Recovery": "[1.0.0, )",
           "Platform.Storage": "[1.0.0, )"
         }
       },
       "platform.contracts": {
         "type": "Project"
+      },
+      "platform.recovery": {
+        "type": "Project",
+        "dependencies": {
+          "Platform.Storage": "[1.0.0, )"
+        }
       },
       "platform.storage": {
         "type": "Project",

@@ -40,8 +40,11 @@ public sealed class RecoveryOperationQueryService(NpgsqlDataSource source, IConf
             """, connection);
         query.Parameters.AddWithValue(owner);
         query.Parameters.AddWithValue(library);
-        query.Parameters.Add(new NpgsqlParameter { NpgsqlDbType=NpgsqlTypes.NpgsqlDbType.Uuid,
-            Value=afterPointId is { } id ? id : DBNull.Value });
+        query.Parameters.Add(new NpgsqlParameter
+        {
+            NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid,
+            Value = afterPointId is { } id ? id : DBNull.Value
+        });
         await using var reader = await query.ExecuteReaderAsync(ct);
         var items = new List<RecoveryPointView>();
         Guid? next = null;
@@ -54,17 +57,17 @@ public sealed class RecoveryOperationQueryService(NpgsqlDataSource source, IConf
             if (reader.IsDBNull(2)) continue;
             try
             {
-                var catalog = RecoveryCatalogCodec.Verify(new(1,"recovery_point",reader.GetString(2),reader.GetString(3),
-                    reader.GetString(4).Trim(),reader.GetString(5).Trim(),Convert.ToBase64String((byte[])reader[6]),
-                    Convert.ToBase64String((byte[])reader[7])),trust).Payload;
+                var catalog = RecoveryCatalogCodec.Verify(new(1, "recovery_point", reader.GetString(2), reader.GetString(3),
+                    reader.GetString(4).Trim(), reader.GetString(5).Trim(), Convert.ToBase64String((byte[])reader[6]),
+                    Convert.ToBase64String((byte[])reader[7])), trust).Payload;
                 if (catalog.RecoveryPointId != next || catalog.OwnerId != owner || catalog.LibraryId != library ||
                     catalog.CapturedAtUtc != reader.GetFieldValue<DateTimeOffset>(1) ||
                     catalog.VerifiedAtUtc > now || catalog.SnapshotCutoffUtc > now) continue;
-                items.Add(new(catalog.RecoveryPointId,catalog.SnapshotCutoffUtc,catalog.VerifiedAtUtc,catalog.ChangeSequence));
+                items.Add(new(catalog.RecoveryPointId, catalog.SnapshotCutoffUtc, catalog.VerifiedAtUtc, catalog.ChangeSequence));
             }
             catch (Exception error) when (error is InvalidDataException or CryptographicException or FormatException or JsonException) { }
         }
-        return new(items,scanned>100 ? next : null);
+        return new(items, scanned > 100 ? next : null);
     }
 
     public async Task<RecoverySessionView?> GetSessionAsync(string owner, Guid sessionId, CancellationToken ct)
@@ -84,7 +87,7 @@ public sealed class RecoveryOperationQueryService(NpgsqlDataSource source, IConf
         var expiry = reader.GetFieldValue<DateTimeOffset>(4);
         if (expiry <= (clock ?? TimeProvider.System).GetUtcNow() && state is not ("promoted" or "aborted" or "failed"))
             state = "expired";
-        return new(reader.GetGuid(0),reader.GetGuid(1),state,reader.GetFieldValue<DateTimeOffset>(3),expiry,
-            reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),reader.IsDBNull(6) ? null : reader.GetString(6).Trim());
+        return new(reader.GetGuid(0), reader.GetGuid(1), state, reader.GetFieldValue<DateTimeOffset>(3), expiry,
+            reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5), reader.IsDBNull(6) ? null : reader.GetString(6).Trim());
     }
 }
