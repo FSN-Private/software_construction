@@ -7,17 +7,18 @@ using Platform.Recovery;
 
 namespace Platform.Recovery.Worker;
 
-internal static class RecoveryHoldReleaseRunner
+internal static class RecoveryPrivateEvidenceRunner
 {
-    internal static async Task RunAsync(RecoveryWorkerConfiguration configuration, string approvalPath,
+    internal static async Task RunAsync(RecoveryWorkerConfiguration configuration, string? approvalPath,
         string outputPath, CancellationToken ct)
     {
-        var approval = RecoveryHoldReleaseCodec.ParseEnvelope(await RecoveryPurgeRunner.ReadBoundedArtifactAsync(
-            approvalPath, 64 * 1024, ct));
-        var ownerTrust = RecoveryPurgeRunner.ReadTrust(configuration, "OwnerApprovalTrust");
-        var requested = RecoveryHoldReleaseCodec.VerifyApprovalSignature(approval, ownerTrust);
-        if (requested.OwnerId != configuration.Required("OwnerId") || requested.LibraryId != configuration.Required("LibraryId") ||
-            requested.Kind != "recovery") throw new RecoveryWorkerException("hold_release_scope_invalid");
+        var approval = approvalPath is null ? null : RecoveryHoldReleaseCodec.ParseEnvelope(
+            await RecoveryPurgeRunner.ReadBoundedArtifactAsync(approvalPath, 64 * 1024, ct));
+        var ownerTrust = approval is null ? null : RecoveryPurgeRunner.ReadTrust(configuration, "OwnerApprovalTrust");
+        var requested = approval is null ? null : RecoveryHoldReleaseCodec.VerifyApprovalSignature(approval, ownerTrust!);
+        if (requested is not null && (requested.OwnerId != configuration.Required("OwnerId") ||
+            requested.LibraryId != configuration.Required("LibraryId") || requested.Kind != "recovery"))
+            throw new RecoveryWorkerException("hold_release_scope_invalid");
         var region = Amazon.RegionEndpoint.GetBySystemName(configuration.RequiredRegion("DestinationRegion"));
         using var sts = new AmazonSecurityTokenServiceClient(region);
         if ((await sts.GetCallerIdentityAsync(new Amazon.SecurityToken.Model.GetCallerIdentityRequest(), ct)).Account !=
@@ -29,7 +30,7 @@ internal static class RecoveryHoldReleaseRunner
         var signer = await AwsKmsEvidenceSigner.CreateAsync(kms, configuration.Required("SigningKeyId"),
             configuration.RequiredHash("SigningPublicKeySha256"), ct);
         var pointId = RecoveryLatestPointDiscovery.SelectedPoint(configuration)
-            ?? throw new RecoveryWorkerException("hold_release_point_required");
+            ?? throw new RecoveryWorkerException("private_evidence_point_required");
         var selected = await RecoveryLatestPointDiscovery.ReadIndexedPointAsync(dynamo, s3,
             configuration.Required("ControlTableName"), configuration.Required("OwnerId"), configuration.Required("LibraryId"),
             pointId, signer.Trust, ct);
@@ -41,7 +42,7 @@ internal static class RecoveryHoldReleaseRunner
             pointId, signer.Trust, ct) ?? throw new RecoveryWorkerException("audit_head_proof_missing");
         var requirement = RecoveryAuditHeadProofStore.ValidateForDrill(auditProof, configuration, point, genesis);
         var directory = Path.Combine(configuration.Optional("ScratchDirectory") ?? Path.GetTempPath(),
-            "recovery-hold-release", Guid.NewGuid().ToString("N"));
+            "recovery-private-evidence", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try
         {
@@ -55,13 +56,27 @@ internal static class RecoveryHoldReleaseRunner
             await RecoveryDrillRunner.CreateDatabaseAsync(database, name, ct);
             try
             {
-                await RecoveryTrustedDumpRestore.RestoreAsync(database, name, dumpPath,
+                var inventorySha256 = await RecoveryTrustedDumpRestore.RestoreAsync(database, name, dumpPath,
                     configuration.Optional("MigrationDirectory") ?? "/app/migrations", configuration.RequiredHash("MigrationDigest"),
                     configuration.Optional("PgDumpPath") ?? "pg_dump", pgRestore, ct);
-                _ = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database, name, point.SourceManifest,
+                var auditHead = await RecoveryDrillRunner.ValidateRestoredPointWithAuditHeadAsync(database, name, point.SourceManifest,
                     signer.Trust, genesis, configuration.RequiredHash("MigrationDigest"),
                     configuration.Optional("MigrationDirectory") ?? "/app/migrations", configuration.RequiredAccountId("DestinationAccountId"),
                     requirement, configuration, ct);
+                if (approval is null)
+                {
+                    await using var clone = new Npgsql.NpgsqlConnection(new Npgsql.NpgsqlConnectionStringBuilder(database.ConnectionString)
+                    { Database = name }.ConnectionString);
+                    await clone.OpenAsync(ct);
+                    await using var transaction = await clone.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+                    await RecoverySnapshotPreservation.RequireMediaFreeAsync(clone, transaction,
+                        configuration.Optional("MigrationDirectory") ?? "/app/migrations", inventorySha256, ct);
+                    await transaction.CommitAsync(ct);
+                    var envelope = await RecoverySnapshotPreservation.SignAsync(configuration, signer, signer.Trust, point,
+                        inventorySha256, auditHead, DateTimeOffset.UtcNow, ct);
+                    await RecoveryPurgeRunner.WritePrivateArtifactAsync(outputPath, RecoveryEvidenceCodec.SerializeCanonical(envelope), ct);
+                    return;
+                }
                 var rowsPath = Path.Combine(directory, "holds.sql");
                 await RecoveryPurgeRunner.RunDumpExtractAsync(pgRestore, "recovery_holds", dumpPath, rowsPath, ct);
                 var candidates = RecoveryPurgeRunner.ReadCopyRows(rowsPath).Where(row =>
@@ -70,9 +85,9 @@ internal static class RecoveryHoldReleaseRunner
                 foreach (var row in candidates)
                 {
                     var hold = RecoveryPurgeRunner.ReadHoldObservation(row, "recovery", point.SourceManifest.SnapshotCutoffUtc);
-                    if (requested.HoldId != hold.HoldId || requested.DefinitionSha256 != hold.ScopeSha256) continue;
+                    if (requested!.HoldId != hold.HoldId || requested.DefinitionSha256 != hold.ScopeSha256) continue;
                     proof = await RecoveryHoldReleaseStore.PersistAsync(dynamo, configuration, signer, signer.Trust,
-                        ownerTrust, point, row, approval, ct);
+                        ownerTrust!, point, row, approval, ct);
                     break;
                 }
                 if (proof is null) throw new RecoveryWorkerException("hold_release_captured_definition_missing");
