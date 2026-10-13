@@ -640,10 +640,12 @@ internal static class RecoveryPurgeRunner
         // Bind the complete captured definition, including creation, expiry, reason,
         // point/session scope and future generation columns. Primary release time is
         // deliberately excluded: it cannot establish independent release authority.
-        var definition = row.Where(pair => pair.Key != "released_at_utc")
+        var definition = row.Where(pair => pair.Key != "released_at_utc" &&
+                !(kind == "lifecycle" && pair.Key == "created_at_utc" && pair.Value is null))
             .OrderBy(pair => pair.Key, StringComparer.Ordinal).ToDictionary(pair => pair.Key, pair => pair.Value);
         var digest = RecoveryEvidenceCodec.Hash(RecoveryEvidenceCodec.SerializeCanonical(new { kind, definition }));
-        return new(id, kind, digest, expiry, expiry is null || expiry > snapshotCutoffUtc);
+        return new(id, kind, digest, expiry, expiry is null || expiry > snapshotCutoffUtc,
+            kind == "lifecycle" ? created : null);
     }
 
     private static long ReadVersion(Dictionary<string, string?>? row) => row is null ? 0 :

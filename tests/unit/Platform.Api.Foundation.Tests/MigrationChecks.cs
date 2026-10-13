@@ -72,6 +72,9 @@ internal static class MigrationChecks
             var candidates = await File.ReadAllTextAsync("apps/api/Database/Migrations/024_recovery_candidates.sql");
             await ExecuteAsync(connection, candidates, default);
             await ExecuteAsync(connection, candidates, default);
+            var lifecycleCreation = await File.ReadAllTextAsync("apps/api/Database/Migrations/025_lifecycle_hold_creation.sql");
+            await ExecuteAsync(connection, lifecycleCreation, default);
+            await ExecuteAsync(connection, lifecycleCreation, default);
             await migrate.CommitAsync();
         }
         Check(await ScalarAsync(connection, """

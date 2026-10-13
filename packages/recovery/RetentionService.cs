@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Platform.Recovery;
 
 public enum RecoveryRetirementPurpose
@@ -47,7 +49,8 @@ public sealed record RecoveryRetentionHoldObservationV1(
     string Kind,
     string ScopeSha256,
     DateTimeOffset? ExpiresAtUtc,
-    bool ActiveAtSnapshot);
+    bool ActiveAtSnapshot,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? CreatedAtUtc = null);
 
 /// <summary>
 /// One logical lifecycle row sampled from an exact database snapshot whose copy checkpoint was
@@ -199,6 +202,9 @@ public static class RetentionService
         foreach (var release in releases)
         {
             var proof = release.Payload;
+            if (proof.Kind == "lifecycle" && proof.CreatedAtUtc != ResolveLifecycleHoldCreation(
+                    proof.HoldId, proof.DefinitionSha256, ordered).CreatedAtUtc)
+                throw new InvalidDataException("retention_hold_creation_mismatch");
             var anchor = ordered.SingleOrDefault(item => item.RecoveryPointId == proof.PointId);
             var identity = proof.Kind + ":" + proof.HoldId.ToString("D").ToLowerInvariant();
             if (proof.OwnerId != ownerId || proof.LibraryId != libraryId || proof.ObservedAtUtc > nowUtc ||
@@ -283,6 +289,29 @@ public static class RetentionService
             latest.CheckpointEnvelopeSha256, latest.VerifiedAtUtc, latestState, latest.LifecycleVersion,
             latest.ParentLifecycleVersion,
             activeHold, eligibleAt);
+    }
+
+    public static (Guid PointId, DateTimeOffset CreatedAtUtc) ResolveLifecycleHoldCreation(Guid holdId,
+        string definitionSha256, IReadOnlyList<RecoveryRetentionPointObservationV1> completeVerifiedHistory)
+    {
+        if (holdId == Guid.Empty || completeVerifiedHistory.Count is < 1 or > 1_000_000)
+            throw new InvalidDataException("lifecycle_hold_history_invalid");
+        RecoveryValidation.Hash(definitionSha256, nameof(definitionSha256));
+        var matches = completeVerifiedHistory.SelectMany(point => point.Holds
+            .Where(hold => hold.Kind == "lifecycle" && hold.HoldId == holdId).Select(hold => (point, hold))).ToArray();
+        if (matches.Length == 0 || matches.Any(item => item.hold.ScopeSha256 != definitionSha256))
+            throw new InvalidDataException("lifecycle_hold_definition_history_mismatch");
+        var first = matches.OrderBy(item => item.point.SnapshotCutoffUtc).ThenBy(item => item.point.RecoveryPointId).First();
+        foreach (var (point, hold) in matches)
+        {
+            RecoveryValidation.Utc(point.SnapshotCutoffUtc, nameof(point.SnapshotCutoffUtc));
+            RecoveryValidation.Utc(point.VerifiedAtUtc, nameof(point.VerifiedAtUtc));
+            if (point.RecoveryPointId == Guid.Empty || point.VerifiedAtUtc < point.SnapshotCutoffUtc ||
+                hold.CreatedAtUtc != first.hold.CreatedAtUtc || hold.CreatedAtUtc > point.SnapshotCutoffUtc)
+                throw new InvalidDataException("lifecycle_hold_creation_history_invalid");
+            if (hold.CreatedAtUtc is { } created) RecoveryValidation.Utc(created, nameof(hold.CreatedAtUtc));
+        }
+        return (first.point.RecoveryPointId, first.hold.CreatedAtUtc ?? first.point.SnapshotCutoffUtc);
     }
 
     public static RecoveryRetentionDecisionV1 Assess(

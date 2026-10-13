@@ -34,5 +34,6 @@
     <EmbeddedResource Include="../api/Database/Migrations/022_backup_recovery.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.022_backup_recovery.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/023_recovery_purge_freeze.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.023_recovery_purge_freeze.sql" />
     <EmbeddedResource Include="../api/Database/Migrations/024_recovery_candidates.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.024_recovery_candidates.sql" />
+    <EmbeddedResource Include="../api/Database/Migrations/025_lifecycle_hold_creation.sql" LogicalName="Platform.Ingest.Worker.Database.Migrations.025_lifecycle_hold_creation.sql" />
   </ItemGroup>
 </Project>
