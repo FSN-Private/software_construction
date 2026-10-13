@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +25,10 @@ try {
   run('dotnet', ['restore', project, '--locked-mode'], { stdio: 'inherit' });
   run('dotnet', ['publish', project, '--configuration', 'Release', '--no-restore', '--output', output], { stdio: 'inherit' });
   run('dotnet', [join(output, 'Platform.Recovery.Native.Tests.dll'), '--write-certificates', fixture]);
+  // The non-root worker must traverse the bind mount to read public trust roots.
+  // Keep the generated server private key readable only by the fixture owner.
+  chmodSync(join(fixture, 'server-key.pem'), 0o600);
+  chmodSync(fixture, 0o755);
   run('docker', ['network', 'create', '--internal', network]);
   createdNetwork = true;
   run('docker', ['run', '--detach', '--name', database, '--network', network,
