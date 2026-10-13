@@ -11,6 +11,7 @@ internal static class RecoveryPurgeDeletionJournalChecks
 {
     internal static async Task RunAsync()
     {
+        await CheckSdkAbsenceAsync();
         var now = DateTimeOffset.UtcNow;
         var hash = new string('a', 64);
         var asset = Guid.NewGuid();
@@ -92,6 +93,59 @@ internal static class RecoveryPurgeDeletionJournalChecks
         throw new InvalidOperationException("Unsafe or unknown purge operation succeeded");
     }
 
+    private static async Task CheckSdkAbsenceAsync()
+    {
+        // Exercise actual AWS request marshalling and XML/error unmarshalling,
+        // rather than overriding the SDK operation with a manufactured exception.
+        foreach (var test in new[] { "present", "empty", "absent", "denied", "generic404", "wrong_version", "wrong_length", "truncated" })
+        {
+            using var handler = new VersionResponseHandler(test);
+            using var client = new AmazonS3Client(new AnonymousAWSCredentials(), new AmazonS3Config
+            { ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true, MaxErrorRetry = 0,
+                HttpClientFactory = new VersionHttpClientFactory(handler) });
+            var length = test == "empty" ? 0 : 4;
+            if (test is "present" or "empty" or "absent")
+            {
+                var exists = await RecoveryPurgeDeletionJournal.ExactVersionExistsAsync(client, "recovery-payload",
+                    "payload/sha256/hash", "exact-version", length, default);
+                if (exists != (test != "absent")) throw new InvalidOperationException("SDK absence classification failed");
+            }
+            else await RejectAsync(async () => { _ = await RecoveryPurgeDeletionJournal.ExactVersionExistsAsync(client,
+                "recovery-payload", "payload/sha256/hash", "exact-version", length, default); });
+            if (handler.Requests != 1) throw new InvalidOperationException("Unexpected provider request retry");
+        }
+    }
+
+    private sealed class VersionHttpClientFactory(HttpMessageHandler handler) : HttpClientFactory
+    {
+        public override HttpClient CreateHttpClient(IClientConfig config) => new(handler, disposeHandler: false);
+        public override bool UseSDKHttpClientCaching(IClientConfig config) => false;
+    }
+
+    private sealed class VersionResponseHandler(string test) : HttpMessageHandler
+    {
+        internal int Requests { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests++;
+            if (request.Method != HttpMethod.Get || request.RequestUri!.AbsolutePath != "/recovery-payload/payload/sha256/hash" ||
+                request.RequestUri.Query != "?versionId=exact-version" ||
+                request.Headers.Range?.ToString() != (test == "empty" ? null : "bytes=0-0"))
+                throw new InvalidOperationException("SDK probe did not request the exact bounded version");
+            if (test is "absent" or "denied" or "generic404")
+                return Task.FromResult(new HttpResponseMessage(test == "denied" ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound)
+                { Content = new StringContent(test == "generic404" ? "" :
+                    $"<Error><Code>{(test == "denied" ? "AccessDenied" : "NoSuchVersion")}</Code><Message>fixture</Message></Error>",
+                    System.Text.Encoding.UTF8, "application/xml") });
+            var response = new HttpResponseMessage(test == "empty" ? HttpStatusCode.OK : HttpStatusCode.PartialContent)
+            { Content = new ByteArrayContent(test is "empty" or "truncated" ? [] : [1]) };
+            response.Headers.Add("x-amz-version-id", test == "wrong_version" ? "other-version" : "exact-version");
+            if (test != "empty") response.Content.Headers.TryAddWithoutValidation("Content-Range",
+                test == "wrong_length" ? "bytes 0-0/5" : "bytes 0-0/4");
+            return Task.FromResult(response);
+        }
+    }
+
     private sealed class JournalDynamo() : AmazonDynamoDBClient(new AnonymousAWSCredentials(), new AmazonDynamoDBConfig { ServiceURL = "http://127.0.0.1:1" })
     {
         internal Dictionary<string, Dictionary<string, AttributeValue>> Items { get; } = [];
@@ -119,12 +173,13 @@ internal static class RecoveryPurgeDeletionJournalChecks
         internal bool DenyDelete { get; init; }
         internal bool DenyRead { get; init; }
         internal int Deletes { get; private set; }
-        public override Task<GetObjectMetadataResponse> GetObjectMetadataAsync(GetObjectMetadataRequest request, CancellationToken ct = default)
+        public override Task<GetObjectResponse> GetObjectAsync(GetObjectRequest request, CancellationToken ct = default)
         {
             if (request.BucketName != target.Bucket || request.Key != target.Key || request.VersionId != target.VersionId) throw new InvalidOperationException("Unscoped version read");
             if (DenyRead) throw new AmazonS3Exception("denied") { StatusCode = HttpStatusCode.Forbidden, ErrorCode = "AccessDenied" };
             if (!Present) throw new AmazonS3Exception("absent") { StatusCode = HttpStatusCode.NotFound, ErrorCode = "NoSuchVersion" };
-            return Task.FromResult(new GetObjectMetadataResponse { VersionId = target.VersionId, ContentLength = target.ByteLength });
+            return Task.FromResult(new GetObjectResponse { VersionId = target.VersionId, ContentLength = 1,
+                ContentRange = $"bytes 0-0/{target.ByteLength}", ResponseStream = new MemoryStream([1]) });
         }
         public override Task<DeleteObjectResponse> DeleteObjectAsync(DeleteObjectRequest request, CancellationToken ct = default)
         {

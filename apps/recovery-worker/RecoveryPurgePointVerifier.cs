@@ -228,23 +228,9 @@ internal static class RecoveryPurgePointVerifier
     private static async Task RequireExactVersionAbsentAsync(IAmazonS3 s3, PrivateCopyReceiptV1 receipt,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var response = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
-            {
-                BucketName = receipt.DestinationBucket,
-                Key = receipt.DestinationKey,
-                VersionId = receipt.DestinationVersionId
-            }, cancellationToken);
-            if (response.VersionId != receipt.DestinationVersionId)
-                throw new RecoveryWorkerException("purge_resume_version_mismatch");
+        if (await RecoveryPurgeDeletionJournal.ExactVersionExistsAsync(s3, receipt.DestinationBucket,
+            receipt.DestinationKey, receipt.DestinationVersionId, receipt.ByteLength, cancellationToken))
             throw new RecoveryWorkerException("purge_resume_target_still_present");
-        }
-        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound &&
-                                                   exception.ErrorCode == "NoSuchVersion")
-        {
-            // A purge-only absence proof is separate from recovery health verification.
-        }
     }
 
     private static async Task VerifyOwnerAccessProofAsync(RecoveryWorkerConfiguration configuration,
