@@ -177,14 +177,32 @@ internal sealed class RecoveryPurgeDeletionJournal(IAmazonDynamoDB dynamo, IAmaz
         { return await ReadAsync(id, ct) ?? throw new RecoveryWorkerException("purge_journal_write_unconfirmed"); }
     }
 
-    private async Task<bool> ExistsAsync(RecoveryPurgeTargetVersionV1 target, CancellationToken ct)
+    private Task<bool> ExistsAsync(RecoveryPurgeTargetVersionV1 target, CancellationToken ct) =>
+        ExactVersionExistsAsync(s3, target.Bucket, target.Key, target.VersionId, target.ByteLength, ct);
+
+    internal static async Task<bool> ExactVersionExistsAsync(IAmazonS3 s3, string bucket, string key,
+        string versionId, long byteLength, CancellationToken ct)
     {
         try
         {
-            var metadata = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
-            { BucketName = target.Bucket, Key = target.Key, VersionId = target.VersionId }, ct);
-            if (metadata.VersionId != target.VersionId || metadata.ContentLength != target.ByteLength)
+            // HEAD has no structured error body. A bounded GET distinguishes an
+            // exact missing version from denied access or a generic missing key.
+            using var response = await s3.GetObjectAsync(new GetObjectRequest
+            { BucketName = bucket, Key = key, VersionId = versionId,
+                ByteRange = byteLength > 0 ? new ByteRange(0, 0) : null }, ct);
+            var expectedLength = byteLength > 0 ? 1 : 0;
+            if (response.VersionId != versionId || response.ContentLength != expectedLength ||
+                (byteLength > 0 && response.ContentRange != $"bytes 0-0/{byteLength}"))
                 throw new RecoveryWorkerException("purge_exact_version_identity_mismatch");
+            var bytes = new byte[2];
+            var read = 0;
+            while (read < bytes.Length)
+            {
+                var count = await response.ResponseStream.ReadAsync(bytes.AsMemory(read), ct);
+                if (count == 0) break;
+                read += count;
+            }
+            if (read != expectedLength) throw new RecoveryWorkerException("purge_exact_version_identity_mismatch");
             return true;
         }
         catch (AmazonS3Exception error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound && error.ErrorCode == "NoSuchVersion")
