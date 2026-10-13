@@ -56,7 +56,7 @@ internal static class RecoveryVerificationPublisher
         {
             var verifiedAtUtc = DateTimeOffset.UtcNow;
             var catalog = BuildCatalog(configuration, point, verifiedAtUtc);
-                var bodies = await BuildOutboxMessagesAsync(catalog, point, configuration, signer, cancellationToken);
+            var bodies = await BuildOutboxMessagesAsync(catalog, point, configuration, signer, cancellationToken);
             var outboxBytes = JsonSerializer.SerializeToUtf8Bytes(bodies, OutboxJson);
             if (outboxBytes.Length > MaximumOutboxBytes)
                 throw new RecoveryWorkerException("verification_outbox_size_limit");
@@ -202,7 +202,7 @@ internal static class RecoveryVerificationPublisher
         return url;
     }
 
-    private static async Task<List<string>> BuildOutboxMessagesAsync(RecoveryCatalogPayloadV1 catalog,
+    internal static async Task<List<string>> BuildOutboxMessagesAsync(RecoveryCatalogPayloadV1 catalog,
         VerifiedCopiedPoint point, RecoveryWorkerConfiguration configuration, IRecoveryEvidenceSigner signer,
         CancellationToken cancellationToken)
     {
@@ -302,7 +302,7 @@ internal static class RecoveryVerificationPublisher
     private static List<string> ReadAndVerifyOutbox(IReadOnlyDictionary<string, AttributeValue> item,
         RecoverySigningTrust trust, VerifiedCopiedPoint point)
     {
-        var (catalog,messages)=ReadSignedOutbox(item,trust);
+        var (catalog, messages) = ReadSignedOutbox(item, trust);
         if (catalog.RecoveryPointId != point.Pointer.PointId || catalog.OwnerId != point.Pointer.OwnerId ||
             catalog.LibraryId != point.Pointer.LibraryId || catalog.FullManifestSha256 != point.Pointer.ManifestSha256 ||
             catalog.CheckpointSha256 != point.CheckpointPayloadSha256 ||
@@ -311,8 +311,8 @@ internal static class RecoveryVerificationPublisher
         return messages;
     }
 
-    internal static (RecoveryCatalogPayloadV1 Catalog,List<string> Messages) ReadSignedOutbox(
-        IReadOnlyDictionary<string, AttributeValue> item,RecoverySigningTrust trust)
+    internal static (RecoveryCatalogPayloadV1 Catalog, List<string> Messages) ReadSignedOutbox(
+        IReadOnlyDictionary<string, AttributeValue> item, RecoverySigningTrust trust)
     {
         var bytes = String(item, "messageBodies") is { } encoded
             ? Encoding.UTF8.GetBytes(encoded)
@@ -345,7 +345,7 @@ internal static class RecoveryVerificationPublisher
                     coverage.DataClass, catalog.FullManifestSha256, catalog.VerifiedAtUtc))
                 throw new RecoveryWorkerException("verification_outbox_observation_binding_invalid");
         }
-        return (catalog,messages);
+        return (catalog, messages);
     }
 
     private static void ValidatePointMarker(IReadOnlyDictionary<string, AttributeValue> item,
@@ -396,8 +396,10 @@ internal static class RecoveryVerificationPublisher
             ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":delivered"] = S("delivered"), [":pending"] = S("pending"),
-                [":source"] = S(sourceManifestSha256), [":full"] = S(fullManifestSha256),
+                [":delivered"] = S("delivered"),
+                [":pending"] = S("pending"),
+                [":source"] = S(sourceManifestSha256),
+                [":full"] = S(fullManifestSha256),
                 [":now"] = S(DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture))
             }
         }, cancellationToken);
@@ -415,7 +417,8 @@ internal static class RecoveryVerificationPublisher
             ExpressionAttributeNames = new Dictionary<string, string> { ["#state"] = "state" },
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
-                [":superseded"] = S("superseded"), [":pending"] = S("pending"),
+                [":superseded"] = S("superseded"),
+                [":pending"] = S("pending"),
                 [":now"] = S(DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture))
             }
         }, cancellationToken);
@@ -435,12 +438,14 @@ internal static class RecoveryVerificationPublisher
 
     private static Dictionary<string, AttributeValue> PointKey(Guid pointId) => new()
     {
-        ["pk"] = S("POINT#" + pointId.ToString("D").ToLowerInvariant()), ["sk"] = S("VERIFY")
+        ["pk"] = S("POINT#" + pointId.ToString("D").ToLowerInvariant()),
+        ["sk"] = S("VERIFY")
     };
 
     private static Dictionary<string, AttributeValue> OwnerKey(string ownerId, string libraryId) => new()
     {
-        ["pk"] = S("OWNER#" + RecoveryOwnerPointIndex.ScopeHash(ownerId, libraryId)), ["sk"] = S("VERIFIED")
+        ["pk"] = S("OWNER#" + RecoveryOwnerPointIndex.ScopeHash(ownerId, libraryId)),
+        ["sk"] = S("VERIFIED")
     };
 
     private static string? String(IReadOnlyDictionary<string, AttributeValue> item, string name) =>

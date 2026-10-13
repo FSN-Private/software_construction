@@ -113,6 +113,61 @@ internal static class RecoveryVerificationPublisherChecks
         var overdueHealth = await RecoveryControlReader.ReadHealthAsync(database, configuration, trust,
             DateTimeOffset.UtcNow.AddMinutes(46), CancellationToken.None);
         Check(overdueHealth.Status == "overdue", "Independent health ignored the 45-minute warning boundary.");
+        Check(await EmittedAge(database, point.SourceManifest.SnapshotCutoffUtc.AddSeconds(2699)) == 2699 &&
+              await EmittedAge(database, point.SourceManifest.SnapshotCutoffUtc.AddSeconds(2700)) == 2700,
+            "The actual overdue metric did not preserve the exact snapshot-age alarm boundary.");
+        var lagged = CopiedPoint(DateTimeOffset.UtcNow.AddHours(-2));
+        var laggedDatabase = FakeDynamo.Create(out var laggedStore);
+        var laggedQueue = FakeSqs.Create(out _);
+        await RecoveryVerificationPublisher.PublishAsync(laggedDatabase, laggedQueue, configuration, signer, trust, lagged, head, default);
+        var metricNow = DateTimeOffset.UtcNow;
+        var laggedAge = await EmittedAge(laggedDatabase, metricNow);
+        Check(laggedAge >= 2 * 60 * 60,
+            "A stale snapshot verified just now incorrectly produced a fresh recovery-point metric.");
+        await RecoveryVerificationPublisher.PublishAsync(laggedDatabase, laggedQueue, configuration, signer, trust, lagged, head, default);
+        Check(Math.Abs(await EmittedAge(laggedDatabase, metricNow.AddMinutes(10)) - laggedAge - 600) < 0.001,
+            "Signed publication replay renewed snapshot freshness.");
+        Check(await EmittedAge(FakeDynamo.Create(out _), metricNow) >= 2700,
+            "Missing verified evidence made the recovery-point metric healthy.");
+        var laggedKey = PointKey(lagged.Pointer.PointId);
+        var retainedLagged = laggedStore.Read(laggedKey["pk"].S, laggedKey["sk"].S)!;
+        var malformed = new Dictionary<string, AttributeValue>(retainedLagged) { ["messageBodies"] = new() { S = "malformed" } };
+        laggedStore.Replace(malformed);
+        await RejectMetric(() => EmittedAge(laggedDatabase, metricNow));
+        laggedStore.Replace(retainedLagged);
+        var futureCatalog = RecoveryVerificationPublisher.ReadSignedOutbox(retainedLagged, trust).Catalog with
+        {
+            SnapshotCutoffUtc = metricNow.AddHours(1),
+            CapturedAtUtc = metricNow.AddHours(1).AddSeconds(1),
+            VerifiedAtUtc = metricNow.AddHours(1).AddSeconds(2)
+        };
+        var futureBodies = await RecoveryVerificationPublisher.BuildOutboxMessagesAsync(futureCatalog, lagged, configuration, signer, default);
+        var futureEncoded = JsonSerializer.Serialize(futureBodies, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var futureItem = new Dictionary<string, AttributeValue>(retainedLagged)
+        {
+            ["messageBodies"] = new() { S = futureEncoded },
+            ["outboxSha256"] = new() { S = RecoveryEvidenceCodec.Hash(System.Text.Encoding.UTF8.GetBytes(futureEncoded)) }
+        };
+        laggedStore.Replace(futureItem);
+        await RejectMetric(() => EmittedAge(laggedDatabase, metricNow));
+
+        async Task<double> EmittedAge(IAmazonDynamoDB metricDatabase, DateTimeOffset now)
+        {
+            var previous = Console.Out;
+            using var capture = new StringWriter();
+            Console.SetOut(capture);
+            try { await RecoveryVerifierRunner.EmitVerifiedPointAgeAsync(metricDatabase, configuration, trust, now, default); }
+            finally { Console.SetOut(previous); }
+            using var emitted = JsonDocument.Parse(capture.ToString());
+            return emitted.RootElement.GetProperty("VerifiedPointAgeSeconds").GetDouble();
+        }
+
+        static async Task RejectMetric(Func<Task<double>> operation)
+        {
+            try { _ = await operation(); }
+            catch (Exception error) when (error is RecoveryWorkerException or InvalidDataException) { return; }
+            throw new InvalidOperationException("Invalid signed recovery time/evidence produced a healthy metric.");
+        }
         Set("OwnerId", "foreign");
         try
         {
@@ -121,30 +176,33 @@ internal static class RecoveryVerificationPublisherChecks
         }
         catch (RecoveryWorkerException error) when (error.SafeCode == "control_point_binding_invalid") { }
         Set("OwnerId", "owner-fixture");
-        var unverifiedId=Guid.Parse("00000000-0000-0000-0000-000000000001");
-        var partition=RecoveryOwnerPointIndex.PartitionKey("owner-fixture","main");
-        dynamo.PageItems=[Member(unverifiedId),Member(point.Pointer.PointId)];
-        Dictionary<string,AttributeValue> Member(Guid id)=>new()
+        var unverifiedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var partition = RecoveryOwnerPointIndex.PartitionKey("owner-fixture", "main");
+        dynamo.PageItems = [Member(unverifiedId), Member(point.Pointer.PointId)];
+        Dictionary<string, AttributeValue> Member(Guid id) => new()
         {
-            ["pk"]=S(partition),["sk"]=S(RecoveryOwnerPointIndex.PointSortKey(id)),
-            ["pointId"]=S(id.ToString("D")),["ownerId"]=S("owner-fixture"),["libraryId"]=S("main")
+            ["pk"] = S(partition),
+            ["sk"] = S(RecoveryOwnerPointIndex.PointSortKey(id)),
+            ["pointId"] = S(id.ToString("D")),
+            ["ownerId"] = S("owner-fixture"),
+            ["libraryId"] = S("main")
         };
-        var firstPage=await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,null,CancellationToken.None);
-        Check(firstPage.Points.Single().Status=="unverified" && firstPage.Points.Single().CapturedAtUtc is null &&
-            firstPage.NextAfterPointId==unverifiedId,"Unverified point invented trusted metadata or lost pagination.");
-        var secondPage=await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,firstPage.NextAfterPointId,CancellationToken.None);
-        Check(secondPage.Points.Single().PointId==point.Pointer.PointId && secondPage.Points.Single().Status=="verified" &&
-            secondPage.NextAfterPointId is null,"Verified page or terminal cursor failed.");
-        Check((await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,Guid.NewGuid(),CancellationToken.None)).Points.Count==0,
+        var firstPage = await RecoveryControlReader.ReadPageAsync(database, configuration, trust, 1, null, CancellationToken.None);
+        Check(firstPage.Points.Single().Status == "unverified" && firstPage.Points.Single().CapturedAtUtc is null &&
+            firstPage.NextAfterPointId == unverifiedId, "Unverified point invented trusted metadata or lost pagination.");
+        var secondPage = await RecoveryControlReader.ReadPageAsync(database, configuration, trust, 1, firstPage.NextAfterPointId, CancellationToken.None);
+        Check(secondPage.Points.Single().PointId == point.Pointer.PointId && secondPage.Points.Single().Status == "verified" &&
+            secondPage.NextAfterPointId is null, "Verified page or terminal cursor failed.");
+        Check((await RecoveryControlReader.ReadPageAsync(database, configuration, trust, 1, Guid.NewGuid(), CancellationToken.None)).Points.Count == 0,
             "An absent owner cursor disclosed another scope.");
-        dynamo.PageItems[0]["ownerId"]=S("foreign");
+        dynamo.PageItems[0]["ownerId"] = S("foreign");
         try
         {
-            await RecoveryControlReader.ReadPageAsync(database,configuration,trust,1,null,CancellationToken.None);
+            await RecoveryControlReader.ReadPageAsync(database, configuration, trust, 1, null, CancellationToken.None);
             throw new InvalidOperationException("Foreign membership entered control output.");
         }
-        catch(RecoveryWorkerException error) when(error.SafeCode=="control_point_member_invalid") { }
-        dynamo.PageItems=[];
+        catch (RecoveryWorkerException error) when (error.SafeCode == "control_point_member_invalid") { }
+        dynamo.PageItems = [];
         Check(dynamo.TransactionCount == 1 && dynamo.UpdateCount == 1,
             "Independent control read mutated verification records.");
         var deliveredSendCount = sqs.Sends.Count;
@@ -320,7 +378,8 @@ internal static class RecoveryVerificationPublisherChecks
 
     private static Dictionary<string, AttributeValue> PointKey(Guid pointId) => new()
     {
-        ["pk"] = S("POINT#" + pointId.ToString("D").ToLowerInvariant()), ["sk"] = S("VERIFY")
+        ["pk"] = S("POINT#" + pointId.ToString("D").ToLowerInvariant()),
+        ["sk"] = S("VERIFY")
     };
 
     private static void Set(string name, string value) => Environment.SetEnvironmentVariable("Recovery__" + name, value);
@@ -357,7 +416,7 @@ internal static class RecoveryVerificationPublisherChecks
         public int UpdateCount { get; private set; }
         public bool FailAfterCycleTransactionOnce { get; set; }
         public bool FailAfterCycleDeliveryOnce { get; set; }
-        public List<Dictionary<string,AttributeValue>> PageItems { get; set; }=[];
+        public List<Dictionary<string, AttributeValue>> PageItems { get; set; } = [];
         public static IAmazonDynamoDB Create(out FakeDynamo fake)
         {
             var client = DispatchProxy.Create<IAmazonDynamoDB, FakeDynamo>();
@@ -366,6 +425,7 @@ internal static class RecoveryVerificationPublisherChecks
         }
         public Dictionary<string, AttributeValue>? Read(string pk, string sk) =>
             items.TryGetValue((pk, sk), out var item) ? Clone(item) : null;
+        public void Replace(Dictionary<string, AttributeValue> item) => items[Key(item)] = Clone(item);
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -385,23 +445,27 @@ internal static class RecoveryVerificationPublisherChecks
         {
             if (request.ConsistentRead != true) throw new InvalidOperationException("publisher_reads_must_be_strong");
             var key = Key(request.Key);
-            var member=PageItems.SingleOrDefault(item=>Key(item)==key);
-            if(member is not null) return new GetItemResponse { Item=Clone(member) };
+            var member = PageItems.SingleOrDefault(item => Key(item) == key);
+            if (member is not null) return new GetItemResponse { Item = Clone(member) };
             return new GetItemResponse { Item = items.TryGetValue(key, out var item) ? Clone(item) : new() };
         }
 
         private QueryResponse Query(QueryRequest request)
         {
-            Check(request.ConsistentRead==true && request.Limit is >=1 and <=100 &&
-                request.TableName=="recovery-control-fixture" && request.ExpressionAttributeValues[":owner"].S==
-                RecoveryOwnerPointIndex.PartitionKey("owner-fixture","main") && request.ExpressionAttributeValues[":points"].S=="POINT#",
+            Check(request.ConsistentRead == true && request.Limit is >= 1 and <= 100 &&
+                request.TableName == "recovery-control-fixture" && request.ExpressionAttributeValues[":owner"].S ==
+                RecoveryOwnerPointIndex.PartitionKey("owner-fixture", "main") && request.ExpressionAttributeValues[":points"].S == "POINT#",
                 "Control page query escaped its strong bounded owner partition.");
-            var after=request.ExclusiveStartKey is { Count:>0 } ? Attr(request.ExclusiveStartKey,"sk") : "";
-            var remaining=PageItems.Where(item=>string.CompareOrdinal(Attr(item,"sk"),after)>0)
-                .OrderBy(item=>Attr(item,"sk"),StringComparer.Ordinal).ToArray();
-            var page=remaining.Take(request.Limit!.Value).Select(Clone).ToList();
-            return new QueryResponse { Items=page,LastEvaluatedKey=remaining.Length>page.Count ?
-                new() { ["pk"]=page[^1]["pk"],["sk"]=page[^1]["sk"] } : new() };
+            var after = request.ExclusiveStartKey is { Count: > 0 } ? Attr(request.ExclusiveStartKey, "sk") : "";
+            var remaining = PageItems.Where(item => string.CompareOrdinal(Attr(item, "sk"), after) > 0)
+                .OrderBy(item => Attr(item, "sk"), StringComparer.Ordinal).ToArray();
+            var page = remaining.Take(request.Limit!.Value).Select(Clone).ToList();
+            return new QueryResponse
+            {
+                Items = page,
+                LastEvaluatedKey = remaining.Length > page.Count ?
+                new() { ["pk"] = page[^1]["pk"], ["sk"] = page[^1]["sk"] } : new()
+            };
         }
 
         private TransactWriteItemsResponse Transact(TransactWriteItemsRequest request)
@@ -424,8 +488,10 @@ internal static class RecoveryVerificationPublisherChecks
                 items.Add(pointKey, Clone(put.Item));
                 items[ownerKey] = new(update.Key)
                 {
-                    ["ownerId"] = incoming[":owner"], ["libraryId"] = incoming[":library"],
-                    ["pointId"] = incoming[":point"], ["payloadSha256"] = incoming[":sha"]
+                    ["ownerId"] = incoming[":owner"],
+                    ["libraryId"] = incoming[":library"],
+                    ["pointId"] = incoming[":point"],
+                    ["payloadSha256"] = incoming[":sha"]
                 };
                 if (FailAfterCycleTransactionOnce)
                 {

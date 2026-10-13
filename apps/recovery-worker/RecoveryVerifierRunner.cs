@@ -101,7 +101,7 @@ internal static class RecoveryVerifierRunner
                         {
                             await RecoveryCyclePublisher.PublishAsync(dynamo, sqs, configuration, signer, signer.Trust,
                             cyclePointId, cycleCaptureId, "verification", "incomplete", "owner_access_pending", cancellationToken, cycleId: cycleId);
-                        RecoveryWorkerMetrics.Emit("VerificationFailures", 1, configuration);
+                            RecoveryWorkerMetrics.Emit("VerificationFailures", 1, configuration);
                             Console.WriteLine($"recovery_verification_validated_unqualified point={point.Pointer.PointId:D} owner={ScopeHash(point.Pointer.OwnerId, point.Pointer.LibraryId)} reason=owner_access_pending");
                             continue;
                         }
@@ -117,7 +117,7 @@ internal static class RecoveryVerifierRunner
                 }
                 RecoveryWorkerMetrics.Emit("VerifiedRestoreChecks", completed, configuration);
                 RecoveryWorkerMetrics.Emit("VerifiedRestoreObjects", verifiedItems, configuration);
-                await EmitVerifiedPointAgeAsync(dynamo, configuration, cancellationToken);
+                await EmitVerifiedPointAgeAsync(dynamo, configuration, signer.Trust, DateTimeOffset.UtcNow, cancellationToken);
             }
             finally
             {
@@ -143,21 +143,11 @@ internal static class RecoveryVerifierRunner
         }
     }
 
-    private static async Task EmitVerifiedPointAgeAsync(IAmazonDynamoDB dynamo,
-        RecoveryWorkerConfiguration configuration, CancellationToken cancellationToken)
+    internal static async Task EmitVerifiedPointAgeAsync(IAmazonDynamoDB dynamo,
+        RecoveryWorkerConfiguration configuration, RecoverySigningTrust trust, DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
-        var marker = await RecoveryVerificationPublisher.ReadOwnerMarkerAsync(dynamo, configuration,
-            configuration.Required("OwnerId"), configuration.Required("LibraryId"), cancellationToken);
-        var age = 365d * 24 * 60 * 60;
-        if (marker is not null && GetString(marker, "ownerId") == configuration.Required("OwnerId") &&
-            GetString(marker, "libraryId") == configuration.Required("LibraryId") &&
-            GetString(marker, "safeStatus") == "healthy" &&
-            DateTimeOffset.TryParse(GetString(marker, "verifiedAtUtc"), CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind, out var verifiedAt) && verifiedAt.Offset == TimeSpan.Zero &&
-            verifiedAt <= DateTimeOffset.UtcNow && GetString(marker, "pointId") is { } pointId &&
-            Guid.TryParseExact(pointId, "D", out var parsedPointId) && parsedPointId != Guid.Empty)
-            age = Math.Max(0, (DateTimeOffset.UtcNow - verifiedAt).TotalSeconds);
-
+        var health = await RecoveryControlReader.ReadHealthAsync(dynamo, configuration, trust, nowUtc, cancellationToken);
+        var age = health.PointAgeSeconds ?? 365d * 24 * 60 * 60;
         RecoveryWorkerMetrics.Emit("VerifiedPointAgeSeconds", age, configuration);
     }
 
