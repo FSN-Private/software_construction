@@ -13,7 +13,8 @@ internal static class RecoveryLifecycleHistoryBindings
 {
     private static readonly string[] PinNames = ["ConfigurationDigest", "ApiBuildDigest", "SourceRevision", "MigrationDigest",
         "RecoveryWorkerBuildDigest", "RecoveryTemplateDigest", "SourceTemplateDigest", "OwnerUserPoolId",
-        "OwnerUserPoolClientId", "OwnerUserPoolIssuer", "MigrationDirectory"];
+        "OwnerUserPoolClientId", "OwnerUserPoolIssuer", "MigrationDirectory", "IngestWorkerBuildDigest", "RendererBuildDigest",
+        "DatabaseRootCertificateSha256"];
 
     internal static async Task<IReadOnlyList<RecoveryLifecycleHistoryBinding>> ReadAsync(
         RecoveryWorkerConfiguration configuration, CancellationToken ct)
@@ -41,7 +42,7 @@ internal static class RecoveryLifecycleHistoryBindings
             throw new RecoveryWorkerException("hold_history_bindings_invalid");
         foreach (var binding in bindings)
         {
-            foreach (var name in PinNames.Where(name => name.EndsWith("Digest", StringComparison.Ordinal)))
+            foreach (var name in PinNames.Where(name => name.EndsWith("Digest", StringComparison.Ordinal) || name.EndsWith("Sha256", StringComparison.Ordinal)))
                 if (binding.Pins[name].Length != 64 || binding.Pins[name].Any(c => !char.IsAsciiHexDigit(c)) ||
                     binding.Pins[name] != binding.Pins[name].ToLowerInvariant())
                     throw new RecoveryWorkerException("hold_history_binding_digest_invalid");
