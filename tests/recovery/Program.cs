@@ -182,6 +182,18 @@ static void OwnerAccessEvidenceChecks()
     var historicalEnvelope = RecoveryOwnerAccessCodec.CreateEnvelope(historicalPayload, new(ownerKeyId, ownerFingerprint,
         ownerKey.SignHash(SHA256.HashData(historicalBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)));
     RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.VerifiedAtUtc.AddMinutes(1));
+    var changedRelease = historicalPayload with { MigrationDigest = new string('b', 64), RecoveryWorkerBuildDigest = new string('c', 64) };
+    var changedReleaseBytes = RecoveryOwnerAccessCodec.SerializePayload(changedRelease);
+    var changedReleaseEnvelope = RecoveryOwnerAccessCodec.CreateEnvelope(changedRelease, new(ownerKeyId, ownerFingerprint,
+        ownerKey.SignHash(SHA256.HashData(changedReleaseBytes), HashAlgorithmName.SHA256, RSASignaturePadding.Pss)));
+    var changedExpectation = expected with { MigrationDigest = changedRelease.MigrationDigest,
+        RecoveryWorkerBuildDigest = changedRelease.RecoveryWorkerBuildDigest };
+    RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(changedReleaseEnvelope, trust, changedExpectation,
+        historicalPayload.VerifiedAtUtc.AddMinutes(1));
+    RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(changedReleaseEnvelope, trust, expected,
+        historicalPayload.VerifiedAtUtc.AddMinutes(1)));
+    RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, changedExpectation,
+        historicalPayload.VerifiedAtUtc.AddMinutes(1)));
     RejectInvalid(() => RecoveryOwnerAccessCodec.Verify(historicalEnvelope, trust, expected, DateTimeOffset.UtcNow));
     RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.ExpiresAtUtc));
     RejectInvalid(() => RecoveryPurgePointVerifier.VerifyHistoricalOwnerAccess(historicalEnvelope, trust, expected, historicalPayload.VerifiedAtUtc.AddSeconds(-1)));

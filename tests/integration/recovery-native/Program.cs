@@ -39,6 +39,20 @@ Check(Convert.ToInt32(await Scalar(source, "SHOW server_version_num", ct)) / 100
 await using (var migrationSource = NpgsqlDataSource.Create(connectionString))
     await DatabaseMigrator.ApplyAsync(migrationSource, ct);
 var migrationDigest = await RecoveryWorkerConfiguration.ComputeMigrationDigestAsync("/migrations", ct);
+await using (var rehearsal = await source.BeginTransactionAsync(ct))
+{
+    await Execute(source, "CREATE SCHEMA lifecycle_timestamp_rehearsal; SET LOCAL search_path=lifecycle_timestamp_rehearsal", ct);
+    await Execute(source, "CREATE TABLE lifecycle_holds(id uuid PRIMARY KEY); INSERT INTO lifecycle_holds VALUES(gen_random_uuid())", ct);
+    var additive = await File.ReadAllTextAsync("/migrations/025_lifecycle_hold_creation.sql", ct);
+    await Execute(source, additive, ct);
+    await Execute(source, additive, ct);
+    Check(await Scalar(source, "SELECT created_at_utc IS NULL FROM lifecycle_holds", ct) is true,
+        "Additive timestamp migration invented historical creation UTC.");
+    await Execute(source, "INSERT INTO lifecycle_holds(id) VALUES(gen_random_uuid())", ct);
+    Check(Convert.ToInt64(await Scalar(source, "SELECT count(*) FROM lifecycle_holds WHERE created_at_utc IS NOT NULL", ct)) == 1,
+        "New lifecycle hold did not receive actual creation UTC.");
+    await rehearsal.RollbackAsync(ct);
+}
 
 const string owner = "native-owner";
 const string library = "native-library";
@@ -421,6 +435,79 @@ try
 finally
 {
     await RecoveryDrillRunner.DropDatabaseAsync(recovery, targetName, ct);
+}
+
+// Real migration-era snapshots preserve one legacy hold definition while using
+// separate exact schema/migration authorities for each release.
+var legacyDirectory = "/tmp/legacy-lifecycle-migrations";
+Directory.CreateDirectory(legacyDirectory);
+foreach (var file in Directory.GetFiles("/migrations", "*.sql"))
+    if (Path.GetFileName(file) != "025_lifecycle_hold_creation.sql")
+        File.Copy(file, Path.Combine(legacyDirectory, Path.GetFileName(file)), overwrite: true);
+var legacyMigrationDigest = await RecoveryWorkerConfiguration.ComputeMigrationDigestAsync(legacyDirectory, ct);
+var legacyLifecycleId = Guid.NewGuid();
+await Execute(source, "ALTER TABLE lifecycle_holds DROP COLUMN created_at_utc; DELETE FROM platform_schema_migrations WHERE id='025_lifecycle_hold_creation.sql'", ct);
+await using (var legacyHold = IngestDb.Command(source,
+    "INSERT INTO lifecycle_holds(id,asset_id,reason,source_reference) VALUES($1,$2,'restore','native-migration-era')", legacyLifecycleId, asset))
+    await legacyHold.ExecuteNonQueryAsync(ct);
+var lifecycleObservations = new List<RecoveryRetentionPointObservationV1>();
+string? legacyDefinition = null;
+try
+{
+    for (var stage = 0; stage < 2; stage++)
+    {
+        if (stage == 1)
+        {
+            var script = await File.ReadAllTextAsync("/migrations/025_lifecycle_hold_creation.sql", ct);
+            await Execute(source, script, ct);
+            await using var ledger = IngestDb.Command(source,
+                "INSERT INTO platform_schema_migrations(id,sha256) VALUES('025_lifecycle_hold_creation.sql',$1)",
+                RecoveryEvidenceCodec.Hash(System.Text.Encoding.UTF8.GetBytes(script)));
+            await ledger.ExecuteNonQueryAsync(ct);
+        }
+        var schemaDirectory = stage == 0 ? legacyDirectory : "/migrations";
+        var schemaDigest = stage == 0 ? legacyMigrationDigest : migrationDigest;
+        await using var lifecycleSnapshot = await source.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
+        var lifecycleExport = await CaptureRunner.ExportSnapshotAsync(source, lifecycleSnapshot, ct);
+        var lifecycleWatermark = await CaptureRunner.ReadAndVerifyWatermarkAsync(source, lifecycleSnapshot,
+            owner, library, lifecycleExport.CutoffUtc, ct);
+        var lifecycleCounts = await CaptureRunner.ReadClassCountsAsync(source, lifecycleSnapshot, owner, library, objects, ct);
+        var lifecycleManifest = manifest with { RecoveryPointId = Guid.NewGuid(), CaptureId = Guid.NewGuid(),
+            CapturedAtUtc = DateTimeOffset.UtcNow, SnapshotCutoffUtc = lifecycleExport.CutoffUtc,
+            SnapshotId = lifecycleExport.SnapshotId, SnapshotLsn = lifecycleExport.Lsn,
+            MigrationDigest = schemaDigest, ChangeWatermark = lifecycleWatermark,
+            Coverage = lifecycleCounts.Select(pair => new RecoveryClassCoverage(pair.Key, pair.Value.ItemCount, pair.Value.ByteLength)).ToArray() };
+        var lifecycleDump = "/tmp/lifecycle-history-" + stage + ".dump";
+        await CaptureRunner.CreateDatabaseDumpAsync(configuration, credentials, lifecycleExport.SnapshotId, lifecycleDump, ct);
+        await lifecycleSnapshot.CommitAsync(ct);
+        var cloneName = "recovery_verify_lifecycle_" + stage;
+        await RecoveryDrillRunner.CreateDatabaseAsync(recovery, cloneName, ct);
+        try
+        {
+            await RecoveryTrustedDumpRestore.RestoreAsync(recovery, cloneName, lifecycleDump,
+                schemaDirectory, schemaDigest, "pg_dump", "pg_restore", ct);
+            await RecoveryDrillRunner.ValidateRestoredPointAsync(recovery, cloneName, lifecycleManifest,
+                auditTrust, genesis, schemaDigest, schemaDirectory, recoveryAccountId, ct);
+            var holdsFile = "/tmp/lifecycle-history-holds-" + stage + ".sql";
+            await RecoveryPurgeRunner.RunDumpExtractAsync("pg_restore", "lifecycle_holds", lifecycleDump, holdsFile, ct);
+            var row = RecoveryPurgeRunner.ReadCopyRows(holdsFile).Single(item => item.GetValueOrDefault("id") == legacyLifecycleId.ToString("D"));
+            var hold = RecoveryPurgeRunner.ReadHoldObservation(row, "lifecycle", lifecycleExport.CutoffUtc);
+            Check(hold.CreatedAtUtc is null, "Migration-era legacy hold gained an invented creation timestamp.");
+            legacyDefinition ??= hold.ScopeSha256;
+            Check(hold.ScopeSha256 == legacyDefinition, "Migration-era capture rebound the legacy hold definition.");
+            lifecycleObservations.Add(new(lifecycleManifest.RecoveryPointId, lifecycleExport.CutoffUtc,
+                DateTimeOffset.UtcNow, sha, sha, auditTrust.KeyId, null, 0, 0, null, null, [hold]));
+        }
+        finally { await RecoveryDrillRunner.DropDatabaseAsync(recovery, cloneName, ct); }
+    }
+    var origin = RetentionService.ResolveLifecycleHoldCreation(legacyLifecycleId, legacyDefinition!, lifecycleObservations);
+    Check(origin == (lifecycleObservations[0].RecoveryPointId, lifecycleObservations[0].SnapshotCutoffUtc),
+        "Mixed-release physical snapshots did not select the original legacy observation.");
+}
+finally
+{
+    await using var cleanup = IngestDb.Command(source, "DELETE FROM lifecycle_holds WHERE id=$1", legacyLifecycleId);
+    await cleanup.ExecuteNonQueryAsync(ct);
 }
 
 // Payload present before capture has honest coverage and a matching exact dump.

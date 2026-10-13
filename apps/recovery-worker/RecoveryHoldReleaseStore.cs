@@ -14,22 +14,28 @@ internal static class RecoveryHoldReleaseStore
     internal static async Task<RecoveryHoldReleaseEnvelopeV1> PersistAsync(IAmazonDynamoDB dynamo,
         RecoveryWorkerConfiguration configuration, IRecoveryEvidenceSigner signer, RecoverySigningTrust recoveryTrust,
         RecoverySigningTrust ownerTrust, VerifiedCopiedPoint point, Dictionary<string, string?> capturedRow,
-        RecoveryHoldReleaseEnvelopeV1 approvalEnvelope, CancellationToken ct)
+        RecoveryHoldReleaseEnvelopeV1 approvalEnvelope, CancellationToken ct,
+        (Guid PointId, DateTimeOffset CreatedAtUtc)? lifecycleCreation = null, string? lifecycleAssetOwnerId = null)
     {
         // The verifier calls this only after pinned native dump/graph/audit validation.
         var now = DateTimeOffset.UtcNow;
-        var hold = RecoveryPurgeRunner.ReadHoldObservation(capturedRow, "recovery", point.SourceManifest.SnapshotCutoffUtc);
+        var requested = RecoveryHoldReleaseCodec.VerifyApprovalSignature(approvalEnvelope, ownerTrust);
+        var hold = RecoveryPurgeRunner.ReadHoldObservation(capturedRow, requested.Kind, point.SourceManifest.SnapshotCutoffUtc);
         var key = Key(point.Pointer.PointId, hold.ScopeSha256);
         var prior = await ReadAsync(dynamo, configuration, key, recoveryTrust, ownerTrust, now, ct);
         var priorProof = prior is null ? null : RecoveryHoldReleaseCodec.VerifyProof(prior, recoveryTrust, ownerTrust,
             configuration.WorkerBuildDigest, now).Payload;
         var approval = RecoveryHoldReleaseCodec.VerifyApproval(approvalEnvelope, ownerTrust, priorProof?.ObservedAtUtc ?? now);
-        if (approval.Kind != "recovery" || approval.OwnerId != point.Pointer.OwnerId || approval.LibraryId != point.Pointer.LibraryId ||
+        var validScope = approval.Kind == "recovery"
+            ? capturedRow.GetValueOrDefault("owner_id") == approval.OwnerId && capturedRow.GetValueOrDefault("library_id") == approval.LibraryId &&
+                DateTimeOffset.TryParse(capturedRow.GetValueOrDefault("created_at_utc"), CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var created) && created.ToUniversalTime() == approval.CreatedAtUtc
+            : lifecycleCreation is { } origin && origin.PointId == point.Pointer.PointId &&
+                origin.CreatedAtUtc == approval.CreatedAtUtc && lifecycleAssetOwnerId == approval.OwnerId &&
+                (hold.CreatedAtUtc is null || hold.CreatedAtUtc == origin.CreatedAtUtc);
+        if (!validScope || approval.OwnerId != point.Pointer.OwnerId || approval.LibraryId != point.Pointer.LibraryId ||
             approval.OwnerId != configuration.Required("OwnerId") || approval.LibraryId != configuration.Required("LibraryId") ||
-            capturedRow.GetValueOrDefault("owner_id") != approval.OwnerId || capturedRow.GetValueOrDefault("library_id") != approval.LibraryId ||
             hold.HoldId != approval.HoldId || hold.ScopeSha256 != approval.DefinitionSha256 ||
-            !DateTimeOffset.TryParse(capturedRow.GetValueOrDefault("created_at_utc"), CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind, out var created) || created.ToUniversalTime() != approval.CreatedAtUtc ||
             point.CheckpointEnvelopeSha256 != point.Pointer.CheckpointSha256 || point.Pointer.CopiedAtUtc > now ||
             signer.KeyId != recoveryTrust.KeyId || signer.PublicKeySha256 != recoveryTrust.PublicKeySha256)
             throw new RecoveryWorkerException("hold_release_captured_definition_mismatch");

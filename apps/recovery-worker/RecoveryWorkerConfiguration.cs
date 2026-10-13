@@ -6,8 +6,13 @@ namespace Platform.Recovery.Worker;
 
 public sealed class RecoveryWorkerConfiguration
 {
-    public RecoveryWorkerConfiguration(string mode)
+    private readonly IReadOnlyDictionary<string, string>? historicalPins;
+
+    public RecoveryWorkerConfiguration(string mode) : this(mode, null) { }
+
+    internal RecoveryWorkerConfiguration(string mode, IReadOnlyDictionary<string, string>? historicalPins)
     {
+        this.historicalPins = historicalPins;
         Mode = mode;
         EnvironmentName = Required("Environment");
         WorkerId = Optional("WorkerId") ?? mode;
@@ -20,7 +25,8 @@ public sealed class RecoveryWorkerConfiguration
     public string WorkerBuildDigest { get; }
 
     public string Required(string name) => Optional(name) ?? throw new RecoveryWorkerException($"config_{name.ToLowerInvariant()}_required");
-    public string? Optional(string name) => Environment.GetEnvironmentVariable($"Recovery__{name}");
+    public string? Optional(string name) => historicalPins is not null && historicalPins.TryGetValue(name, out var value)
+        ? value : Environment.GetEnvironmentVariable($"Recovery__{name}");
     public string RequiredHash(string name)
     {
         var value = Required(name);

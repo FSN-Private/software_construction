@@ -83,7 +83,60 @@ internal static class RecoveryHoldReleaseChecks
         Reject(() => History([release], last with { Holds = [hold with { ScopeSha256 = new string('b', 64) }] }));
         RetentionService.ValidateHistoryProof(released, "owner", "library", assetId, null, "original", hash, 2,
             released.CompletePointSetSha256);
+        var lifecycleApproval = Sign(approval with { Kind = "lifecycle" }, "recovery_hold_release_approval", owner, ownerTrust);
+        var lifecycleProof = proof with { Kind = "lifecycle", OwnerApproval = lifecycleApproval };
+        var lifecycleRelease = RecoveryHoldReleaseCodec.VerifyProof(Sign(lifecycleProof, "recovery_hold_release", verifier, verifierTrust),
+            verifierTrust, ownerTrust, hash, now);
+        var lifecycleFirst = first with { Holds = [hold with { Kind = "lifecycle" }] };
+        var lifecycleHistory = RetentionService.VerifyHistory("owner", "library", assetId, null, "original", hash,
+            "recovery-key", [first.RecoveryPointId, last.RecoveryPointId], [lifecycleFirst, last], now, [lifecycleRelease]);
+        Require(!lifecycleHistory.HasActiveHold && lifecycleHistory.EligibleAtUtc == observed.AddDays(90),
+            "legacy_creation_shortened_independent_release_ninety_days");
+        var backdatedApproval = Sign(approval with { Kind = "lifecycle", CreatedAtUtc = created.AddDays(-1) },
+            "recovery_hold_release_approval", owner, ownerTrust);
+        var backdatedRelease = RecoveryHoldReleaseCodec.VerifyProof(Sign(lifecycleProof with
+        { CreatedAtUtc = created.AddDays(-1), OwnerApproval = backdatedApproval }, "recovery_hold_release", verifier, verifierTrust),
+            verifierTrust, ownerTrust, hash, now);
+        Reject(() => RetentionService.VerifyHistory("owner", "library", assetId, null, "original", hash,
+            "recovery-key", [first.RecoveryPointId, last.RecoveryPointId], [lifecycleFirst, last], now, [backdatedRelease]));
         await StoreChecksAsync(owner, verifier, ownerTrust, verifierTrust, hash);
+        LifecycleCreationChecks(first, last, hold, hash);
+    }
+
+    private static void LifecycleCreationChecks(RecoveryRetentionPointObservationV1 first,
+        RecoveryRetentionPointObservationV1 last, RecoveryRetentionHoldObservationV1 hold, string hash)
+    {
+        var legacy = hold with { Kind = "lifecycle" };
+        first = first with { Holds = [legacy] };
+        last = last with { Holds = [legacy] };
+        var origin = RetentionService.ResolveLifecycleHoldCreation(hold.HoldId, hash, [last, first]);
+        Require(origin == (first.RecoveryPointId, first.SnapshotCutoffUtc), "legacy_origin_not_earliest_trusted_snapshot");
+        var actual = first.SnapshotCutoffUtc.AddDays(-1);
+        var recorded = legacy with { CreatedAtUtc = actual };
+        Require(RetentionService.ResolveLifecycleHoldCreation(hold.HoldId, hash,
+            [first with { Holds = [recorded] }, last with { Holds = [recorded] }]).CreatedAtUtc == actual,
+            "new_hold_creation_utc_replaced_by_observation");
+        Reject(() => RetentionService.ResolveLifecycleHoldCreation(hold.HoldId, hash, []));
+        Reject(() => RetentionService.ResolveLifecycleHoldCreation(Guid.NewGuid(), hash, [first, last]));
+        Reject(() => RetentionService.ResolveLifecycleHoldCreation(hold.HoldId, hash,
+            [first, last with { Holds = [legacy with { ScopeSha256 = new string('b', 64) }] }]));
+        Reject(() => RetentionService.ResolveLifecycleHoldCreation(hold.HoldId, hash,
+            [first, last with { Holds = [recorded] }]));
+        var row = new Dictionary<string, string?>
+        {
+            ["id"] = hold.HoldId.ToString("D"),
+            ["asset_id"] = Guid.NewGuid().ToString("D"),
+            ["reason"] = "restore",
+            ["source_reference"] = "private",
+            ["expires_at"] = null
+        };
+        var before = RecoveryPurgeRunner.ReadHoldObservation(row, "lifecycle", first.SnapshotCutoffUtc);
+        row["created_at_utc"] = null;
+        Require(RecoveryPurgeRunner.ReadHoldObservation(row, "lifecycle", first.SnapshotCutoffUtc) == before,
+            "nullable_creation_migration_rebound_legacy_definition");
+        row["created_at_utc"] = actual.ToString("O");
+        Require(RecoveryPurgeRunner.ReadHoldObservation(row, "lifecycle", first.SnapshotCutoffUtc).ScopeSha256 != before.ScopeSha256,
+            "real_creation_not_bound_to_new_hold_definition");
     }
 
     private static async Task StoreChecksAsync(RSA owner, RSA verifier, RecoverySigningTrust ownerTrust,
@@ -122,6 +175,35 @@ internal static class RecoveryHoldReleaseChecks
                 "ap-southeast-1", now.AddDays(-1), now.AddDays(-1), "snapshot", "lsn", hash, null!, [], [], []);
             var point = new VerifiedCopiedPoint(pointer, manifest, null, null!, [], hash, hash, null);
             var signer = new FixtureSigner(verifier, recoveryTrust);
+            using (var lifecycleDatabase = new HoldDatabase())
+            {
+                var lifecycleRow = new Dictionary<string, string?>
+                {
+                    ["id"] = holdId.ToString("D"),
+                    ["asset_id"] = row["asset_id"],
+                    ["reason"] = "restore",
+                    ["source_reference"] = "private",
+                    ["expires_at"] = null
+                };
+                var lifecycleHold = RecoveryPurgeRunner.ReadHoldObservation(lifecycleRow, "lifecycle", manifest.SnapshotCutoffUtc);
+                var lifecycleApproval = Sign(payload with
+                {
+                    Kind = "lifecycle",
+                    DefinitionSha256 = lifecycleHold.ScopeSha256,
+                    CreatedAtUtc = manifest.SnapshotCutoffUtc
+                }, "recovery_hold_release_approval", owner, ownerTrust);
+                await RejectAsync(() => RecoveryHoldReleaseStore.PersistAsync(lifecycleDatabase, configuration, signer,
+                    recoveryTrust, ownerTrust, point, lifecycleRow, lifecycleApproval, default));
+                await RejectAsync(() => RecoveryHoldReleaseStore.PersistAsync(lifecycleDatabase, configuration, signer,
+                    recoveryTrust, ownerTrust, point, lifecycleRow, lifecycleApproval, default,
+                    (pointer.PointId, manifest.SnapshotCutoffUtc), "foreign"));
+                var storedLifecycle = await RecoveryHoldReleaseStore.PersistAsync(lifecycleDatabase, configuration, signer,
+                    recoveryTrust, ownerTrust, point, lifecycleRow, lifecycleApproval, default,
+                    (pointer.PointId, manifest.SnapshotCutoffUtc), "owner");
+                var release = RecoveryHoldReleaseCodec.VerifyProof(storedLifecycle, recoveryTrust, ownerTrust, hash, DateTimeOffset.UtcNow);
+                if (release.Payload.CreatedAtUtc != manifest.SnapshotCutoffUtc || lifecycleDatabase.Writes != 1)
+                    throw new InvalidOperationException("Lifecycle release lost trusted conservative origin");
+            }
             foreach (var lost in new[] { false, true })
             {
                 using var database = new HoldDatabase { LoseWrite = lost };

@@ -9,7 +9,8 @@ internal static class RecoverySnapshotPreservation
 {
     // ADR-0018 classifies this exact v1 migration set as metadata/evidence only.
     // New migrations need explicit classification before preservation can be signed.
-    internal const string ClassifiedMigrationSha256 = "11679a386b634417931b0ec127899368fda5ea1bd79962be5122c17cb7a144c4";
+    internal const string ClassifiedMigrationSha256 = "56bf31d09759b12ce2de2a7a15293603e7761df2cbcf28494dbede3ceb259bca";
+    internal const string LegacyClassifiedMigrationSha256 = "11679a386b634417931b0ec127899368fda5ea1bd79962be5122c17cb7a144c4";
 
     internal static async Task<string> RequireMediaFreeAsync(NpgsqlConnection connection,
         NpgsqlTransaction transaction, string migrationDirectory, string expectedInventorySha256, CancellationToken ct)
@@ -25,7 +26,8 @@ internal static class RecoverySnapshotPreservation
             hash.AppendData(Encoding.UTF8.GetBytes(Path.GetFileName(path) + "\0"));
             hash.AppendData(Encoding.UTF8.GetBytes(text));
         }
-        if (Convert.ToHexStringLower(hash.GetHashAndReset()) != ClassifiedMigrationSha256)
+        var classified = Convert.ToHexStringLower(hash.GetHashAndReset());
+        if (classified != ClassifiedMigrationSha256 && classified != LegacyClassifiedMigrationSha256)
             throw new RecoveryWorkerException("snapshot_media_classification_required");
         var actual = await ReadInventorySha256Async(connection, transaction, ct);
         if (actual != expectedInventorySha256)

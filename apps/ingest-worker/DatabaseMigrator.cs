@@ -30,6 +30,7 @@ public static class DatabaseMigrator
         "022_backup_recovery.sql",
         "023_recovery_purge_freeze.sql",
         "024_recovery_candidates.sql",
+        "025_lifecycle_hold_creation.sql",
     ];
 
     public static Task ApplyAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) => ApplyAsync(dataSource, null, null, cancellationToken);

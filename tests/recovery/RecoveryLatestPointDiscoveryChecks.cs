@@ -46,6 +46,52 @@ internal static class RecoveryLatestPointDiscoveryChecks
         Check(selected.Pointer.PointId == first.PointId && selectedDatabase.GetCalls == 3 &&
             selectedDatabase.QueryCalls == 0 && selectedDatabase.ScanCalls == 0 && selectedDatabase.UpdateCalls == 0,
             "Explicit historical-point discovery followed the latest head or enumerated/wrote history.");
+        var historyNames = new[] { "Environment", "RecoveryWorkerBuildDigest", "OwnerId", "LibraryId", "ControlTableName", "MigrationDigest" };
+        var priorHistoryEnvironment = historyNames.ToDictionary(name => name, name => Environment.GetEnvironmentVariable("Recovery__" + name));
+        try
+        {
+            var digest = new string('a', 64);
+            foreach (var (name, value) in new[] { ("Environment", "fixture"), ("RecoveryWorkerBuildDigest", digest),
+                ("OwnerId", FixtureFactory.Owner), ("LibraryId", FixtureFactory.Library), ("ControlTableName", "control"), ("MigrationDigest", digest) })
+                Environment.SetEnvironmentVariable("Recovery__" + name, value);
+            Dictionary<string, string> Pins(string migration) => new()
+            {
+                ["ConfigurationDigest"] = digest,
+                ["ApiBuildDigest"] = digest,
+                ["SourceRevision"] = "revision",
+                ["MigrationDigest"] = migration,
+                ["RecoveryWorkerBuildDigest"] = digest,
+                ["RecoveryTemplateDigest"] = digest,
+                ["SourceTemplateDigest"] = digest,
+                ["OwnerUserPoolId"] = "pool",
+                ["OwnerUserPoolClientId"] = "client",
+                ["OwnerUserPoolIssuer"] = "https://issuer.invalid",
+                ["MigrationDirectory"] = "private-migrations"
+            };
+            var bindings = new[] { new RecoveryLifecycleHistoryBinding(first.PointId, Pins(digest)),
+                new RecoveryLifecycleHistoryBinding(second.PointId, Pins(new string('b', 64))) };
+            var config = RecoveryWorkerConfiguration.Load("hold-release");
+            var scoped = new RecoveryWorkerConfiguration("hold-release", bindings[1].Pins);
+            Check(config.RequiredHash("MigrationDigest") != scoped.RequiredHash("MigrationDigest") && scoped.Required("OwnerId") == FixtureFactory.Owner,
+                "Historical pins changed owner authority or mutated the runtime configuration");
+            var historyDatabase = new LatestDynamo(factory.Rows(first, second));
+            historyDatabase.ReplaceIndex(factory.Index(second, 2));
+            var inventory = await RecoveryLifecycleHistoryBindings.ReadCompleteInventoryAsync(config,
+                historyDatabase.Client, factory.S3(first, second), trust, bindings, default);
+            Check(inventory.Count == 2 && historyDatabase.QueryCalls == 0 && historyDatabase.ScanCalls == 0 && historyDatabase.UpdateCalls == 0,
+                "Lifecycle history exceeded verifier GetItem-only authority");
+            await ExpectSafeCode(() => RecoveryLifecycleHistoryBindings.ReadCompleteInventoryAsync(config,
+                historyDatabase.Client, factory.S3(first, second), trust, [bindings[0]], default), "hold_history_inventory_incomplete");
+            await ExpectSafeCode(() => RecoveryLifecycleHistoryBindings.ReadCompleteInventoryAsync(config,
+                historyDatabase.Client, factory.S3(first, second), trust, [bindings[0], bindings[0]], default), "hold_history_bindings_invalid");
+            var forbidden = bindings[0] with { Pins = new(bindings[0].Pins) { ["OwnerId"] = "foreign" } };
+            await ExpectSafeCode(() => { RecoveryLifecycleHistoryBindings.Validate([forbidden]); return Task.CompletedTask; },
+                "hold_history_bindings_invalid");
+        }
+        finally
+        {
+            foreach (var name in historyNames) Environment.SetEnvironmentVariable("Recovery__" + name, priorHistoryEnvironment[name]);
+        }
         var noMember = new LatestDynamo(factory.Rows(first));
         noMember.Remove(RecoveryOwnerPointIndex.PartitionKey(FixtureFactory.Owner, FixtureFactory.Library), RecoveryOwnerPointIndex.PointSortKey(first.PointId));
         var noMemberS3 = factory.S3(first);
@@ -440,7 +486,8 @@ internal static class RecoveryLatestPointDiscoveryChecks
         public int GetCalls { get; private set; }
 
         public DiscoveryS3() : base(new AnonymousAWSCredentials(), new AmazonS3Config
-        { ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true }) { }
+        { ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true })
+        { }
 
         public void Add(string bucket, string key, string version, byte[] bytes) =>
             objects[(bucket, key, version)] = bytes;
