@@ -46,13 +46,16 @@ internal static class RecoveryLatestPointDiscoveryChecks
         Check(selected.Pointer.PointId == first.PointId && selectedDatabase.GetCalls == 3 &&
             selectedDatabase.QueryCalls == 0 && selectedDatabase.ScanCalls == 0 && selectedDatabase.UpdateCalls == 0,
             "Explicit historical-point discovery followed the latest head or enumerated/wrote history.");
-        var historyNames = new[] { "Environment", "RecoveryWorkerBuildDigest", "OwnerId", "LibraryId", "ControlTableName", "MigrationDigest" };
+        var historyNames = new[] { "Environment", "RecoveryWorkerBuildDigest", "OwnerId", "LibraryId", "ControlTableName", "MigrationDigest",
+            "IngestWorkerBuildDigest", "RendererBuildDigest", "SourceRevision", "ConfigurationDigest", "ApiBuildDigest", "DatabaseRootCertificateSha256" };
         var priorHistoryEnvironment = historyNames.ToDictionary(name => name, name => Environment.GetEnvironmentVariable("Recovery__" + name));
         try
         {
             var digest = new string('a', 64);
             foreach (var (name, value) in new[] { ("Environment", "fixture"), ("RecoveryWorkerBuildDigest", digest),
-                ("OwnerId", FixtureFactory.Owner), ("LibraryId", FixtureFactory.Library), ("ControlTableName", "control"), ("MigrationDigest", digest) })
+                ("OwnerId", FixtureFactory.Owner), ("LibraryId", FixtureFactory.Library), ("ControlTableName", "control"), ("MigrationDigest", digest),
+                ("IngestWorkerBuildDigest", new string('d', 64)), ("RendererBuildDigest", new string('e', 64)), ("SourceRevision", "revision"),
+                ("ConfigurationDigest", digest), ("ApiBuildDigest", digest), ("DatabaseRootCertificateSha256", digest) })
                 Environment.SetEnvironmentVariable("Recovery__" + name, value);
             Dictionary<string, string> Pins(string migration) => new()
             {
@@ -66,7 +69,10 @@ internal static class RecoveryLatestPointDiscoveryChecks
                 ["OwnerUserPoolId"] = "pool",
                 ["OwnerUserPoolClientId"] = "client",
                 ["OwnerUserPoolIssuer"] = "https://issuer.invalid",
-                ["MigrationDirectory"] = "private-migrations"
+                ["MigrationDirectory"] = "private-migrations",
+                ["IngestWorkerBuildDigest"] = digest,
+                ["RendererBuildDigest"] = digest,
+                ["DatabaseRootCertificateSha256"] = digest
             };
             var bindings = new[] { new RecoveryLifecycleHistoryBinding(first.PointId, Pins(digest)),
                 new RecoveryLifecycleHistoryBinding(second.PointId, Pins(new string('b', 64))) };
@@ -74,6 +80,23 @@ internal static class RecoveryLatestPointDiscoveryChecks
             var scoped = new RecoveryWorkerConfiguration("hold-release", bindings[1].Pins);
             Check(config.RequiredHash("MigrationDigest") != scoped.RequiredHash("MigrationDigest") && scoped.Required("OwnerId") == FixtureFactory.Owner,
                 "Historical pins changed owner authority or mutated the runtime configuration");
+            var historicalConfiguration = new RecoveryWorkerConfiguration("hold-release", bindings[0].Pins);
+            var historicalRelease = new CaptureReleaseBindingV1(1, digest, digest, digest, digest, "revision");
+            var historicalSource = new CaptureConfigurationV1(1, "fixture", "revision", "111111111111", "ap-southeast-1", digest, digest, digest);
+            CopyRunner.ValidateBuildBinding(historicalConfiguration, first.Manifest with { MigrationDigest = digest },
+                historicalRelease, historicalSource);
+            await ExpectSafeCode(() =>
+            {
+                CopyRunner.ValidateBuildBinding(config, first.Manifest with { MigrationDigest = digest }, historicalRelease, historicalSource);
+                return Task.CompletedTask;
+            }, "release_binding_mismatch");
+            var currentRelease = historicalRelease with { IngestWorkerBuildDigest = new string('d', 64), RendererBuildDigest = new string('e', 64) };
+            CopyRunner.ValidateBuildBinding(config, first.Manifest with { MigrationDigest = digest }, currentRelease, historicalSource);
+            await ExpectSafeCode(() =>
+            {
+                CopyRunner.ValidateBuildBinding(historicalConfiguration, first.Manifest with { MigrationDigest = digest }, currentRelease, historicalSource);
+                return Task.CompletedTask;
+            }, "release_binding_mismatch");
             var historyDatabase = new LatestDynamo(factory.Rows(first, second));
             historyDatabase.ReplaceIndex(factory.Index(second, 2));
             var inventory = await RecoveryLifecycleHistoryBindings.ReadCompleteInventoryAsync(config,
