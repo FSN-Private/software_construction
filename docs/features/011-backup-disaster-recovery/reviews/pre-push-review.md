@@ -1,11 +1,11 @@
 # Feature 011 independent adversarial review
 
-**Date**: 2026-10-08
+**Date**: 2026-10-15
 **Alternate model**: `gpt-6-astra` (implementer `gpt-6.1-sol`)
-**Remote/destination**: `origin`, `feature/011-backup-disaster-recovery-fresh`
-**Base**: `8b2a121` (`origin/master`); initial reviewed range `8b2a121..b6942fe`
-**Push scope**: Owner authorized publication of the complete development checkpoint to the same destination ref, CI monitoring and rebase merge of PR #32 only if CI passes. Feature completion, deployment and production qualification are separate gates.
-**Gate**: PASS for complete development range `8b2a121..d69f5b2` plus this unchanged review-only milestone; no unresolved blocking findings. Green CI required for merge. Feature completion and production qualification remain incomplete.
+**Remote/destination**: `origin`, `fix/011-release-packaging` (maintenance follow-up; historical feature destination retained in prior rounds).
+**Base**: `d0e2759e8553093b229bf74b29b09d2918c6007d` (`origin/master` merged PR #32); current reviewed range `d0e2759..53c968c`.
+**Push scope**: Local packaging-fix checkpoint plus final review milestone; publication of this new maintenance branch is not authorized by the fix-only request. Prior PR #32 publication/merge authorization is historical.
+**Gate**: PASS for packaging-only range `d0e2759..53c968c` plus this unchanged review-only milestone. No unresolved blocking findings. Prior PASS scopes remain preserved; no deployment or production qualification is claimed.
 
 ## Round 1
 
@@ -184,3 +184,17 @@ PR#32 run38397983009 now passes nativeTLS/Windows/web/security/infrastructure. B
 ## Implementation round 20 - 2026-10-13
 
 Reviewer: **gpt-6-astra**, read-only review of complete revised development range8b2a121..d69f5b2 with detailed follow-up ofa2c8806..d69f5b2 and pending round19/final record. **PASS; all prior blocking dispositions remain accepted, no new supported blocker and no valid unresolved blocking finding remains.** Nullable-content handling preserves ownership, locking, holds, purge, lifecycle, transactions and immutable replay; metadata-only ledger events remain complete without fabricated object references. Unique regression GUIDs resolve the capacity collision. The reviewer independently verified committed/pending whitespace and accepted round19's accuracy; executable/capacity results were inspected, not rerun. The reviewer explicitly agrees the final pending record may be committed unchanged as the dedicated milestone. Push scope8b2a121..d69f5b2 plus this review-only commit to origin/feature/011-backup-disaster-recovery-fresh, PR#32. GreenGitHubCI still required for the authorized rebase merge; no feature completion or production qualification certified.
+
+## Implementation round 21 - 2026-10-15
+
+Maintenance packaging follow-up, base d0e2759 (merged PR#32), branch fix/011-release-packaging, proposed remote origin same branch. Scope d0e2759..53c968c plus pending record. Owner requested fixes for release run38742049012, which failed API Docker publish (omitted existing recovery project) and Windows NU1004 (missing recovery win-x64 runtime/lock target). T025, NFR-009/015/016. Fix adds Docker restore/source COPY inputs and matches storage's existing runtime declaration; only an empty net10.0/win-x64 lock target is new. No package source/version/hash, application behavior, image/action pin, privilege or qualification-gate changes. Both actual Docker builds, exact Windows packaging command, delivered-assembly inspections (API runtime UID1654 and ZIP), recovery locked restore/Release executable and diff check PASS. Validation.md records exact commands and scope. No mock-only test is substituted for the formerly failing package operations. Independent read-only alternate-model review pending; previous blocking dispositions remain historical, not reopening full feature-completion certification. No publication, deployment, migration or provider operation occurred. Production qualification and unfinished feature tasks remain binding.
+
+## Implementation round 22 - 2026-10-15
+
+Reviewer: **gpt-6-astra** (implementer gpt-6.1-sol), independent read-only alternate-model review of the complete maintenance range d0e2759..53c968c and pending record, origin/fix/011-release-packaging. Prompt covered T025/NFR-009/015/016 packaging, build/runtime compatibility, dependency/supply-chain risk, security/privileges, tests, release boundaries and traceability. **PASS; no supported blocking finding in those inspected areas and no valid unresolved blocking finding remains.** Docker COPY inputs cover the existing API-to-recovery-to-storage graph; win-x64 declaration matches established API/storage packaging and adds only the empty runtime lock target. Prior blocking dispositions remain applicable because their code/tests/gates are unchanged. Incomplete full-feature/cloud qualification remains a separate binding gate.
+
+The reviewer independently passed parsed exact lockfile comparison, committed/pending whitespace, zero-behind/one-ahead baseline divergence and Windows ZIP assembly inspection. Docker inspection was denied by the reviewer's sandbox, so reported actual Docker builds/non-root assembly inspection and recovery executable results were inspected evidence, not independently rerun. This limitation does not replace the supplied passing execution evidence.
+
+**R21-N1 - Non-blocking, Low, review-record accuracy:** editing the current header initially also replaced the archived specification-only review's historical Base. No code or release effect. Implementer assessed valid and corrected it by restoring the entire archived section byte-for-byte from HEAD; the reviewer explicitly accepted that correction. No prior finding or agreement was removed.
+
+The reviewer explicitly agrees that the final pending header and rounds21-22 accurately capture the review, findings, validation and limitations and may be committed unchanged as the dedicated review milestone. Exact proposed publication scope: d0e2759..53c968c plus this review-only commit to origin/fix/011-release-packaging. This record does not authorize publication, merge, deployment or production qualification; no such operation occurred in this maintenance slice.
