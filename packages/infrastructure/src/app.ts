@@ -21,6 +21,8 @@ if (recoveryEnabledValue !== undefined && recoveryEnabledValue !== 'true' && rec
   throw new Error('CDK context recovery must be exactly true or false.');
 }
 const recoveryEnabled = recoveryEnabledValue === 'true';
+const recoveryContext = (name: string, offlineValue: string): string =>
+  recoveryEnabled ? requiredContext(name, offlineValue) : '';
 const recoveryStackOnlyValue = app.node.tryGetContext('recoveryStackOnly');
 if (recoveryStackOnlyValue !== undefined && recoveryStackOnlyValue !== 'true' && recoveryStackOnlyValue !== 'false') {
   throw new Error('CDK context recoveryStackOnly must be exactly true or false.');
@@ -59,24 +61,24 @@ const computedMigrationDigest = (() => {
   }
   return digest.digest('hex');
 })();
-const recoveryMigrationDigest = requiredContext('recoveryMigrationDigest', computedMigrationDigest).toLowerCase();
-if (!/^[a-f0-9]{64}$/.test(recoveryMigrationDigest) || recoveryMigrationDigest !== computedMigrationDigest) {
+const recoveryMigrationDigest = recoveryContext('recoveryMigrationDigest', computedMigrationDigest).toLowerCase();
+if (recoveryEnabled && (!/^[a-f0-9]{64}$/.test(recoveryMigrationDigest) || recoveryMigrationDigest !== computedMigrationDigest)) {
   throw new Error('recoveryMigrationDigest must match the ordered SQL artifacts embedded in the recovery-worker image.');
 }
 const offlineDatabaseRootCertificate = '-----BEGIN CERTIFICATE-----\noffline-only-placeholder\n-----END CERTIFICATE-----';
 const offlineDatabaseRootCertificateSha256 = createHash('sha256').update(offlineDatabaseRootCertificate, 'utf8').digest('hex');
 const offlinePlaceholderSpkiBase64 = 'A'.repeat(128);
-const databaseRootCertificate = requiredContext('recoveryDatabaseRootCertificate', offlineDatabaseRootCertificate);
+const databaseRootCertificate = recoveryContext('recoveryDatabaseRootCertificate', offlineDatabaseRootCertificate);
 const computedDatabaseRootCertificateSha256 = createHash('sha256').update(databaseRootCertificate, 'utf8').digest('hex');
-const databaseRootCertificateSha256 = requiredContext('recoveryDatabaseRootCertificateSha256', offlineDatabaseRootCertificateSha256).toLowerCase();
-if (!/^[a-f0-9]{64}$/.test(databaseRootCertificateSha256) || databaseRootCertificateSha256 !== computedDatabaseRootCertificateSha256) {
+const databaseRootCertificateSha256 = recoveryContext('recoveryDatabaseRootCertificateSha256', offlineDatabaseRootCertificateSha256).toLowerCase();
+if (recoveryEnabled && (!/^[a-f0-9]{64}$/.test(databaseRootCertificateSha256) || databaseRootCertificateSha256 !== computedDatabaseRootCertificateSha256)) {
   throw new Error('recoveryDatabaseRootCertificateSha256 must match the exact database root certificate PEM bytes.');
 }
-const recoveryApiBuildDigest = requiredContext('recoveryApiImageDigest', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb').toLowerCase();
-const recoveryIngestWorkerBuildDigest = requiredContext('recoveryIngestWorkerImageDigest', 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee').toLowerCase();
-const recoveryRendererBuildDigest = requiredContext('recoveryRendererImageDigest', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff').toLowerCase();
-const recoveryTemplateDigest = requiredContext('recoveryTemplateDigest', '9999999999999999999999999999999999999999999999999999999999999999').toLowerCase();
-const recoveryConfigurationDigest = requiredContext('recoveryConfigurationDigest', '8888888888888888888888888888888888888888888888888888888888888888').toLowerCase();
+const recoveryApiBuildDigest = recoveryContext('recoveryApiImageDigest', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb').toLowerCase();
+const recoveryIngestWorkerBuildDigest = recoveryContext('recoveryIngestWorkerImageDigest', 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee').toLowerCase();
+const recoveryRendererBuildDigest = recoveryContext('recoveryRendererImageDigest', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff').toLowerCase();
+const recoveryTemplateDigest = recoveryContext('recoveryTemplateDigest', '9999999999999999999999999999999999999999999999999999999999999999').toLowerCase();
+const recoveryConfigurationDigest = recoveryContext('recoveryConfigurationDigest', '8888888888888888888888888888888888888888888888888888888888888888').toLowerCase();
 for (const [name, digest] of [
   ['recoveryApiImageDigest', recoveryApiBuildDigest],
   ['recoveryIngestWorkerImageDigest', recoveryIngestWorkerBuildDigest],
@@ -84,7 +86,7 @@ for (const [name, digest] of [
   ['recoveryTemplateDigest', recoveryTemplateDigest],
   ['recoveryConfigurationDigest', recoveryConfigurationDigest],
 ] as const) {
-  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error(`CDK context ${name} must be a SHA-256 digest.`);
+  if (recoveryEnabled && !/^[a-f0-9]{64}$/.test(digest)) throw new Error(`CDK context ${name} must be a SHA-256 digest.`);
 }
 const recoveryLibraryId = recoveryEnabled ? requiredContext('recoveryLibraryId', '00000000-0000-0000-0000-000000000011') : undefined;
 const recoveryOwnerIdValue = recoveryEnabled ? app.node.tryGetContext('recoveryOwnerId') : undefined;

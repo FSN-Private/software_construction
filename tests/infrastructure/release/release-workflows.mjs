@@ -12,6 +12,21 @@ const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
 
+const previousReadiness = deployScript.slice(deployScript.indexOf('if test "$PREVIOUS_API_COUNT"'),
+  deployScript.indexOf('if test "$PREVIOUS_RENDERER_COUNT"'));
+assert.ok(previousReadiness.includes('/ready'));
+for (const [api, renderer, expected] of [[0, 0, ''], [1, 0, 'probe'], [0, 1, 'probe'], [1, 1, 'probe']]) {
+  const result = spawnSync(bash, ['-c', `set -e; calls=''; curl() { calls=probe; }; ${previousReadiness}\nprintf '%s' "$calls"`], {
+    encoding: 'utf8', env: { ...process.env, PREVIOUS_API_COUNT: String(api), PREVIOUS_RENDERER_COUNT: String(renderer) },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, expected, `Previous-service readiness for API=${api}, renderer=${renderer}`);
+}
+const rejectedReadiness = spawnSync(bash, ['-c', `set -e; curl() { return 22; }; ${previousReadiness}\nexit 0`], {
+  env: { ...process.env, PREVIOUS_API_COUNT: '1', PREVIOUS_RENDERER_COUNT: '0' },
+});
+assert.equal(rejectedReadiness.status, 22, 'An enabled previous release must still pass readiness.');
+
 for (const [name, workflow] of Object.entries(workflows)) {
   assert.ok(workflow.match(immutableAction)?.length, `${name} must use full-SHA action pins.`);
   assert.ok(!workflow.includes('@main') && !workflow.includes('@master') && !workflow.includes('@latest'), `${name} must not use a mutable action reference.`);

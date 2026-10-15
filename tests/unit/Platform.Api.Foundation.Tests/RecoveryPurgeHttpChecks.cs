@@ -91,7 +91,7 @@ internal static class RecoveryPurgeHttpChecks
             ?? throw new InvalidOperationException("Expected pending restore session.");
         Check(requested.StatusCode==HttpStatusCode.Accepted && restoreSession.State=="requested" &&
             requested.Headers.CacheControl?.Private==true && requested.Headers.CacheControl.NoStore,
-            "Recently authenticated restore requests enter private isolated pending state.");
+            $"Recently authenticated restore requests enter private isolated pending state. HTTP {(int)requested.StatusCode}: {await requested.Content.ReadAsStringAsync()}");
         var replay=await client.PostAsJsonAsync("/v1/recovery/sessions",restoreRequest);
         Check(replay.StatusCode==HttpStatusCode.Accepted &&
             (await replay.Content.ReadFromJsonAsync<RecoverySessionView>())?.SessionId==restoreSession.SessionId &&

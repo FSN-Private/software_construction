@@ -24,7 +24,9 @@ internal static class RecoveryIntegrationChecks
         var evidenceKeyId = "recovery-evidence-key-test";
         var evidenceFingerprint = RecoveryEvidenceCodec.Hash(evidenceSpki);
         var trust = new RecoverySigningTrust(evidenceKeyId, Convert.ToBase64String(evidenceSpki), evidenceFingerprint);
-        var now = TruncateToMicrosecond(DateTimeOffset.UtcNow);
+        // Later catalogs advance by seconds; keep every positive fixture in the real past
+        // because the retained store independently rejects future evidence using wall time.
+        var now = TruncateToMicrosecond(DateTimeOffset.UtcNow.AddMinutes(-1));
         var clock = new FixedTimeProvider(now.AddMinutes(2));
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -333,6 +335,14 @@ internal static class RecoveryIntegrationChecks
         await using var connection = await db.OpenConnectionAsync();
         await using (var transaction = await connection.BeginTransactionAsync())
         {
+            var future = Catalog(point.OwnerId, point.LibraryId, DateTimeOffset.UtcNow.AddHours(1), Guid.NewGuid(), Guid.NewGuid());
+            try
+            {
+                await RestoreSessionStore.ImportVerifiedPointAsync(connection, transaction,
+                    SignCatalog(future, evidenceRsa, evidenceKeyId, evidenceFingerprint), trust);
+                throw new InvalidOperationException("Future signed evidence was accepted.");
+            }
+            catch (InvalidDataException error) when (error.Message == "recovery_catalog_future_timestamp") { }
             await using var insertContent = new NpgsqlCommand("""
                 INSERT INTO content_objects(sha256,byte_length,category,storage_key,storage_version,integrity_state)
                 VALUES ($1,$2,'original',$3,'source-exact-version','authoritative')

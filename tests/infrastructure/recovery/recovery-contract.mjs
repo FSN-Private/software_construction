@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { verifyRecoveryTemplate } from '../../../scripts/verify-recovery-template.mjs';
+import './context-contract.mjs';
 
 const foundation = JSON.parse(readFileSync('packages/infrastructure/cdk.out-recovery/PlatformFoundation-nonprod.template.json', 'utf8'));
 const recoveryBytes = readFileSync('packages/infrastructure/cdk.out-recovery/Recovery-nonprod.template.json');
