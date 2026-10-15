@@ -7,6 +7,8 @@ COPY global.json ./
 COPY packages/contracts/Platform.Contracts.csproj packages/contracts/
 COPY packages/storage/Platform.Storage.csproj packages/storage/
 COPY packages/storage/packages.lock.json packages/storage/
+COPY packages/recovery/Platform.Recovery.csproj packages/recovery/
+COPY packages/recovery/packages.lock.json packages/recovery/
 COPY apps/api/Platform.Api.csproj apps/api/
 COPY apps/api/packages.lock.json apps/api/
 RUN dotnet restore apps/api/Platform.Api.csproj --locked-mode
@@ -14,6 +16,7 @@ RUN dotnet restore apps/api/Platform.Api.csproj --locked-mode
 COPY apps/api/ apps/api/
 COPY packages/contracts/ packages/contracts/
 COPY packages/storage/ packages/storage/
+COPY packages/recovery/ packages/recovery/
 RUN dotnet publish apps/api/Platform.Api.csproj --configuration Release --no-restore --output /out /p:UseAppHost=false
 
 # ASP.NET runtime 10.0 multi-platform manifest, resolved 2026-09-04.

@@ -109,3 +109,5 @@ M0 approves and commits artifacts/ADR. M1 commits shared schema/contracts/verifi
 ## Owner approval
 
 Approved on 2026-10-05 by the product owner: proceed with this design and its numbered tasks, including media-only purge retaining historical paths/descriptive metadata, independent recovery identity/key custody, 15-minute coordinated capture and recovery-controlled copies, Glacier Instant Retrieval after 90 days, validation and release gates. Concrete workload/budget/account/recipient inputs are deferred to external qualification as permitted above. This approval authorizes local implementation, validation, milestone commits and remediation, but no external deployment, live restore/purge, push or merge.
+
+2026-10-15 maintenance follow-up: PR #32 merged by rebase as d0e2759e8553093b229bf74b29b09d2918c6007d. Branch fix/011-release-packaging starts at that current origin/master revision (zero divergence), preserving both existing feature branches. Owner approved fixing the two release-packaging failures; this T025 compatibility maintenance changes no recovery behavior, production approval or qualification gate.
