@@ -40,7 +40,8 @@ try {
   createdDatabase = true;
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
-    const result = spawnSync('docker', ['exec', database, 'pg_isready', '--username', 'postgres', '--dbname', 'recovery_source'], { stdio: 'ignore' });
+    // The temporary initialization server accepts Unix sockets before TCP is ready.
+    const result = spawnSync('docker', ['exec', database, 'pg_isready', '--host', '127.0.0.1', '--username', 'postgres', '--dbname', 'recovery_source'], { stdio: 'ignore' });
     if (result.status === 0) { ready = true; break; }
     await new Promise(done => setTimeout(done, 1000));
   }
