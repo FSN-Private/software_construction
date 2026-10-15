@@ -11,6 +11,10 @@ on:
         description: Successful Build release evidence workflow run ID for a master revision.
         required: true
         type: string
+      bootstrap_rendering_fixtures:
+        description: Create genuine owner RAW/XMP acceptance fixtures for initial non-production setup.
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -61,6 +65,8 @@ jobs:
       RENDERING_ACCEPTANCE_FIXTURES: ${{ vars.AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURES }}
       RELEASE_DIR: artifacts/release
       DEPLOYMENT_RECORD: artifacts/release/nonprod-deployment.json
+      DEPLOYMENT_ENVIRONMENT: nonprod
+      BOOTSTRAP_RENDERING_FIXTURES: ${{ inputs.bootstrap_rendering_fixtures && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -76,6 +82,7 @@ jobs:
         run: |
           missing=()
           for name in AWS_REGION AWS_ROLE_ARN ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY RENDERER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE DATABASE_INSTANCE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER RENDERER_SERVICE RENDERER_TASK_DEFINITION ECS_RENDERER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD RENDERING_ACCEPTANCE_FIXTURES VERSION_CONTROL_HEARTBEAT_ALARM; do
+            if test "$name" = RENDERING_ACCEPTANCE_FIXTURES && test "$BOOTSTRAP_RENDERING_FIXTURES" = true; then continue; fi
             test -n "${!name:-}" || missing+=("$name")
           done
           test "${#missing[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${missing[@]}"; exit 1; }

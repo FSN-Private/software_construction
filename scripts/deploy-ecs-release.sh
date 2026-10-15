@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" = true; then
+  test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod || { echo 'Fixture bootstrap is restricted to nonprod.'; exit 1; }
+elif test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" != false; then
+  echo 'BOOTSTRAP_RENDERING_FIXTURES must be true or false.'; exit 1
+fi
 MISSING=()
 for NAME in RELEASE_DIR DEPLOYMENT_RECORD SOURCE_REVISION RELEASE_RUN_ID AWS_REGION ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY RENDERER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER RENDERER_SERVICE RENDERER_TASK_DEFINITION ECS_RENDERER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD RENDERING_ACCEPTANCE_FIXTURES; do
+  if test "$NAME" = RENDERING_ACCEPTANCE_FIXTURES && test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" = true; then continue; fi
   test -n "${!NAME:-}" || MISSING+=("$NAME")
 done
 test "${#MISSING[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${MISSING[@]}"; exit 1; }
@@ -133,6 +139,10 @@ bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$WORKER_SERVICE" "$WORKE
 bash scripts/assert-ecs-service-task.sh "$ECS_CLUSTER" "$RENDERER_SERVICE" "$RENDERER_TASK_ARN"
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL/live" >/dev/null
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
+if test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" = true; then
+  timeout 300 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/bootstrap-rendering-fixtures.mjs "$HEALTH_URL" "$RELEASE_DIR/rendering-fixtures.json"
+  RENDERING_ACCEPTANCE_FIXTURES="$(jq -ce .fixtures "$RELEASE_DIR/rendering-fixtures.json")"
+fi
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/pause" >/dev/null
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
 ACCEPTANCE_ACTIVE=1
