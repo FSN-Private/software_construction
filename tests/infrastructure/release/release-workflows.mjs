@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import './rendering-fixture-bootstrap.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
@@ -11,6 +12,16 @@ const migrationScript = readFileSync('scripts/run-ecs-migration.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
+
+assert.match(workflows['deploy-nonprod.yml'], /bootstrap_rendering_fixtures:[\s\S]*?type: boolean[\s\S]*?default: false/);
+assert.ok(!workflows['release.yml'].includes('BOOTSTRAP_RENDERING_FIXTURES'));
+assert.ok(deployScript.indexOf('scripts/bootstrap-rendering-fixtures.mjs') < deployScript.indexOf('scripts/smoke-rendering.mjs'));
+for (const environment of ['production', '']) {
+  const rejected = spawnSync(bash, ['scripts/deploy-ecs-release.sh'], { encoding: 'utf8',
+    env: { ...process.env, BOOTSTRAP_RENDERING_FIXTURES: 'true', DEPLOYMENT_ENVIRONMENT: environment } });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stdout, /restricted to nonprod/);
+}
 
 const previousReadiness = deployScript.slice(deployScript.indexOf('if test "$PREVIOUS_API_COUNT"'),
   deployScript.indexOf('if test "$PREVIOUS_RENDERER_COUNT"'));
