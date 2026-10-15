@@ -445,6 +445,7 @@ export class PlatformFoundationStack extends Stack {
     for (const [id, namespace, metricName, threshold] of [
       ['DeploymentFailureAlarm', 'Platform/Delivery', 'DeploymentFailures', 1],
       ['CiFailureAlarm', 'Platform/Delivery', 'CiFailures', 1],
+      ...(!props.recoveryIntegration ? [['BackupAgePlaceholderAlarm', 'Platform/Data', 'BackupAgeHours', 26] as const] : []),
     ] as const) {
       const alarm = new Alarm(this, id, { metric: new Metric({ namespace, metricName, statistic: 'Maximum', period: Duration.minutes(5) }), threshold, evaluationPeriods: 1, comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD, treatMissingData: TreatMissingData.BREACHING, alarmDescription: `Owner: ${props.alertEmail}. Runbook: ${runbook}` });
       alarm.addAlarmAction(new SnsAction(alerts));

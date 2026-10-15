@@ -105,7 +105,11 @@ rollback() {
 trap rollback ERR INT TERM
 ID_TOKEN="$(aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" --auth-parameters "USERNAME=$COGNITO_OWNER_USERNAME,PASSWORD=$COGNITO_OWNER_PASSWORD" --query 'AuthenticationResult.IdToken' --output text)"
 test -n "$ID_TOKEN" && test "$ID_TOKEN" != None
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
+# A scheduled shutdown or first deployment has no previous API to probe.
+# Keep the old-release readiness/drain gate whenever either service was enabled.
+if test "$PREVIOUS_API_COUNT" != 0 || test "$PREVIOUS_RENDERER_COUNT" != 0; then
+  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/ready" >/dev/null
+fi
 if test "$PREVIOUS_RENDERER_COUNT" != 0; then
   INTAKE_PAUSED=1
   curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
