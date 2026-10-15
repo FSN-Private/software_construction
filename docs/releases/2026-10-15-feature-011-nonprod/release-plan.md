@@ -1,0 +1,21 @@
+# Feature 011 non-production deployment
+
+Owner: platform maintainer; execution by the repository agent under the owner's 2026-10-15 instruction to push and deploy. Production promotion and independent recovery-account provisioning remain outside this release.
+
+Source: packaging fix PR #33, merged as 74c39725392c6eb38f44a542c919a690c6c48ccf, plus the T025 native-readiness follow-up. Use the final merged SHA and exact run-bound artifacts reported by GitHub; never substitute an earlier failed release. Feature scope and limitations remain in [the plan](../../features/011-backup-disaster-recovery/plan.md) and [numbered tasks](../../features/011-backup-disaster-recovery/tasks.md).
+
+## Execution and evidence
+
+1. Require the alternate-model review and all six PR checks to pass before rebase merge. Repeat the configured master CI; any failure prevents release packaging. Native readiness must use TCP so the temporary socket-only PostgreSQL initialization process cannot satisfy the probe.
+2. Require Build release evidence to succeed for that exact merged revision. Verify the checksummed manifest, preserved provenance/CI identifiers and API, ingest, renderer, recovery-worker, web, infrastructure and Windows artifacts through the existing workflow. No fixture qualification may become healthy production evidence.
+3. Let Deploy non-production verify that release manifest before AWS credentials or deployment writes. Existing protected nonprod variables, OIDC role, Cognito owner secrets, renderer fixtures and heartbeat alarm are prerequisites. Missing settings, denied credentials or environment approval stop deployment; do not widen IAM or alter trust to proceed.
+4. Use the existing [deployment runbook](../../runbooks/deployment-recovery.md) and scripts/deploy-ecs-release.sh. Start/wait for the named nonprod RDS database, retain previous API/worker/renderer task definitions and desired counts, run the dedicated migration task, then update only the configured services. Preserve current backup retention and exact immutable source/evidence bindings. No new secret, recovery-account stack or production environment change is part of this release.
+5. Require service stability, successful /live and authenticated /ready, bounded rendering and ingest smoke checks, restored heartbeat notifications, and successful nonprod-deployment-evidence upload. A merged commit or successful artifact build alone is not deployment success. Verify the final evidence sourceRevision equals the final merged SHA and record the workflow URLs/status in the delivery report.
+
+## Abort and rollback
+
+Abort on any nonzero verifier, migration, stability, readiness or smoke result, missing configuration, foreign revision/digest, denied authority or failed workflow. The deploy script bounds migration/deployment execution and smoke requests and retains previous service revisions/counts. Its post-migration error trap restores service versions/counts and renderer intake where applicable; inspect the actual result rather than assuming rollback succeeded.
+
+Application rollback does not reverse schema or restore data. Existing RDS backup/restore and database recovery procedures remain authoritative; do not perform destructive schema rollback or restore over data without a separate decision. This follow-up changes packaging and test readiness only; feature migrations remain the already reviewed additive release migrations. Stop on unexpected migration/data compatibility findings.
+
+Status: PR #33 passed all checks and merged. First master run 38767831382 failed the native initialization race before release/deployment; bounded T025 repair and renewed review are in progress. The prior release 38742049012 failed packaging and its deployment was skipped. No successful deployment or independent disaster-recovery qualification is claimed yet. Workflow artifacts retain attributable timestamps and task/image identities; update the delivery report only after their observed result.
