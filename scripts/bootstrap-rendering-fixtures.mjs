@@ -4,17 +4,22 @@ import { pathToFileURL } from 'node:url';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
-export async function bootstrapRenderingFixtures(baseUrl, token, output) {
-  if (!baseUrl || !token || !output) throw new Error('Fixture bootstrap needs a base URL, owner token and output path.');
-  const raw = await readFile('tests/rendering/corpus/IMG_9406.CR2');
-  if (hash(raw) !== '08b0843a7968315b68bd3c71a96c952ebf275d5b5eba4b6094ae8b103522584c')
+export async function renderingFixtureInputs() {
+  const raw = await readFile('tests/rendering/corpus/Pentax-K10D.dng');
+  if (hash(raw) !== 'e7ea961edfea725ad2753f261d20da5e6addd5d641e5bcbc373999710f27941f')
     throw new Error('RAW fixture differs from the CC0 corpus pin.');
   const xmps = await Promise.all(['current', 'historical-v1', 'historical-v2', 'historical-v3']
-    .map(name => readFile(`tests/rendering/corpus/${name}.xmp`)));
-  // Fifth authored state uses neutral exposure; the existing four states remain exact corpus bytes.
+    .map(async name => Buffer.from((await readFile(`tests/rendering/corpus/${name}.xmp`, 'utf8')).replaceAll('IMG_9406.CR2', 'sample.dng'))));
+  // Adapt the authored corpus sidecars to the supported DNG; the fifth state uses neutral exposure.
   const neutral = xmps[0].toString().replace('0000803f0000803f0000803f00004842000080c0', '0000803f000000000000803f00004842000080c0');
   xmps.push(Buffer.from(neutral));
   if (new Set(xmps.map(hash)).size !== 5) throw new Error('Expected five distinct RAW/XMP combinations.');
+  return { raw, xmps };
+}
+
+export async function bootstrapRenderingFixtures(baseUrl, token, output) {
+  if (!baseUrl || !token || !output) throw new Error('Fixture bootstrap needs a base URL, owner token and output path.');
+  const { raw, xmps } = await renderingFixtureInputs();
   const root = `deployment-rendering-fixtures/${randomUUID()}`;
   const libraryId = 'main';
   const request = async (route, options = {}) => {
@@ -49,10 +54,10 @@ export async function bootstrapRenderingFixtures(baseUrl, token, output) {
     }
     throw new Error('Fixture publication timed out.');
   }
-  const original = await upload(`${root}/IMG_9406.CR2`, raw);
+  const original = await upload(`${root}/sample.dng`, raw);
   const fixtures = [];
   for (const [index, xmp] of xmps.entries()) {
-    const path = `${root}/IMG_9406${index ? `_${String(index).padStart(2, '0')}` : ''}.CR2.xmp`;
+    const path = `${root}/sample${index ? `_${String(index).padStart(2, '0')}` : ''}.dng.xmp`;
     const edit = await upload(path, xmp);
     if (edit.assetId !== original.assetId || !edit.editId) throw new Error('Fixture XMP association differs from the uploaded RAW.');
     await request(`/v1/libraries/${libraryId}/version-control/working`, { method: 'PUT',
