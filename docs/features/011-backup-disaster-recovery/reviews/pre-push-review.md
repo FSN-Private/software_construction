@@ -2,10 +2,10 @@
 
 **Date**: 2026-10-15
 **Alternate model**: `gpt-6-astra` (implementer `gpt-6.1-sol`)
-**Remote/destination**: `origin`, `fix/011-release-packaging` (maintenance follow-up; historical feature destination retained in prior rounds).
-**Base**: `d0e2759e8553093b229bf74b29b09d2918c6007d` (`origin/master` merged PR #32); current reviewed range `d0e2759..53c968c`.
-**Push scope**: Local packaging-fix checkpoint plus final review milestone; publication of this new maintenance branch is not authorized by the fix-only request. Prior PR #32 publication/merge authorization is historical.
-**Gate**: PASS for packaging-only range `d0e2759..53c968c` plus this unchanged review-only milestone. No unresolved blocking findings. Prior PASS scopes remain preserved; no deployment or production qualification is claimed.
+**Remote/destination**: `origin`, `fix/011-native-readiness`; prior destinations remain in historical rounds.
+**Base**: `74c39725392c6eb38f44a542c919a690c6c48ccf` (`origin/master`, merged PR #33); current range `74c3972..d3cd8c1`.
+**Push scope**: Owner authorized push and configured nonprod deployment on 2026-10-15. Publish the bounded native-readiness maintenance fix plus its final review milestone; merge only after green CI. Production qualification remains gated.
+**Gate**: PASS for `74c3972..d3cd8c1` plus this unchanged review-only milestone. No unresolved blocking findings. Prior PASS scopes preserved; deployment remains conditional on CI/release gates.
 
 ## Round 1
 
@@ -198,3 +198,13 @@ The reviewer independently passed parsed exact lockfile comparison, committed/pe
 **R21-N1 - Non-blocking, Low, review-record accuracy:** editing the current header initially also replaced the archived specification-only review's historical Base. No code or release effect. Implementer assessed valid and corrected it by restoring the entire archived section byte-for-byte from HEAD; the reviewer explicitly accepted that correction. No prior finding or agreement was removed.
 
 The reviewer explicitly agrees that the final pending header and rounds21-22 accurately capture the review, findings, validation and limitations and may be committed unchanged as the dedicated review milestone. Exact proposed publication scope: d0e2759..53c968c plus this review-only commit to origin/fix/011-release-packaging. This record does not authorize publication, merge, deployment or production qualification; no such operation occurred in this maintenance slice.
+
+## Implementation round 23 - 2026-10-15
+
+Owner authorized push and deployment; packaging PR#33 passed all six checks and merged as74c3972. Master CI38767831382 failed native startup because its socket-based pg_isready accepted PostgreSQL's temporary initialization server before the TCP listener existed. Maintenance scope74c3972..d3cd8c1, origin/fix/011-native-readiness, T025/NFR-009/015/016. Fix adds explicit host127.0.0.1 to the existing60-attempt readiness probe; no TLS/role/privilege/pin/qualification/runtime behavior change. Isolated pinned-PostgreSQL reproduction proves old socket acceptance and new TCP refusal during initialization. Full native capture/restore, Node syntax and diff checks PASS. Added a proportional nonprod release plan with exact revision/evidence gates, migration/service checks, abort conditions and rollback limits. Prior production/feature-completion limits remain binding. Independent alternate-model read-only review of this complete maintenance range and pending record is required before revised push. No successful release or deployment claimed.
+
+## Implementation round 24 - 2026-10-15
+
+Reviewer: **gpt-6-astra** (implementer gpt-6.1-sol), independent read-only follow-up of complete maintenance range74c3972..d3cd8c1 and final pending header/rounds23-24, origin/fix/011-native-readiness. **PASS; no blocking or new non-blocking finding and no valid unresolved blocking finding remains.** Explicit TCP readiness cannot accept the socket-only init server. Existing bounded loop, final strict VerifyFull certificate/hostname checks, isolated network, cleanup, image pins and privileges remain unchanged. No supported blocker in inspected harness correctness/failure handling, runtime/build compatibility, dependency/security, validation adequacy or release-plan/evidence/rollback boundaries. Release plan matches the workflow/script: manifest verification before AWS credentials, post-migration service rollback with schema/data exclusion and an observed-result requirement. Prior blocking dispositions remain applicable; their code/gates are unaffected.
+
+The reviewer independently ran Node syntax, full-range/pending whitespace and zero-behind/one-ahead divergence checks. Native execution and deterministic socket/TCP reproduction were supplied passing evidence, not independently rerun. The reviewer explicitly agrees the final record accurately captures this review and may be committed unchanged as the dedicated review milestone. Exact authorized push scope:74c3972..d3cd8c1 plus this review-only commit to origin/fix/011-native-readiness. Merge, release packaging and the configured nonprod deployment remain conditional on their existing gates; no successful deployment or production qualification claimed.
