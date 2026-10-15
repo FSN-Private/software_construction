@@ -25,6 +25,7 @@ const server = createServer(async (req, res) => {
     let body = {};
     if (req.method === 'POST' && path === '/v1/import-batches') {
       const item = JSON.parse(bytes).items[0];
+      assert.ok(item.path.endsWith('.dng') || /sample(?:_0[1-4])?\.dng\.xmp$/.test(item.path));
       const id = randomUUID();
       batches.set(id, { ...item, bytes: [], editId: item.path.endsWith('.xmp') ? randomUUID() : null });
       body = { id, partSize: 8 * 1024 * 1024, items: [{ id }] };
@@ -68,7 +69,7 @@ try {
   assert.equal(new Set(record.fixtures.map(item => item.editId)).size, 5);
   assert.equal(new Set(record.xmpSha256).size, 5);
   assert.equal(working.length, 5);
-  assert.equal(parts, 7, 'One two-part RAW and five single-part sidecars.');
+  assert.equal(parts, 8, 'One three-part DNG and five single-part sidecars.');
   rejectPublication = true;
   await assert.rejects(bootstrapRenderingFixtures(baseUrl, 'test-owner-token', output), /quarantined/);
   rejectPublication = false; wrongAssociation = true;
