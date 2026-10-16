@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # .NET 10 SDK manifest pinned to the digest already used by the other workers.
-FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e6331e7af6d4c8d37168c5e87a64c AS build
+FROM mcr.microsoft.com/dotnet/sdk@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS build
 WORKDIR /src
 
 COPY global.json ./
@@ -24,7 +24,7 @@ RUN dotnet publish apps/recovery-worker/Platform.Recovery.Worker.csproj \
 # PostgreSQL 18.4 official image, multi-platform manifest pinned by digest.
 FROM postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382 AS runtime
 # .NET 10 ASP.NET runtime, pinned to the reviewed digest used by the API.
-COPY --from=mcr.microsoft.com/dotnet/aspnet@sha256:a4556ed033fa96f984bb7a8d348851cb2d36b1281dd2420070045f664fbb5f94 /usr/share/dotnet /usr/share/dotnet
+COPY --from=mcr.microsoft.com/dotnet/aspnet@sha256:d5633778c754e89a386882eddf8dbee6942447a8a4b8267c19cf1e1158d0b0ac /usr/share/dotnet /usr/share/dotnet
 WORKDIR /app
 COPY --from=build /out/ ./
 COPY --from=build /src/apps/api/Database/Migrations/ /app/migrations/

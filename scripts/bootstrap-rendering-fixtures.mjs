@@ -11,7 +11,11 @@ export async function renderingFixtureInputs() {
   const xmps = await Promise.all(['current', 'historical-v1', 'historical-v2', 'historical-v3']
     .map(async name => Buffer.from((await readFile(`tests/rendering/corpus/${name}.xmp`, 'utf8')).replaceAll('IMG_9406.CR2', 'sample.dng'))));
   // Adapt the authored corpus sidecars to the supported DNG; the fifth state uses neutral exposure.
-  const neutral = xmps[0].toString().replace('0000803f0000803f0000803f00004842000080c0', '0000803f000000000000803f00004842000080c0');
+  const current = xmps[0].toString();
+  const parameters = current.match(/darktable:params="([a-f0-9]+)"/)[1];
+  const neutralParameters = Buffer.from(parameters, 'hex');
+  neutralParameters.writeFloatLE(0, 8); // Legacy exposure v5 stores EV after mode and black correction.
+  const neutral = current.replace(`darktable:params="${parameters}"`, `darktable:params="${neutralParameters.toString('hex')}"`);
   xmps.push(Buffer.from(neutral));
   if (new Set(xmps.map(hash)).size !== 5) throw new Error('Expected five distinct RAW/XMP combinations.');
   return { raw, xmps };

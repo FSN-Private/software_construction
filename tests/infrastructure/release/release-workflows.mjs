@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import './rendering-fixture-bootstrap.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
@@ -12,6 +13,34 @@ const migrationScript = readFileSync('scripts/run-ecs-migration.sh', 'utf8');
 const rollbackScript = readFileSync('scripts/rollback-ecs-release.sh', 'utf8');
 const bash = process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : 'bash';
 const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
+
+const pixelWorkspace = mkdtempSync(join(tmpdir(), 'rendering-pixels-'));
+try {
+  const pixels = 'historical-v1.pfm';
+  const reference = readFileSync(`tests/rendering/corpus/reference/${pixels}`);
+  assert.equal(reference.toString('ascii', 0, 11), 'PF\n512 341\n');
+  const pixelCheck = renderingCorpus.slice(renderingCorpus.indexOf('  test -s "$workspace/$pixels"'), renderingCorpus.indexOf('  output_hash='));
+  for (const corruption of ['none', 'byte', 'nan', 'infinity', 'truncated', 'dimensions', 'header']) {
+    let candidate = Buffer.from(reference);
+    if (corruption === 'byte') candidate[candidate.length - 1] ^= 1;
+    if (corruption === 'nan') candidate.writeFloatLE(NaN, candidate.length - 4);
+    if (corruption === 'infinity') candidate.writeFloatLE(Infinity, candidate.length - 4);
+    if (corruption === 'truncated') candidate = candidate.subarray(0, -1);
+    if (corruption === 'dimensions') candidate.write('513', 3, 'ascii');
+    if (corruption === 'header') candidate[0] = 88;
+    writeFileSync(join(pixelWorkspace, pixels), candidate);
+    const checked = spawnSync(bash, ['-c', `set -e; ${pixelCheck}`], { encoding: 'utf8',
+      env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'), pixels, size: '512' } });
+    assert.equal(checked.status, corruption === 'none' ? 0 : 1, checked.stdout + checked.stderr);
+    if (corruption === 'byte') assert.match(checked.stderr, /Pixel reference mismatch: historical-v1\.pfm/);
+    if (corruption === 'nan' || corruption === 'infinity') assert.match(checked.stderr, /Non-finite PFM pixel/);
+    if (corruption === 'truncated') assert.match(checked.stderr, /PFM pixel length mismatch/);
+    if (corruption === 'dimensions') assert.match(checked.stderr, /PFM exceeds its size bound/);
+    if (corruption === 'header') assert.match(checked.stderr, /Expected a three-channel PFM/);
+  }
+} finally {
+  rmSync(pixelWorkspace, { recursive: true, force: true });
+}
 
 assert.match(workflows['deploy-nonprod.yml'], /bootstrap_rendering_fixtures:[\s\S]*?type: boolean[\s\S]*?default: false/);
 assert.ok(!workflows['release.yml'].includes('BOOTSTRAP_RENDERING_FIXTURES'));

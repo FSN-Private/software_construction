@@ -1,2 +1,4 @@
 docs/features/008-darktable-rendering/evidence/*.json -text
 docs/features/008-darktable-rendering/evidence/*.sarif -text
+docs/features/011-backup-disaster-recovery/evidence/portable-renderer-candidate-2026-10-16/*.json -text
+docs/features/011-backup-disaster-recovery/evidence/portable-renderer-candidate-2026-10-16/*.txt -text

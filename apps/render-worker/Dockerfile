@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e6331e7af6d4c8d37168c5e87a64c AS worker-build
+FROM mcr.microsoft.com/dotnet/sdk@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS worker-build
 WORKDIR /src
 COPY global.json ./
 COPY packages/contracts/Platform.Contracts.csproj packages/contracts/
@@ -9,7 +9,7 @@ COPY packages/contracts/ packages/contracts/
 COPY apps/render-worker/ apps/render-worker/
 RUN dotnet publish apps/render-worker/Platform.Render.Worker.csproj --configuration Release --no-restore --output /out /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet@sha256:a4556ed033fa96f984bb7a8d348851cb2d36b1281dd2420070045f664fbb5f94 AS dotnet-runtime
+FROM mcr.microsoft.com/dotnet/aspnet@sha256:d5633778c754e89a386882eddf8dbee6942447a8a4b8267c19cf1e1158d0b0ac AS dotnet-runtime
 
 FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 AS build
 
@@ -28,7 +28,7 @@ WORKDIR /build
 RUN curl --fail --location --proto '=https' --tlsv1.2 --output darktable.tar.xz "https://github.com/darktable-org/darktable/releases/download/release-${DARKTABLE_VERSION}/darktable-${DARKTABLE_VERSION}.tar.xz" \
     && echo "${DARKTABLE_SOURCE_SHA256}  darktable.tar.xz" | sha256sum --check \
     && tar --extract --file darktable.tar.xz --xz
-RUN cmake -S "darktable-${DARKTABLE_VERSION}" -B output -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/darktable -DBUILD_GUI=OFF -DUSE_GMIC=OFF -DUSE_OPENCL=OFF -DUSE_OPENEXR=OFF \
+RUN cmake -S "darktable-${DARKTABLE_VERSION}" -B output -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/darktable -DBINARY_PACKAGE_BUILD=ON -DBUILD_GUI=OFF -DUSE_GMIC=OFF -DUSE_OPENCL=OFF -DUSE_OPENEXR=OFF \
     && cmake --build output --parallel "${DARKTABLE_BUILD_JOBS}" \
     && cmake --install output
 
@@ -40,7 +40,7 @@ FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33
 # disabled because the configured renderer only produces JPEG and must not ship
 # its known-vulnerable parser.
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates darktable libpotrace0 \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates darktable libpotrace0 openssl libssl3t64 \
     && apt-get purge --yes darktable openexr libopenexr-3-1-30 \
     && rm -rf /var/lib/apt/lists/*
 

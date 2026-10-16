@@ -38,9 +38,13 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
     --width "$size" --height "$size" --library :memory:
 
   test -s "$workspace/$pixels"
-  test "$(sed -n '1p' "$workspace/$pixels")" = PF
-  test "$(sed -n '2p' "$workspace/$pixels")" = "$size $size"
-  cmp --silent "$workspace/$pixels" "$root/reference/$pixels"
+  node "$root/check-pfm.mjs" "$workspace/$pixels" "$size"
+  node "$root/check-pfm.mjs" "$root/reference/$pixels" "$size"
+  # The size bounds preserve aspect ratio; the approved PFM binds dimensions and pixels.
+  if ! cmp --silent "$workspace/$pixels" "$root/reference/$pixels"; then
+    printf 'Pixel reference mismatch: %s\n' "$pixels" >&2
+    exit 1
+  fi
   output_hash="$(sha256sum "$workspace/$output" | awk '{print $1}')"
   pixel_hash="$(sha256sum "$workspace/$pixels" | awk '{print $1}')"
   jpeg_hashes+=("$output_hash")
