@@ -1,0 +1,29 @@
+LOCAL CANDIDATE REFERENCE COMPARISON ONLY.
+Reference paths in ignored wrapper point to corrected candidates, not tracked approved PFMs.
+Does not change the approved-reference gate or qualify trusted Linux/cloud acceptance.
+
+IMG_9406.CR2: OK
+     5.2916 [export_job] exported to `/output/historical-v1.jpg'
+     5.6329 [export_job] exported to `/output/historical-v1.pfm'
+historical-v1.xmp size=512 xmp_sha256=ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef output_sha256=473d624c6306f12d5396589c56ce7e6d89881b019693825c34e2b8f43828cfae pixel_sha256=9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80 bytes=65039
+     7.4397 [export_job] exported to `/output/historical-v1-2048.jpg'
+     8.2166 [export_job] exported to `/output/historical-v1-2048.pfm'
+historical-v1.xmp size=2048 xmp_sha256=ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef output_sha256=29c58514e85f3af035e8c3f12d194e84edf54cc39f6f3e3d04f18e6e3d06524c pixel_sha256=c33280f598d2e168873e732d482f24f01538ac01851cfc60c9b835599f06fb4c bytes=996430
+    10.9300 [export_job] exported to `/output/historical-v2.jpg'
+     3.2563 [export_job] exported to `/output/historical-v2.pfm'
+historical-v2.xmp size=512 xmp_sha256=b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60 output_sha256=2c65d83b3f5f77552bad0c7f6ba17c20845fa8b283812d865f9194f6c75973b0 pixel_sha256=7055901d676f6e002bd40772cf8ffe90d0d03695c5e61211ee2caeafe8ba81a5 bytes=70340
+     4.2342 [export_job] exported to `/output/historical-v2-2048.jpg'
+     6.5098 [export_job] exported to `/output/historical-v2-2048.pfm'
+historical-v2.xmp size=2048 xmp_sha256=b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60 output_sha256=8758c882b5228e3a2be00188e8f291c077ed105df959d27c145660ff42d1df53 pixel_sha256=be682c8c7489ecd7d96b503a1565491380d5c23a51dee2da5765cd220d5ae577 bytes=1102251
+    28.4129 [export_job] exported to `/output/historical-v3.jpg'
+     4.3606 [export_job] exported to `/output/historical-v3.pfm'
+historical-v3.xmp size=512 xmp_sha256=487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08 output_sha256=18d366034686e7d45e867bddee79818e7c5c1e039e0be29fb4e797d51ad39f04 pixel_sha256=63e003ebdb9a7bc6ab1be7e5a94a8db20fbd3aa8c560e3d273ca32a8816dc93f bytes=82423
+     3.8177 [export_job] exported to `/output/historical-v3-2048.jpg'
+     6.1769 [export_job] exported to `/output/historical-v3-2048.pfm'
+historical-v3.xmp size=2048 xmp_sha256=487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08 output_sha256=a5ecc5737817180a06e3687034c07ddcc9d38efa2140ef21dac5a83c99ccf9a5 pixel_sha256=1f62491de0d20a01cbb07d3e4f127e7468b5324696b2d6f17324bd6e53865b30 bytes=1340500
+     4.4024 [export_job] exported to `/output/current.jpg'
+    22.6127 [export_job] exported to `/output/current.pfm'
+current.xmp size=512 xmp_sha256=cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092 output_sha256=e79b97e3de67569f19421f08c5ef4edd3b497c45e5ef3ee4da39c2d6b9ab19e5 pixel_sha256=02ab5fad75c3da9e480aa81e346235b4e0c261e3eb4d58e09c773077e21292b5 bytes=89220
+     9.7339 [export_job] exported to `/output/current-2048.jpg'
+     9.1736 [export_job] exported to `/output/current-2048.pfm'
+current.xmp size=2048 xmp_sha256=cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092 output_sha256=75be72d258c903f46bda8aab99feef59bc9a2afd693c8bea3b71ca90d90ea35c pixel_sha256=8da1d6cd35ed4a6e6c967810a690e3ed430f379c27f67f8137fa89a28998dbce bytes=1474297

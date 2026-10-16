@@ -1,0 +1,25 @@
+IMG_9406.CR2: OK
+     2.2241 [export_job] exported to `/output/historical-v1.jpg'
+     2.2735 [export_job] exported to `/output/historical-v1.pfm'
+historical-v1.xmp size=512 xmp_sha256=ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef output_sha256=9d5bead108f02384b2663df3d1da4db49112db8a58547010f200cd24c0d6abff pixel_sha256=9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80 bytes=65039
+     2.6865 [export_job] exported to `/output/historical-v1-2048.jpg'
+     3.5611 [export_job] exported to `/output/historical-v1-2048.pfm'
+historical-v1.xmp size=2048 xmp_sha256=ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef output_sha256=7339c20a987b4643ad9aa949df66109332c47e569ca7346521626d38b470b520 pixel_sha256=c33280f598d2e168873e732d482f24f01538ac01851cfc60c9b835599f06fb4c bytes=996430
+     2.3538 [export_job] exported to `/output/historical-v2.jpg'
+     2.7333 [export_job] exported to `/output/historical-v2.pfm'
+historical-v2.xmp size=512 xmp_sha256=b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60 output_sha256=318fc06e75b8df716ca9ab4de803e57b704409ec55443bb3239b55befe369165 pixel_sha256=7055901d676f6e002bd40772cf8ffe90d0d03695c5e61211ee2caeafe8ba81a5 bytes=70340
+     3.2247 [export_job] exported to `/output/historical-v2-2048.jpg'
+     3.9793 [export_job] exported to `/output/historical-v2-2048.pfm'
+historical-v2.xmp size=2048 xmp_sha256=b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60 output_sha256=ae5ff58bd38a48576ebdda6d1d52dec36e49c95c9b3fbf4f2deb371e30e9fd55 pixel_sha256=be682c8c7489ecd7d96b503a1565491380d5c23a51dee2da5765cd220d5ae577 bytes=1102251
+     2.3147 [export_job] exported to `/output/historical-v3.jpg'
+     2.3589 [export_job] exported to `/output/historical-v3.pfm'
+historical-v3.xmp size=512 xmp_sha256=487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08 output_sha256=3a7e90338b36db51d6e10d00563fa96ffce88b707a4db30dd596e7cdcc4f41fe pixel_sha256=63e003ebdb9a7bc6ab1be7e5a94a8db20fbd3aa8c560e3d273ca32a8816dc93f bytes=82423
+     2.7571 [export_job] exported to `/output/historical-v3-2048.jpg'
+     9.4001 [export_job] exported to `/output/historical-v3-2048.pfm'
+historical-v3.xmp size=2048 xmp_sha256=487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08 output_sha256=f3d5f1a1059b8900bc41b0b88f8d623e5eb4eb88300dfebb81304823ac537109 pixel_sha256=1f62491de0d20a01cbb07d3e4f127e7468b5324696b2d6f17324bd6e53865b30 bytes=1340500
+     2.2119 [export_job] exported to `/output/current.jpg'
+     2.3551 [export_job] exported to `/output/current.pfm'
+current.xmp size=512 xmp_sha256=cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092 output_sha256=138095cbb2a76a6c336da336c3dba57b8d5f79f56c9643abd9ea8158e74414c4 pixel_sha256=02ab5fad75c3da9e480aa81e346235b4e0c261e3eb4d58e09c773077e21292b5 bytes=89220
+     2.8696 [export_job] exported to `/output/current-2048.jpg'
+     3.5819 [export_job] exported to `/output/current-2048.pfm'
+current.xmp size=2048 xmp_sha256=cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092 output_sha256=417affd99d0f6dadf73c8eb2b5348faf8d72a420c247c5ec2be5cf1fdc156142 pixel_sha256=8da1d6cd35ed4a6e6c967810a690e3ed430f379c27f67f8137fa89a28998dbce bytes=1474297

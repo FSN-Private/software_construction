@@ -1,0 +1,533 @@
+{
+  "status": "OWNER APPROVED REFERENCE BYTES AND CONTROLLED NONPROD LOWER-SEVERITY RISK; ARTIFACT/RELEASE QUALIFICATION STILL PENDING",
+  "localImage": "platform-render-worker@sha256:f26249d63bbb3f93ac3cd59b700da359db28efcfc20554f615f2b381b4b39e1f",
+  "localConfigDigest": "sha256:a4297c48e60afc37f9f21dd4dd2c30d39c09bb886462f76d52536c176363edba",
+  "sourceArchiveSHA256": "e8b84ac98b0b689a244e4036c4b56394c1d58ce2d9abc05e0a060ef9f756dc36",
+  "darktable": "5.6.1",
+  "packageBuild": true,
+  "dotnetRuntime": "10.0.13",
+  "openssl": "3.0.13-0ubuntu3.16",
+  "rawSHA256": "08b0843a7968315b68bd3c71a96c952ebf275d5b5eba4b6094ae8b103522584c",
+  "candidates": [
+    {
+      "file": "historical-v1.pfm",
+      "referenceHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "portableHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "referenceSHA256": "721261905c1a9457ced403d514bf0d322374a4a7b1c53000aec26008055e4525",
+      "portableSHA256": "9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80",
+      "samples": 523776,
+      "differentSamples": 523776,
+      "maxAbsoluteDifference": 0.8404408525675535,
+      "meanAbsoluteDifference": 0.6480186228385761,
+      "rmsDifference": 0.6512009929388234,
+      "finite": true,
+      "minimum": 0.009778945706784725,
+      "maximum": 0.7183738946914673,
+      "referenceFinite": true,
+      "xmpSHA256": "ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef"
+    },
+    {
+      "file": "historical-v1-2048.pfm",
+      "referenceHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "portableHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "referenceSHA256": "ecd8512c8e8025a9134555d3bda8221a2cc1ab114f87c64f5351960200b20596",
+      "portableSHA256": "c33280f598d2e168873e732d482f24f01538ac01851cfc60c9b835599f06fb4c",
+      "samples": 8380416,
+      "differentSamples": 8380416,
+      "maxAbsoluteDifference": 0.8707624785602093,
+      "meanAbsoluteDifference": 0.6480797150289871,
+      "rmsDifference": 0.6514259629044866,
+      "finite": true,
+      "minimum": -0.026470480486750603,
+      "maximum": 0.7551082968711853,
+      "referenceFinite": true,
+      "xmpSHA256": "ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef"
+    },
+    {
+      "file": "historical-v2.pfm",
+      "referenceHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "portableHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "referenceSHA256": "2cc6d5f41701f9ba2b3b1e7fc1a67fc4505d9f2e969124ccff41c8b7bae62962",
+      "portableSHA256": "7055901d676f6e002bd40772cf8ffe90d0d03695c5e61211ee2caeafe8ba81a5",
+      "samples": 523776,
+      "differentSamples": 523776,
+      "maxAbsoluteDifference": 0.7246772833168507,
+      "meanAbsoluteDifference": 0.5282651412403614,
+      "rmsDifference": 0.5319315816355314,
+      "finite": true,
+      "minimum": 0.01352638192474842,
+      "maximum": 0.8385195732116699,
+      "referenceFinite": true,
+      "xmpSHA256": "b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60"
+    },
+    {
+      "file": "historical-v2-2048.pfm",
+      "referenceHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "portableHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "referenceSHA256": "9956d98f20731a334744e85296b9295d120ba6b0e3ea1ea6f148a24c07c690a6",
+      "portableSHA256": "be682c8c7489ecd7d96b503a1565491380d5c23a51dee2da5765cd220d5ae577",
+      "samples": 8380416,
+      "differentSamples": 8380416,
+      "maxAbsoluteDifference": 0.7681157561019063,
+      "meanAbsoluteDifference": 0.5283285498346346,
+      "rmsDifference": 0.5322079461891223,
+      "finite": true,
+      "minimum": -0.030870607122778893,
+      "maximum": 0.8809609413146973,
+      "referenceFinite": true,
+      "xmpSHA256": "b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60"
+    },
+    {
+      "file": "historical-v3.pfm",
+      "referenceHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "portableHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "referenceSHA256": "ab83a4a16bc7b866e4a3d5b700759377406dafb59c37e2c2e92767157efddd00",
+      "portableSHA256": "63e003ebdb9a7bc6ab1be7e5a94a8db20fbd3aa8c560e3d273ca32a8816dc93f",
+      "samples": 523776,
+      "differentSamples": 523776,
+      "maxAbsoluteDifference": null,
+      "meanAbsoluteDifference": null,
+      "rmsDifference": null,
+      "finite": true,
+      "minimum": 0.024499455466866493,
+      "maximum": 1.138495922088623,
+      "referenceFinite": false,
+      "xmpSHA256": "487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08"
+    },
+    {
+      "file": "historical-v3-2048.pfm",
+      "referenceHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "portableHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "referenceSHA256": "0c4e2fa904516ecaf517308a29094a2745800a4d315d4314d2c876f2caf797ee",
+      "portableSHA256": "1f62491de0d20a01cbb07d3e4f127e7468b5324696b2d6f17324bd6e53865b30",
+      "samples": 8380416,
+      "differentSamples": 8380416,
+      "maxAbsoluteDifference": null,
+      "meanAbsoluteDifference": null,
+      "rmsDifference": null,
+      "finite": true,
+      "minimum": -0.04270171374082565,
+      "maximum": 1.1951829195022583,
+      "referenceFinite": false,
+      "xmpSHA256": "487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08"
+    },
+    {
+      "file": "current.pfm",
+      "referenceHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "portableHeader": [
+        "PF",
+        "512 341",
+        "-1.0"
+      ],
+      "referenceSHA256": "3b5d261ad20d16c9a5c96adb044ef8746beddc082244cb71987f87dbb8b42280",
+      "portableSHA256": "02ab5fad75c3da9e480aa81e346235b4e0c261e3eb4d58e09c773077e21292b5",
+      "samples": 523776,
+      "differentSamples": 523776,
+      "maxAbsoluteDifference": 1.3200903311371803,
+      "meanAbsoluteDifference": 0.858157581796897,
+      "rmsDifference": 0.8800923443115707,
+      "finite": true,
+      "minimum": 0.032036297023296356,
+      "maximum": 1.3264188766479492,
+      "referenceFinite": true,
+      "xmpSHA256": "cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092"
+    },
+    {
+      "file": "current-2048.pfm",
+      "referenceHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "portableHeader": [
+        "PF",
+        "2048 1364",
+        "-1.000000000000000"
+      ],
+      "referenceSHA256": "467f4f6eea3f33a960f6fd1fdc38f93030d2f83cae6342a2546d8fe02761eea6",
+      "portableSHA256": "8da1d6cd35ed4a6e6c967810a690e3ed430f379c27f67f8137fa89a28998dbce",
+      "samples": 8380416,
+      "differentSamples": 8380416,
+      "maxAbsoluteDifference": 1.4166639279574156,
+      "meanAbsoluteDifference": 0.8583235959154901,
+      "rmsDifference": 0.8811804794494106,
+      "finite": true,
+      "minimum": -0.04990460351109505,
+      "maximum": 1.3918691873550415,
+      "referenceFinite": true,
+      "xmpSHA256": "cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092"
+    }
+  ],
+  "scanner": "Trivy0.74.0/currentDB2026-10-16",
+  "uniqueSeverityCounts": {
+    "MEDIUM": 46,
+    "LOW": 26
+  },
+  "lowerSeverityFindings": [
+    {
+      "id": "CVE-2017-13736",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2017-7475",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2018-18064",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2019-6988",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2020-18773",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2020-18774",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2023-37769",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2023-39328",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2023-39329",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2024-50613",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2024-52615",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2024-52616",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2024-56433",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2025-1352",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2025-1376",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2025-14523",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-27795",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-32049",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-4035",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-52194",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-5222",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2025-59529",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-66382",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2025-9901",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-0716",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-0719",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-10028",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-102473",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-102474",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-103111",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-107161",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-12216",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-15534",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-18374",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-18477",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-18508",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-19487",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-19617",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-22693",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-3099",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-3632",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-3633",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-3634",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-37555",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-40228",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-66337",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-66338",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-67693",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-85091",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-86145",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-86409",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-86414",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-86469",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-87862",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-87863",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-87864",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-88372",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-88647",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-88807",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89092",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89156",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89157",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89158",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89160",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-89161",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-92388",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-92389",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-92391",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-94266",
+      "severity": "LOW"
+    },
+    {
+      "id": "CVE-2026-95184",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-95209",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CVE-2026-95210",
+      "severity": "MEDIUM"
+    }
+  ],
+  "evidence": {
+    "api-critical-high.json": "e55b338d39422689a0a8c26d403b3c6767f3c17f987dfb3e7cb194b231661a87",
+    "approved-reference-native-corpus.txt": "421de30fafe30c7ddc48b77de271f248579ad201a3e17a36bb23be91f552b635",
+    "current.jpg": "89f8ff316e22b6d5d02e1b0d4db3186fce1cf799699c55bbf8419cec4e9121f3",
+    "dng-native-manifest.json": "c5d20b8df2ebc63e40004779e0d64f2a0fee515e46d9851e7e3ec27bd70111c3",
+    "historical-v1.jpg": "926f15200aea5e3a56ca22cb2b59b961701f42c3f5fc57795396b17a987e0132",
+    "historical-v2.jpg": "d510ef00006fd338caed6fd363b74bf0037f8204cc9356019274be9402f85ce2",
+    "historical-v3.jpg": "9d63fefebd6daf85d8d359e4dfb7d505140440914717c2b9ea9a054f259aca18",
+    "ingest-critical-high.json": "5885eefcbdade7c4d478ee27fb6385ead2fef21110e9c404fc3c803ff922a7bb",
+    "native-candidate-corpus.txt": "ee043c3a5a61372e0a35fbd79179cec5c9141bd759cfefea73512a9ef7871b47",
+    "sbom.cdx.json": "719799666ccc3613ae2cd31e30d6978e32c3efee4bcef066f6f8d52099ff515b",
+    "vulnerabilities.json": "be76280fc8f5db6973906a37733e2c5d85d716ddafdad145f976dd118132e3da"
+  },
+  "candidatePixelOriginImage": "platform-render-worker@sha256:dca934b3a991ba5ded82eec50e9b68d10a461ce211b066501552e10202e48687",
+  "patchedNativeReproduction": "PASS8/8 byte-identical candidate PFMs with full finite/structure checks and8distinctJPEG/PFMhashes. Local candidate-reference override only; approved production-reference gate still BLOCKED.",
+  "riskApproval": "APPROVED for exact documented46medium/26low findings in controllednonprod only. New findings require assessment; critical/high always block.",
+  "dngNativeValidation": "PASS5/5 exact helper states; finite distinctPFM/JPEGoutputs; networknone,1CPU,2GiB. Actual ownerHTTP/PG/S3/worker fixture bootstrap alsoPASS. Not cloud acceptance.",
+  "otherPackageValidation": "API,ingest,recovery image buildsPASS; API/ingest critical-high scansPASS0findings. Independent recovery-container/cloud qualification remains excluded.",
+  "ownerApproval": {
+    "approvedAtUTC": "2026-10-16T11:29:25.488123+00:00",
+    "owner": "Repository product owner via explicit conversation reply",
+    "statement": "Approve references and nonprod risk acceptance",
+    "scope": "Exact eight proposed PFM hashes and documented46medium/26low CVEs for controllednonprod only; all independent/currentCI/trustedartifact/security/native/HTTP/latency/ingest gates remain binding; no production or DRqualification"
+  },
+  "approvedReferenceNativeValidation": "PASS8/8 through actual production script against now-adopted tracked owner-approved references, with no candidate-reference override. Windows root/temp/CRLF manifest adaptation only; local evidence is not trusted-Linux/cloud qualification."
+}

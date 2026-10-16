@@ -60,3 +60,9 @@ Any change to the digest, profile, output encoding, or darktable release require
 ## Recorded approval
 
 The product owner accepted 5 medium findings for controlled validation of `sha256:a3d57603d490e8fda9c73ad732fc978ff6ecf5dde61f4780f6b9699f6844ff1b` at 2026-09-24T12:59:25Z. It is not approved for new derivatives until post-merge T026 acceptance succeeds.
+
+## 2026-10-16 corrected corpus approval
+
+The owner explicitly approved [the portable reference/risk proposal](features/011-backup-disaster-recovery/reviews/portable-renderer-reference-proposal.md) at2026-10-16T11:29:25Z: exactly eight corrected finite exposure references and the documented46medium/26low findings for controllednonprod validation only. The old exposure-v5 inputs used wrong parameter fields; both historical-v3 references were entirelyNaN. Corrected mode0/black0/EV fields, finite-pixel validation and strict full-file comparison now bind meaningful outputs. Original bytes remain in Git history.
+
+The local portable/security-patched candidate f26249d6 has0critical/high findings and reproduces those approved reference hashes. Its [SHA-bound candidate evidence](features/011-backup-disaster-recovery/evidence/portable-renderer-candidate-2026-10-16/candidate-manifest.json) records the exact lower-severity set. This approval permits the specified controllednonprod rollout only after independent review,current-source CI,digest-qualified trusted release/security/corpus evidence and real five-fixture HTTP/latency/ingest acceptance. New/unaccepted findings require assessment and critical/high findings block. Keep the runtime matrix pending until that evidence is recorded; no production or independent recovery qualification is established by the local approval.

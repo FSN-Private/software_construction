@@ -5,7 +5,17 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
 import { once } from 'node:events';
-import { bootstrapRenderingFixtures } from '../../../scripts/bootstrap-rendering-fixtures.mjs';
+import { bootstrapRenderingFixtures, renderingFixtureInputs } from '../../../scripts/bootstrap-rendering-fixtures.mjs';
+
+const inputs = await renderingFixtureInputs();
+for (const [index, exposure] of [1, -1, -0.5, 0.5, 0].entries()) {
+  const params = Buffer.from(inputs.xmps[index].toString().match(/darktable:params="([a-f0-9]+)"/)[1], 'hex');
+  assert.equal(params.readInt32LE(0), 0, 'Exposure mode must be manual.');
+  assert.equal(params.readFloatLE(4), 0, 'Exposure fixtures must retain neutral black correction.');
+  assert.equal(params.readFloatLE(8), exposure);
+  assert.equal(params.readFloatLE(12), 50);
+  assert.equal(params.readFloatLE(16), -4);
+}
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const assetId = randomUUID();
