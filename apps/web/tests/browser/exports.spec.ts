@@ -3,7 +3,12 @@ import { fixture, assetOne, image, detail } from './fixtures';
 
 async function exportsFixture(
   page: Page,
-  options: { items?: number; pending?: boolean; unavailableXmp?: boolean } = {},
+  options: {
+    items?: number;
+    pending?: boolean;
+    unavailableXmp?: boolean;
+    createBasketDelayMs?: number;
+  } = {},
 ) {
   await fixture(page, { exports: true });
   const pin = {
@@ -64,6 +69,10 @@ async function exportsFixture(
       return route.fulfill({ json: baskets });
     if (path === '/requests') return route.fulfill({ json: requests });
     if (path === '/baskets' && method === 'POST') {
+      if (options.createBasketDelayMs)
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.createBasketDelayMs),
+        );
       const value = {
         id: 'basket-2',
         name: req.postDataJSON().name,
@@ -547,7 +556,7 @@ for (const jwtName of ['¾', 'a?']) {
 test('clearing and deleting saved selections preserve immutable request evidence', async ({
   page,
 }) => {
-  await exportsFixture(page);
+  await exportsFixture(page, { createBasketDelayMs: 200 });
   await page.goto('/#id_token=fixture-token');
   await page
     .getByRole('button', { name: 'Export baskets', exact: true })
@@ -556,6 +565,7 @@ test('clearing and deleting saved selections preserve immutable request evidence
   await expect(page.getByText(/Captured 1 exact selections/)).toBeVisible();
   await page.getByLabel('New basket name').fill('Replacement basket');
   await page.getByRole('button', { name: 'Create basket' }).click();
+  await expect(page.getByLabel('Saved basket')).toHaveValue('basket-2');
   await page.getByLabel('Saved basket').selectOption('basket-1');
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Clear selections' }).click();
