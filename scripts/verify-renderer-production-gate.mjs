@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const [baselinePath, candidatePath, expectedImage] = process.argv.slice(2);
 const digestPattern = /^[^\s@]+@sha256:[a-f0-9]{64}$/;
@@ -43,6 +44,14 @@ if (accepted.length !== 66 || baselineCounts.MEDIUM !== 48 || baselineCounts.LOW
   throw new Error('Accepted renderer baseline must contain exactly 48 medium and 18 low findings.');
 }
 
+const additionalAcceptance = JSON.parse(readFileSync('docs/features/011-backup-disaster-recovery/evidence/portable-renderer-candidate-2026-10-16/candidate-manifest.json', 'utf8'));
+const additionalFindings = additionalAcceptance.lowerSeverityFindings;
+const additionalBinding = additionalFindings.map(({ id, severity }) => `${id}:${severity}`).sort().join('\n');
+if (createHash('sha256').update(additionalBinding).digest('hex') !== '14ab60d3a85512f3f23132d21c645a7de4327514c3ff395f16b72b56e262a64f') {
+  throw new Error('Additional non-production-only findings differ from the owner-approved set.');
+}
+const allAccepted = [...new Set([...accepted, ...additionalFindings.map(({ id }) => id)])];
+
 const candidate = scan(candidatePath);
 const expectedDigest = expectedImage.slice(expectedImage.indexOf('@') + 1);
 if (candidate.imageName !== expectedImage || candidate.imageId !== expectedDigest) {
@@ -51,7 +60,7 @@ if (candidate.imageName !== expectedImage || candidate.imageId !== expectedDiges
 if (candidate.imageId === baselineDigest) throw new Error('The non-production-approved renderer digest is never eligible for production.');
 const criticalOrHigh = [...candidate.findings].filter((id) => ['CRITICAL', 'HIGH'].includes(candidate.severityById.get(id)));
 if (criticalOrHigh.length) throw new Error(`Production renderer report contains critical or high findings: ${criticalOrHigh.join(', ')}.`);
-const unresolved = accepted.filter((id) => candidate.findings.has(id));
+const unresolved = allAccepted.filter((id) => candidate.findings.has(id));
 if (unresolved.length) throw new Error(`Production renderer report retains findings accepted only for non-production: ${unresolved.join(', ')}.`);
 
-console.log(`Production renderer gate passed for ${expectedImage}; all 66 non-production-accepted findings are absent.`);
+console.log(`Production renderer gate passed for ${expectedImage}; all ${allAccepted.length} non-production-accepted findings are absent.`);
