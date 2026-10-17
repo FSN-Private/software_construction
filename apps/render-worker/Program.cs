@@ -25,7 +25,7 @@ var commands = new DarktableCommandFactory();
 while (!stop.IsCancellationRequested)
 {
     var received = await sqs.ReceiveMessageAsync(new ReceiveMessageRequest { QueueUrl = queueUrl, MaxNumberOfMessages = 1, WaitTimeSeconds = 20, VisibilityTimeout = 2100 }, stop.Token);
-    foreach (var message in received.Messages)
+    foreach (var message in received.Messages ?? [])
     {
         try
         {
