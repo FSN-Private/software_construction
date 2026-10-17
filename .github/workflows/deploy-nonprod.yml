@@ -102,6 +102,14 @@ jobs:
           role-session-name: nonprod-release-${{ github.run_id }}
       - name: Migrate and deploy the verified API and worker renderer release
         run: timeout --foreground 2100 bash scripts/deploy-ecs-release.sh
+      - name: Retain failed public-corpus native comparison for diagnosis
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendering-native-failure
+          path: artifacts/release/rendering-native-failure
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Restore version-control heartbeat notifications
         run: aws cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

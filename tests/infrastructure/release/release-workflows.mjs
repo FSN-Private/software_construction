@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import './rendering-fixture-bootstrap.mjs';
 import './rendering-idempotency.mjs';
+import './rendering-operator.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
@@ -31,9 +32,22 @@ try {
     if (corruption === 'header') candidate[0] = 88;
     writeFileSync(join(pixelWorkspace, pixels), candidate);
     const checked = spawnSync(bash, ['-c', `set -e; ${pixelCheck}`], { encoding: 'utf8',
-      env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'), pixels, size: '512' } });
+      env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'), pixels, size: '512',
+        DARKTABLE_FAILURE_DIR: corruption === 'byte' ? join(pixelWorkspace, 'mismatch-diagnostics').replaceAll('\\', '/') : '',
+        DARKTABLE_IMAGE: `registry.invalid/renderer@sha256:${'a'.repeat(64)}` } });
     assert.equal(checked.status, corruption === 'none' ? 0 : 1, checked.stdout + checked.stderr);
-    if (corruption === 'byte') assert.match(checked.stderr, /Pixel reference mismatch: historical-v1\.pfm/);
+    if (corruption === 'byte') {
+      assert.match(checked.stderr, /Pixel reference mismatch: historical-v1\.pfm/);
+      const diagnostic = JSON.parse(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', 'mismatch.json')));
+      assert.match(diagnostic.status, /^FAILED/);
+      assert.equal(diagnostic.referenceSHA256, '9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80');
+      assert.equal(diagnostic.firstDifferentByte, candidate.length - 1);
+      assert.equal(diagnostic.file, pixels);
+      assert.equal(diagnostic.candidateBytes, candidate.length);
+      assert.notEqual(diagnostic.candidateSHA256, diagnostic.referenceSHA256);
+      assert.deepEqual(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', pixels)), candidate);
+      assert.ok(diagnostic.host.availableParallelism > 0);
+    }
     if (corruption === 'nan' || corruption === 'infinity') assert.match(checked.stderr, /Non-finite PFM pixel/);
     if (corruption === 'truncated') assert.match(checked.stderr, /PFM pixel length mismatch/);
     if (corruption === 'dimensions') assert.match(checked.stderr, /PFM exceeds its size bound/);
@@ -115,6 +129,8 @@ assert.ok(deployScript.includes('Rendering__DeployedArtifactDigest') && deploySc
 assert.ok(deployScript.includes('operations/drain') && deployScript.indexOf('operations/drain') < deployScript.lastIndexOf('update-service --cluster "$ECS_CLUSTER" --service "$RENDERER_SERVICE"'), 'Deployment must pause and drain old renderer work before renderer cutover.');
 assert.ok(deployScript.includes('Rendering__DeployedArtifactDigest') && readFileSync('apps/render-worker/Program.cs', 'utf8').includes('rendererDigest'), 'Workers must reject a queue envelope for another renderer digest.');
 assert.ok(deployScript.includes('tests/rendering/corpus/run-native.sh') && renderingCorpus.includes('pixel_sha256') && renderingCorpus.includes('cmp --silent'), 'Deployment must block on the exact renderer pixel-regression corpus.');
+assert.ok(deployScript.includes('DARKTABLE_FAILURE_DIR="$RELEASE_DIR/rendering-native-failure"'), 'Native mismatch diagnostics must have a dedicated output directory.');
+assert.match(workflows['deploy-nonprod.yml'], /name: Retain failed public-corpus native comparison for diagnosis\s+if: \$\{\{ failure\(\) \}\}[\s\S]*?name: rendering-native-failure\s+path: artifacts\/release\/rendering-native-failure\s+if-no-files-found: ignore\s+retention-days: 14/);
 assert.ok(deployScript.includes('operations/admit') && deployScript.includes('scripts/smoke-rendering.mjs') && deployScript.includes('operations/activate'), 'Deployment must admit a paused candidate, complete HTTP acceptance, then activate it.');
 assert.ok(deployScript.indexOf('operations/admit') < deployScript.indexOf('scripts/smoke-rendering.mjs') && deployScript.indexOf('scripts/smoke-rendering.mjs') < deployScript.indexOf('operations/activate'), 'Compatibility activation must follow rather than precede the rendering HTTP fixture.');
 assert.ok(deployScript.includes('operations/abort') && deployScript.indexOf('operations/abort') < deployScript.indexOf('update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK"'), 'Failed acceptance must clear its candidate before ECS rollback restores the prior API.');

@@ -43,6 +43,27 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   # The size bounds preserve aspect ratio; the approved PFM binds dimensions and pixels.
   if ! cmp --silent "$workspace/$pixels" "$root/reference/$pixels"; then
     printf 'Pixel reference mismatch: %s\n' "$pixels" >&2
+    if test -n "${DARKTABLE_FAILURE_DIR:-}"; then
+      node - "$workspace/$pixels" "$root/reference/$pixels" "$DARKTABLE_IMAGE" "$DARKTABLE_FAILURE_DIR" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const os = require('node:os');
+const [candidate, reference, image, directory] = process.argv.slice(2);
+const actual = fs.readFileSync(candidate);
+const expected = fs.readFileSync(reference);
+const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+fs.mkdirSync(directory, { recursive: true });
+fs.copyFileSync(candidate, path.join(directory, path.basename(candidate)));
+fs.writeFileSync(path.join(directory, 'mismatch.json'), JSON.stringify({
+  status: 'FAILED exact native comparison; diagnostic only, never qualification',
+  image, file: path.basename(candidate), candidateSHA256: hash(actual), referenceSHA256: hash(expected),
+  candidateBytes: actual.length, referenceBytes: expected.length,
+  firstDifferentByte: actual.findIndex((value, index) => value !== expected[index]),
+  host: { architecture: os.arch(), cpuModel: os.cpus()[0]?.model, logicalCPUs: os.cpus().length, availableParallelism: os.availableParallelism() },
+}, null, 2) + '\n');
+NODE
+    fi
     exit 1
   fi
   output_hash="$(sha256sum "$workspace/$output" | awk '{print $1}')"
