@@ -49,6 +49,7 @@ COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 COPY --from=worker-build /out/ /app/
 
 RUN install --directory --owner=65532 --group=65532 /var/lib/darktable /tmp/render
+VOLUME ["/tmp/render"]
 ENV PATH=/opt/darktable/bin:$PATH \
     DOTNET_ROOT=/usr/share/dotnet \
     HOME=/var/lib/darktable \
