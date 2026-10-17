@@ -1,11 +1,33 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 
-// Exercise the real entry point and AWS deserializer, including an idle queue.
+// Verify the signature of the actual wire request, independently of the SDK signer.
+const hash = value => createHash('sha256').update(value).digest('hex');
+const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
+function verifyCallback(request, body, sessionToken) {
+  const auth = /^AWS4-HMAC-SHA256 Credential=test\/([^,]+), SignedHeaders=([^,]+), Signature=([a-f0-9]{64})$/.exec(request.headers.authorization ?? '');
+  assert.ok(auth, 'Callback must use SigV4 with the fixture access key.');
+  const [date, region, service, terminator] = auth[1].split('/');
+  assert.equal(region, 'us-east-1');
+  assert.equal(service, 'execute-api');
+  assert.equal(terminator, 'aws4_request');
+  const signed = auth[2].split(';');
+  assert.ok(signed.includes('idempotency-key'));
+  assert.equal(request.headers['x-amz-security-token'] ?? '', sessionToken);
+  if (sessionToken) assert.ok(signed.includes('x-amz-security-token'));
+  const headers = signed.map(name => `${name}:${request.headers[name].trim().replace(/\s+/g, ' ')}\n`).join('');
+  const canonical = [request.method, request.url, '', headers, auth[2], hash(body)].join('\n');
+  const stringToSign = ['AWS4-HMAC-SHA256', request.headers['x-amz-date'], auth[1], hash(canonical)].join('\n');
+  const signingKey = hmac(hmac(hmac(hmac('AWS4test', date), region), service), terminator);
+  assert.equal(auth[3], createHmac('sha256', signingKey).update(stringToSign).digest('hex'), 'Callback signature must match the actual path, headers and body.');
+}
+
+// Exercise the real entry point and AWS deserializer with both credential types.
+async function checkWorker(sessionToken) {
 let polls = 0;
 let deletes = 0;
 const callbacks = [];
@@ -25,12 +47,14 @@ const callbackWork = JSON.stringify({
 let complete;
 const received = new Promise(resolve => { complete = resolve; });
 const server = createServer(async (request, response) => {
-  for await (const _ of request) { /* Consume the SDK request. */ }
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const bodyBytes = Buffer.concat(chunks);
   if (request.url.startsWith('/internal/render-callbacks/')) {
     const key = request.headers['idempotency-key'] ?? '';
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(key)) { response.writeHead(400); response.end(); return; }
-    assert.match(request.headers.authorization ?? '', /AWS4-HMAC-SHA256/);
-    assert.match(request.headers.authorization, /SignedHeaders=[^,]*idempotency-key/);
+    try { verifyCallback(request, bodyBytes, sessionToken); }
+    catch (error) { output += error.message; response.writeHead(403); response.end(); return; }
     callbacks.push(request.url.split('/').at(-1));
     callbackKeys.add(key);
     response.writeHead(200); response.end(); return;
@@ -58,7 +82,7 @@ const endpoint = `http://127.0.0.1:${server.address().port}`;
 const worker = spawn('dotnet', [resolve('apps/render-worker/bin/Debug/net10.0/Platform.Render.Worker.dll')], {
   env: {
     ...process.env,
-    AWS_ACCESS_KEY_ID: 'test', AWS_SECRET_ACCESS_KEY: 'test', AWS_SESSION_TOKEN: '',
+    AWS_ACCESS_KEY_ID: 'test', AWS_SECRET_ACCESS_KEY: 'test', AWS_SESSION_TOKEN: sessionToken,
     AWS_REGION: 'us-east-1', AWS_EC2_METADATA_DISABLED: 'true',
     AWS_ENDPOINT_URL_SQS: endpoint,
     Rendering__QueueUrl: `${endpoint}/123456789012/test`,
@@ -85,7 +109,7 @@ try {
   assert.deepEqual(callbacks, ['claim', 'fail']);
   assert.equal(callbackKeys.size, 2, 'Callbacks must carry distinct signed mutation keys.');
   assert.equal(worker.exitCode, null);
-  console.log('Renderer survives missing/empty message collections and processes subsequent work.');
+  console.log(`Renderer continues polling with verified ${sessionToken ? 'session' : 'basic'} credential callbacks.`);
 } finally {
   clearTimeout(timer);
   worker.kill();
@@ -93,3 +117,5 @@ try {
   server.closeAllConnections();
   server.close();
 }
+}
+for (const sessionToken of ['', 'dummy-session-token']) await checkWorker(sessionToken);

@@ -123,15 +123,16 @@ public sealed class SigV4RenderCallbackClient(string callbackBaseUrl, string reg
         var bytes = JsonSerializer.SerializeToUtf8Bytes(body);
         var request = new DefaultRequest(new SendMessageRequest(), "execute-api")
         {
-            Endpoint = target,
+            Endpoint = new Uri(target.GetLeftPart(UriPartial.Authority)),
             HttpMethod = "POST",
             ResourcePath = target.AbsolutePath,
             ContentStream = new MemoryStream(bytes, writable: false),
         };
         request.Headers["Content-Type"] = "application/json";
         request.Headers["Idempotency-Key"] = Guid.NewGuid().ToString("N");
-        var identity = credentials.ResolveIdentity(config, cancellationToken);
-        new AWS4Signer().Sign(request, config, new RequestMetrics(), identity);
+        var identity = credentials.ResolveIdentity(config, cancellationToken).GetCredentials();
+        if (!string.IsNullOrEmpty(identity.Token)) request.Headers["X-Amz-Security-Token"] = identity.Token;
+        request.Headers["Authorization"] = new AWS4Signer().SignRequest(request, config, new RequestMetrics(), identity.AccessKey, identity.SecretKey).ForAuthorizationHeader;
         using var message = new HttpRequestMessage(HttpMethod.Post, target) { Content = new ByteArrayContent(bytes) };
         foreach (var header in request.Headers)
             if (!message.Headers.TryAddWithoutValidation(header.Key, header.Value)) message.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
