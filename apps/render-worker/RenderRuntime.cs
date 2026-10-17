@@ -129,6 +129,7 @@ public sealed class SigV4RenderCallbackClient(string callbackBaseUrl, string reg
             ContentStream = new MemoryStream(bytes, writable: false),
         };
         request.Headers["Content-Type"] = "application/json";
+        request.Headers["Idempotency-Key"] = Guid.NewGuid().ToString("N");
         var identity = credentials.ResolveIdentity(config, cancellationToken);
         new AWS4Signer().Sign(request, config, new RequestMetrics(), identity);
         using var message = new HttpRequestMessage(HttpMethod.Post, target) { Content = new ByteArrayContent(bytes) };
