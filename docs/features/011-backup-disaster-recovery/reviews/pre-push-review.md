@@ -2,10 +2,10 @@
 
 **Date**: 2026-10-17
 **Alternate model**: `gpt-6-astra` (implementer `gpt-6.1-sol`)
-**Remote/destination**: `origin`, `fix/011-renderer-empty-poll`; prior destinations preserved below.
-**Base**: `47dda3341e170d6cf1c59eece194e6ff054d92ff` (`origin/master`, rebase-merged PR37); complete implementation range `47dda334..c60b774` plus the final unchanged review/rollback-documentation milestone.
-**Push scope**: Owner authorized push, rebase merge after green CI and primary nonprod deployment. T045 fixes idle SQS polling without changing message processing, render references, isolation, credentials, dependencies or acceptance gates. Includes actual-process regression/backend hook, numbered plan, release chronology and final independent review. Preserve all previous approvals and findings; no production or independent DR qualification. T025/T038 live delivery remains open.
-**Gate**: PASS for the complete implementation range and this unchanged final review/rollback-documentation milestone after the independent reviewer's final inspection/agreement. No valid unresolved blocking finding remains. Renewed exact-source CI, trusted release/security/native/live rendering/ingest qualification remain required before activation.
+**Remote/destination**: `origin`, `fix/011-rendering-idempotency`; prior destinations preserved below.
+**Base**: `80ac164707591eaa9391c3b7ef244efcf70ad10f` (`origin/master`, rebase-merged PR38); complete implementation range `80ac164..cd05c65` plus the final unchanged review milestone.
+**Push scope**: Owner authorized push, rebase merge after green CI and primary nonprod deployment. T046 supplies the existing required mutation keys in renderer control/rollback, smoke submissions and worker SigV4 callbacks, with executable regressions and task/release chronology. No server policy, authorization, admission order, threshold, isolation, reference, dependency or IAM change. Preserve all previous approvals and findings; no production or independent DR qualification. T025/T038 live delivery remains open.
+**Gate**: PASS for the complete implementation range and this unchanged final review milestone after the independent reviewer's final inspection/agreement. No valid unresolved blocking finding remains. Renewed exact-source CI, trusted release/security/native/live rendering/ingest qualification remain required before activation.
 
 ## Round 1
 
@@ -348,3 +348,16 @@ Findings: no blocking or non-blocking findings. Functional/reliability: null coa
 Disposition: no finding requires remediation or waiver. Independent initial agreement: no valid unresolved blocking issue, proposed gate PASS subject to final record inspection. Final scope additionally records directly observed rollback: failed deployment39010396015 exited124, all three services restored to previous task definitions/counts0/0; no destructive database rollback or cloud fixture qualification claimed.
 
 Final gate: PASS. The alternate reviewer must inspect these exact pending review/rollback-documentation bytes and explicitly agree before they are committed unchanged. This gate does not qualify the old failing artifact or bypass current-source CI/release/security/native/live acceptance.
+
+
+## Round 42 - T046 rendering HTTP mutation keys (2026-10-17)
+
+Reviewer: gpt-6-astra; implementer: gpt-6.1-sol. Read-only alternate-model review of complete `80ac164707591eaa9391c3b7ef244efcf70ad10f..cd05c650b85aa92f12e91ec9a0508cb19d59d509` plus final pending review milestone. Destination origin/fix/011-rendering-idempotency. Governing scope: approved feature011 artifacts, T046/T025/T038, release plan and persistent explicit owner push/conditional rebase merge/nonprod deployment authorization. Prompt requested significant functional, security/privacy/auth/integrity, compatibility, performance, test/CI, release-documentation and scope findings; no edits or external mutations.
+
+Validation supplied: actual extracted shell curl requests reproduce400/missing-key before the fix; afterward all six actions pass with distinct valid action keys and a forced500 retry preserving the pause key. Real smoke script submits five distinct valid keys. Expanded real-worker/AWS deserializer regression reproduces callback400 before the fix, then verifies signed claim/fail mutation keys, two acknowledgements and continued polling. Worker build, full npm run test:backend, npm run test:release-evidence and whitespace checks PASS. Reviewer independently reran both node tests/infrastructure/release/rendering-idempotency.mjs and node tests/rendering/queue-poll.mjs, plus full-range git diff --check; all PASS.
+
+Findings: no blocking or non-blocking findings. Functional/reliability: all six control/rollback calls uniquely keyed per deployment and action, stable within curl retries; smoke requests distinct. Security/privacy/auth/integrity: existing global mutation regex and durable owner replay unchanged; callback key added before signing, shared send path covers claim/complete/fail, actual claim/fail SignedHeaders checks pass; domain attempt transitions remain unchanged. Compatibility/performance: both UUID forms and action suffixes meet the existing16-128 character allowed-key contract, no dependency/runtime/threshold change. Tests/CI: real shell/client/process regressions exercise transport boundaries and are included in existing backend/release checks. Requirements/release: T046 maps the confirmed400 blocker, current-source CI/trusted artifact/security/native/live gates remain mandatory; prior failed workflow39014631720 and verified zero-count rollback accurately recorded. Scope/history: focused maintenance branch starts clean at80ac164; only eight intended implementation/test/task/release files, no unrelated or history changes.
+
+Disposition: no finding requires remediation or waiver. Independent initial agreement: PASS, no valid unresolved blocking issue. Reviewer inspected clean HEAD cd05c650b85aa92f12e91ec9a0508cb19d59d509 with divergence0behind/1ahead before this review record.
+
+Final gate: PASS. The alternate reviewer must inspect these exact pending review bytes and explicitly agree before they are committed unchanged. This gate neither qualifies a failed prior deployment nor bypasses renewed source/artifact/security/native/live acceptance. No production/DR or additional vulnerability waiver.
