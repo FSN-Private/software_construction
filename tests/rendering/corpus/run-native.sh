@@ -10,6 +10,15 @@ chmod 0777 "$workspace"
 
 (cd "$root" && sha256sum --check IMG_9406.CR2.sha256)
 
+# Match the non-root, read-only Fargate filesystem before checking pixels.
+MSYS_NO_PATHCONV=1 docker run --rm --read-only --entrypoint /bin/sh "$DARKTABLE_IMAGE" -eu -c '
+  test "$(id -u)" = 65532
+  workspace="$(mktemp -d /tmp/render/qualification.XXXXXX)"
+  touch "$workspace/writable"
+  rm "$workspace/writable"
+  rmdir "$workspace"
+'
+
 declare -a jpeg_hashes=()
 declare -a pixel_hashes=()
 for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
@@ -20,7 +29,8 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   test "$size" = 512 || suffix="-$size"
   output="$name$suffix.jpg"
   pixels="$name$suffix.pfm"
-  MSYS_NO_PATHCONV=1 docker run --rm \
+  MSYS_NO_PATHCONV=1 docker run --rm --read-only \
+    --env HOME=/tmp/render --env XDG_CACHE_HOME=/tmp/render/cache --env XDG_CONFIG_HOME=/tmp/render/config \
     --entrypoint /opt/darktable/bin/darktable-cli \
     --volume "$root:/input:ro" \
     --volume "$workspace:/output" \
@@ -29,7 +39,8 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
     --width "$size" --height "$size" --library :memory:
 
   test -s "$workspace/$output"
-  MSYS_NO_PATHCONV=1 docker run --rm \
+  MSYS_NO_PATHCONV=1 docker run --rm --read-only \
+    --env HOME=/tmp/render --env XDG_CACHE_HOME=/tmp/render/cache --env XDG_CONFIG_HOME=/tmp/render/config \
     --entrypoint /opt/darktable/bin/darktable-cli \
     --volume "$root:/input:ro" \
     --volume "$workspace:/output" \
