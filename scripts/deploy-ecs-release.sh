@@ -12,6 +12,7 @@ for NAME in RELEASE_DIR DEPLOYMENT_RECORD SOURCE_REVISION RELEASE_RUN_ID AWS_REG
   test -n "${!NAME:-}" || MISSING+=("$NAME")
 done
 test "${#MISSING[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${MISSING[@]}"; exit 1; }
+RENDER_OPERATION_ID="$(node -p 'require("node:crypto").randomUUID()')"
 
 docker load --input "$RELEASE_DIR/api.tar"
 docker load --input "$RELEASE_DIR/ingest-worker.tar"
@@ -95,7 +96,7 @@ rollback() {
   trap - ERR INT TERM
   set +e
   if test "${ACCEPTANCE_ACTIVE:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
-    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/abort" >/dev/null || true
+    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-abort" "$HEALTH_URL/v1/rendering/operations/abort" >/dev/null || true
   fi
   if test "$ROLLBACK_REQUIRED" = 1; then
     aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_API_TASK" --desired-count "$PREVIOUS_API_COUNT" --force-new-deployment >/dev/null
@@ -104,7 +105,7 @@ rollback() {
     timeout 600 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" "$WORKER_SERVICE" "$RENDERER_SERVICE"
   fi
   if test "${INTAKE_PAUSED:-0}" = 1 && test -n "${ID_TOKEN:-}"; then
-    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/resume" >/dev/null || true
+    curl --fail --silent --show-error --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-resume" "$HEALTH_URL/v1/rendering/operations/resume" >/dev/null || true
   fi
   exit "$STATUS"
 }
@@ -118,7 +119,7 @@ if test "$PREVIOUS_API_COUNT" != 0 || test "$PREVIOUS_RENDERER_COUNT" != 0; then
 fi
 if test "$PREVIOUS_RENDERER_COUNT" != 0; then
   INTAKE_PAUSED=1
-  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
+  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-drain" "$HEALTH_URL/v1/rendering/operations/drain" >/dev/null
   for _ in $(seq 1 60); do
     DRAIN_STATUS="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations")"
     test "$(printf '%s' "$DRAIN_STATUS" | jq -er .pending)" = 0 && break
@@ -143,14 +144,14 @@ if test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" = true; then
   timeout 300 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/bootstrap-rendering-fixtures.mjs "$HEALTH_URL" "$RELEASE_DIR/rendering-fixtures.json"
   RENDERING_ACCEPTANCE_FIXTURES="$(jq -ce .fixtures "$RELEASE_DIR/rendering-fixtures.json")"
 fi
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/pause" >/dev/null
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
+curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-pause" "$HEALTH_URL/v1/rendering/operations/pause" >/dev/null
+curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-admit" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
 ACCEPTANCE_ACTIVE=1
 timeout 900 env INGEST_SMOKE_TOKEN="$ID_TOKEN" RENDERING_ACCEPTANCE_FIXTURES="$RENDERING_ACCEPTANCE_FIXTURES" node scripts/smoke-rendering.mjs "$HEALTH_URL" > "$RELEASE_DIR/rendering-smoke.json"
 timeout 120 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/smoke-ingest.mjs "$HEALTH_URL" > "$RELEASE_DIR/ingest-smoke.json"
 jq --slurpfile smoke "$RELEASE_DIR/ingest-smoke.json" --slurpfile rendering "$RELEASE_DIR/rendering-smoke.json" '. + {smoke:$smoke[0],renderingSmoke:$rendering[0]}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
 mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
+curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-activate" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
 ACCEPTANCE_ACTIVE=0
 ROLLBACK_REQUIRED=0
 trap - ERR INT TERM

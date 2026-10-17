@@ -8,17 +8,41 @@ import { resolve } from 'node:path';
 // Exercise the real entry point and AWS deserializer, including an idle queue.
 let polls = 0;
 let deletes = 0;
+const callbacks = [];
+const callbackKeys = new Set();
+const fixtureRequest = {
+  OwnerId: 'owner-1', LibraryId: 'library-1', AssetId: '11111111-1111-1111-1111-111111111111', EditId: '22222222-2222-2222-2222-222222222222',
+  SelectedVersion: 'current', Rendition: 0, Profile: 'render-v1', RendererRelease: '5.6.1', RendererArtifactDigest: 'unapproved',
+  CompatibilityMatrix: 'rendering-v1', SourceSha256: 'a'.repeat(64), XmpSha256: 'b'.repeat(64),
+};
+const fixtureKey = createHash('sha256').update(['rendering-v1', ...Object.values(fixtureRequest).map(value => value === 0 ? 'Thumbnail512' : value)].join('\n')).digest('hex');
+const callbackWork = JSON.stringify({
+  RequestId: fixtureRequest.AssetId, AttemptId: fixtureRequest.EditId, Request: fixtureRequest,
+  Original: { Key: 'original', Version: 'v1', Sha256: 'a'.repeat(64), ByteLength: 1 },
+  Xmp: { Key: 'xmp', Version: 'v1', Sha256: 'b'.repeat(64), ByteLength: 1 },
+  DerivativeKey: `derivatives/${fixtureKey}.jpg`, Policy: { TimeoutSeconds: 30, MemoryMiB: 1024, EphemeralStorageMiB: 2048, MaxConcurrentRenders: 1 },
+});
 let complete;
 const received = new Promise(resolve => { complete = resolve; });
 const server = createServer(async (request, response) => {
   for await (const _ of request) { /* Consume the SDK request. */ }
+  if (request.url.startsWith('/internal/render-callbacks/')) {
+    const key = request.headers['idempotency-key'] ?? '';
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(key)) { response.writeHead(400); response.end(); return; }
+    assert.match(request.headers.authorization ?? '', /AWS4-HMAC-SHA256/);
+    assert.match(request.headers.authorization, /SignedHeaders=[^,]*idempotency-key/);
+    callbacks.push(request.url.split('/').at(-1));
+    callbackKeys.add(key);
+    response.writeHead(200); response.end(); return;
+  }
   const operation = request.headers['x-amz-target']?.split('.').at(-1);
   let body = {};
   if (operation === 'ReceiveMessage') {
     polls++;
     if (polls === 2) body = { Messages: [] };
     if (polls === 3) body = { Messages: [{ MessageId: 'invalid', ReceiptHandle: 'receipt', Body: 'null', MD5OfBody: createHash('md5').update('null').digest('hex') }] };
-    if (polls === 4) {
+    if (polls === 4) body = { Messages: [{ MessageId: 'incompatible', ReceiptHandle: 'receipt-2', Body: callbackWork, MD5OfBody: createHash('md5').update(callbackWork).digest('hex') }] };
+    if (polls === 5) {
       complete();
       return; // Keep the worker blocked until the test terminates it.
     }
@@ -56,8 +80,10 @@ try {
     exited.then(([code, signal]) => { throw new Error(`Worker exited (${code ?? signal}): ${output}`); }),
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Queue poll timed out: ${output}`)), 15000); }),
   ]);
-  assert.equal(polls, 4);
-  assert.equal(deletes, 1, 'Invalid work must still be acknowledged after empty polls.');
+  assert.equal(polls, 5);
+  assert.equal(deletes, 2, 'Invalid and incompatible work must be acknowledged after empty polls.');
+  assert.deepEqual(callbacks, ['claim', 'fail']);
+  assert.equal(callbackKeys.size, 2, 'Callbacks must carry distinct signed mutation keys.');
   assert.equal(worker.exitCode, null);
   console.log('Renderer survives missing/empty message collections and processes subsequent work.');
 } finally {

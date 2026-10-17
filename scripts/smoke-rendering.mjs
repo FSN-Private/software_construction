@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { randomUUID } from 'node:crypto';
 
 const [baseUrl] = process.argv.slice(2);
 const token = process.env.INGEST_SMOKE_TOKEN;
@@ -30,7 +31,7 @@ const starts = [];
 for (const fixture of fixtures) {
   const body = JSON.stringify({ libraryId: fixture.libraryId, assetId: fixture.assetId, editId: fixture.editId, selectedVersion: 'current', rendition: 'thumbnail-512', profile: 'render-v1' });
   const submittedAt = Date.now();
-  const created = await request('/v1/renditions', { method: 'POST', headers, body });
+  const created = await request('/v1/renditions', { method: 'POST', headers: { ...headers, 'Idempotency-Key': randomUUID() }, body });
   const result = await created.response.json();
   if (!result.requestId || result.cacheHit) throw new Error('Each candidate digest requires an uncached acceptance request.');
   starts.push({ libraryId: fixture.libraryId, requestId: result.requestId, milliseconds: created.milliseconds, deadline: submittedAt + 30000 });
