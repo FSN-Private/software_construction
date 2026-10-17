@@ -6,6 +6,8 @@ Local implementation is in progress. Recorded command results are in [validation
 
 Local validation requires Node.js 24.20.0 with npm 11.19.0, the .NET SDK pinned in `global.json` (10.0.400 with latest-patch roll-forward), and Docker Compose for database/object-store integration tests. No AWS credentials are required or should be supplied to these test commands.
 
+`npm run test:release-evidence` also requires Bash, AWS CLI v2 and jq1.7 or newer. Its operator-identity regression directs the real CLI to a loopback fixture with dummy credentials, preserving the email sign-in identifier while testing canonical operator selection and missing-token/identity rejection. It does not contact AWS. These tools are already present on the configured Ubuntu24.04 hosted runner; Windows validation can use Git Bash and task-local verified tools without a global installation.
+
 The feature branch includes the following validation commands. Run from the repository root with the pinned toolchain:
 
 ```powershell
