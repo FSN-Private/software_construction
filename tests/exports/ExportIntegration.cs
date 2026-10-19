@@ -492,11 +492,13 @@ public static class ExportIntegration
         ExportRenderer renderer; await using (var connection = await db.OpenConnectionAsync()) renderer = await service.ExportCompatibilityAsync(connection, default);
         var first = await service.RequestPinnedAsync("owner", "library", pin, renderer, default);
         var duplicate = await service.RequestPinnedAsync("owner", "library", pin with { ItemId = Guid.NewGuid() }, renderer, default);
-        Check(first.RequestId == duplicate.RequestId && queue.Messages.Count == 1, "Equivalent exact pinned renders coalesce across distinct basket selections");
+        Check(first.RequestId == duplicate.RequestId && queue.Messages.Count == 1 && queue.Messages[0].SourceFormat is null, "Equivalent legacy pinned renders coalesce without requiring new format metadata");
+        await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "UPDATE assets SET format='raw' WHERE id=$1", default, pin.AssetId);
         Check(await service.RedispatchPendingAsync(default) == 1, "Stored pinned rendering supports pending redispatch");
         await using (var connection = await db.OpenConnectionAsync()) await ExecuteAsync(connection, "UPDATE render_requests SET state='retryable' WHERE id=$1; UPDATE render_attempts SET state='retryable',failure_code='renderer_timeout',completed_at=now() WHERE request_id=$1", default, first.RequestId);
         await service.RetryAsync("owner", "library", first.RequestId, default);
         Check(queue.Messages.Count == 3 && queue.Messages.All(m => m.Original == pin.Original && m.Xmp == pin.Xmp && m.Request.SelectedVersion == pin.CommitId && m.Request.XmpSha256 == pin.Xmp.Sha256), "Initial dispatch, redispatch and retry preserve exact old XMP/object versions after edit head and refs move");
+        Check(queue.Messages.Skip(1).All(m => m.SourceFormat == "raw"), "Pinned redispatch and retry carry verified asset format without changing the stored pin");
         config["Rendering:DeployedArtifactDigest"] = "sha256:" + new string('f', 64);
         try { await service.RequestPinnedAsync("owner", "library", pin, renderer, default); throw new InvalidOperationException("Expected changed renderer admission denial"); }
         catch (Platform.Api.Features.Rendering.RenderingProblem problem) { Check(problem.Code == "incompatible_renderer", "Captured renderer compatibility cannot silently change"); }

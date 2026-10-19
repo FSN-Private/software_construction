@@ -45,7 +45,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
             await ExecuteAsync(db, "INSERT INTO render_attempts(id,request_id,attempt_number,state,worker_policy_version) VALUES($1,$2,1,'pending','render-policy-v1'); INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($3,$4,$5,$2,$1,'requested')", ct, Guid.NewGuid(), id, Guid.NewGuid(), owner, library);
         var result = await StatusAsync(db, owner, library, id, !created.HasValue, ct);
         await transaction.CommitAsync(ct);
-        if (created.HasValue && queue is not null) await queue.EnqueueAsync(Message(id, result.AttemptId!.Value, request, pin.Original, pin.Xmp), ct);
+        if (created.HasValue && queue is not null) await queue.EnqueueAsync(await MessageAsync(db, id, result.AttemptId!.Value, request, pin.Original, pin.Xmp, ct), ct);
         return result;
     }
     public async Task<RenditionStatusView> RequestAsync(string owner, RenditionRequestInput input, CancellationToken cancellationToken)
@@ -84,7 +84,7 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         var result = await StatusAsync(connection, owner, input.LibraryId, id, created is null, cancellationToken);
         if (created is null && result.CacheHit) await ExecuteAsync(connection, "INSERT INTO render_events(id,owner_id,library_id,request_id,attempt_id,event_type) VALUES($1,$2,$3,$4,$5,'cache_used')", cancellationToken, Guid.NewGuid(), owner, input.LibraryId, id, result.AttemptId);
         await transaction.CommitAsync(cancellationToken);
-        if (created.HasValue && queue is not null) await queue.EnqueueAsync(Message(id, result.AttemptId!.Value, request, source.Original, xmp), cancellationToken);
+        if (created.HasValue && queue is not null) await queue.EnqueueAsync(await MessageAsync(connection, id, result.AttemptId!.Value, request, source.Original, xmp, cancellationToken), cancellationToken);
         return result;
     }
 
@@ -183,7 +183,12 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         return await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(1) ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim(), reader.GetInt64(3)) : null;
     }
 
-    private static RenderQueueMessage Message(Guid requestId, Guid attemptId, RenditionRequest request, RenderInputObject original, RenderInputObject xmp) => new(requestId, attemptId, request, original, xmp, $"derivatives/{request.Key}.jpg", new RenderResourcePolicy(540, 2048, 30 * 1024, 1));
+    private static async Task<RenderQueueMessage> MessageAsync(NpgsqlConnection connection, Guid requestId, Guid attemptId, RenditionRequest request, RenderInputObject original, RenderInputObject xmp, CancellationToken cancellationToken)
+    {
+        var format = await ScalarAsync(connection, "SELECT format FROM assets WHERE id=$1 AND owner_id=$2 AND original_sha256=$3", cancellationToken, request.AssetId, request.OwnerId, original.Sha256) as string;
+        if (format is not (null or "dng" or "jpeg" or "png" or "tiff" or "raw")) throw new RenderingProblem("source_unavailable", 404);
+        return new(requestId, attemptId, request, original, xmp, $"derivatives/{request.Key}.jpg", new RenderResourcePolicy(540, 2048, 30 * 1024, 1), format);
+    }
 
     private async Task DispatchAsync(string owner, string library, Guid requestId, Guid attemptId, CancellationToken cancellationToken)
     {
@@ -202,12 +207,12 @@ public sealed class RenderingService(NpgsqlDataSource dataSource, ISelectedVersi
         {
             var reason = await new ExportSelectionService(dataSource).AvailabilityAsync(connection, owner, library, pin, false, cancellationToken);
             if (reason is not null) return;
-            await queue.EnqueueAsync(Message(requestId, attemptId, request, pin.Original, pin.Xmp), cancellationToken);
+            await queue.EnqueueAsync(await MessageAsync(connection, requestId, attemptId, request, pin.Original, pin.Xmp, cancellationToken), cancellationToken);
             return;
         }
         var source = await SourceAsync(connection, owner, library, asset, edit, cancellationToken) ?? throw new RenderingProblem("source_unavailable", 404);
         var xmp = await ContentAsync(connection, request.XmpSha256, "xmp", cancellationToken) ?? throw new RenderingProblem("selected_version_unavailable", 404);
-        await queue.EnqueueAsync(Message(requestId, attemptId, request, source.Original, xmp), cancellationToken);
+        await queue.EnqueueAsync(await MessageAsync(connection, requestId, attemptId, request, source.Original, xmp, cancellationToken), cancellationToken);
     }
 
     private static string Rendition(RenditionKind value) => value switch { RenditionKind.Thumbnail512 => "thumbnail-512", RenditionKind.Preview2048 => "preview-2048", _ => throw new RenderingProblem("invalid_render_request", 400) };

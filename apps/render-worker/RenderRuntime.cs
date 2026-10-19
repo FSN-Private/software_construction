@@ -22,7 +22,15 @@ public sealed class S3RenderSourceResolver(IAmazonS3 s3, string bucket) : IImmut
         try
         {
             var message = job.Message ?? throw new ArgumentException("invalid_render_job");
-            var original = await DownloadAsync(message.Original, workspace.PrivatePath("original"), cancellationToken);
+            var extension = message.SourceFormat switch
+            {
+                null or "raw" => "raw",
+                "dng" or "png" => message.SourceFormat,
+                "jpeg" => "jpg",
+                "tiff" => "tif",
+                _ => throw new InvalidDataException("source_unavailable"),
+            };
+            var original = await DownloadAsync(message.Original, workspace.PrivatePath($"original.{extension}"), cancellationToken);
             var xmp = await DownloadAsync(message.Xmp, workspace.PrivatePath("edit.xmp"), cancellationToken);
             return new(original, xmp, message.Original.Sha256, message.Xmp.Sha256);
         }
