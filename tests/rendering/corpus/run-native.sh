@@ -9,6 +9,7 @@ trap 'rm -rf "$workspace"' EXIT
 chmod 0777 "$workspace"
 
 (cd "$root" && sha256sum --check IMG_9406.CR2.sha256)
+cp "$root/IMG_9406.CR2" "$workspace/original.raw"
 
 # Match the non-root, read-only Fargate filesystem before checking pixels.
 MSYS_NO_PATHCONV=1 docker run --rm --read-only --entrypoint /bin/sh "$DARKTABLE_IMAGE" -eu -c '
@@ -21,6 +22,14 @@ MSYS_NO_PATHCONV=1 docker run --rm --read-only --entrypoint /bin/sh "$DARKTABLE_
 
 declare -a jpeg_hashes=()
 declare -a pixel_hashes=()
+native_render() {
+  MSYS_NO_PATHCONV=1 docker run --rm --read-only --cpus 1 --memory 2g \
+    --env OMP_NUM_THREADS=1 \
+    --env HOME=/tmp/render --env XDG_CACHE_HOME=/tmp/render/cache --env XDG_CONFIG_HOME=/tmp/render/config \
+    --entrypoint /opt/darktable/bin/darktable-cli \
+    --volume "$root:/input:ro" --volume "$workspace:/output" "$DARKTABLE_IMAGE" "$@"
+}
+
 for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   name="${xmp%.xmp}"
   xmp_hash="$(sha256sum "$root/$xmp" | awk '{print $1}')"
@@ -29,23 +38,11 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   test "$size" = 512 || suffix="-$size"
   output="$name$suffix.jpg"
   pixels="$name$suffix.pfm"
-  MSYS_NO_PATHCONV=1 docker run --rm --read-only \
-    --env HOME=/tmp/render --env XDG_CACHE_HOME=/tmp/render/cache --env XDG_CONFIG_HOME=/tmp/render/config \
-    --entrypoint /opt/darktable/bin/darktable-cli \
-    --volume "$root:/input:ro" \
-    --volume "$workspace:/output" \
-    "$DARKTABLE_IMAGE" \
-    /input/IMG_9406.CR2 "/input/$xmp" "/output/$output" \
+  native_render /output/original.raw "/input/$xmp" "/output/$output" \
     --width "$size" --height "$size" --library :memory:
 
   test -s "$workspace/$output"
-  MSYS_NO_PATHCONV=1 docker run --rm --read-only \
-    --env HOME=/tmp/render --env XDG_CACHE_HOME=/tmp/render/cache --env XDG_CONFIG_HOME=/tmp/render/config \
-    --entrypoint /opt/darktable/bin/darktable-cli \
-    --volume "$root:/input:ro" \
-    --volume "$workspace:/output" \
-    "$DARKTABLE_IMAGE" \
-    /input/IMG_9406.CR2 "/input/$xmp" "/output/$pixels" \
+  native_render /output/original.raw "/input/$xmp" "/output/$pixels" \
     --width "$size" --height "$size" --library :memory:
 
   test -s "$workspace/$pixels"
@@ -87,3 +84,29 @@ done
 
 test "$(printf '%s\n' "${jpeg_hashes[@]}" | sort --unique | wc --lines)" -eq 8
 test "$(printf '%s\n' "${pixel_hashes[@]}" | sort --unique | wc --lines)" -eq 8
+cmp --silent "$workspace/original.raw" "$root/IMG_9406.CR2"
+
+# The worker uses a fixed generic suffix; decoder support must follow the bytes.
+printf '%s  %s\n' e7ea961edfea725ad2753f261d20da5e6addd5d641e5bcbc373999710f27941f "$root/Pentax-K10D.dng" | sha256sum --check
+for format in dng jpeg png tif; do
+  extension="$format"
+  test "$format" != jpeg || extension=jpg
+  case "$format" in
+    dng) source="$root/Pentax-K10D.dng" ;;
+    jpeg) source="$workspace/current.jpg" ;;
+    png|tif)
+      native_render /output/current.jpg "/output/generated.$format" --width 512 --height 512 --library :memory:
+      source="$workspace/generated.$format"
+      ;;
+  esac
+  cp "$source" "$workspace/staged-$format.$extension"
+  native_render "/output/staged-$format.$extension" "/output/staged-$format.pfm" --width 512 --height 512 --library :memory:
+  node "$root/check-pfm.mjs" "$workspace/staged-$format.pfm" 512
+  printf 'Worker staging decode passed: %s\n' "$format"
+done
+printf 'not an image' > "$workspace/staged-invalid.raw"
+if native_render /output/staged-invalid.raw /output/staged-invalid.jpg --width 512 --height 512 --library :memory:; then
+  echo 'Invalid staged bytes must not render.' >&2
+  exit 1
+fi
+test ! -s "$workspace/staged-invalid.jpg"

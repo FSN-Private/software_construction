@@ -42,6 +42,7 @@ internal static class RenderingIntegrationChecks
         IngestChecks.Check(created.State == RenderState.Pending && created.AttemptId is not null, "A current preview must create an observable pending attempt.");
         IngestChecks.Check(created.RequestId == duplicate.RequestId && created.AttemptId == duplicate.AttemptId && !duplicate.CacheHit, "PostgreSQL must coalesce duplicate pending current-preview requests.");
         IngestChecks.Check(queue.Messages.Count == 1 && queue.Messages[0].RequestId == created.RequestId && queue.Messages[0].AttemptId == created.AttemptId && queue.Messages[0].DerivativeKey == $"derivatives/{queue.Messages[0].Request.Key}.jpg", "A new render attempt must dispatch one immutable queue envelope.");
+        IngestChecks.Check(queue.Messages[0].SourceFormat == "dng", "Queue dispatch must carry the existing verified asset format, never a user filename.");
 
         var objectKey = $"private/{owner}/{library}/renditions/{created.RequestId:N}.jpg";
         var output = "integration-render-output"u8.ToArray();
@@ -66,6 +67,7 @@ internal static class RenderingIntegrationChecks
         var retry = await service.RetryAsync(owner, library, failed.RequestId, default);
         IngestChecks.Check(retry.State == RenderState.Pending && retry.AttemptId != failed.AttemptId, "A corrected render retry must create a distinct pending attempt.");
         IngestChecks.Check(queue.Messages.Count == 3 && queue.Messages[2].AttemptId == retry.AttemptId, "A retry must dispatch its distinct immutable render attempt.");
+        IngestChecks.Check(queue.Messages.All(message => message.SourceFormat == "dng"), "Initial, redispatched and retried rendering must preserve the verified asset format.");
         await new RenderWorkerCallbacks(db).FailAsync(retry.RequestId, retry.AttemptId!.Value, "resource_limit", default);
         IngestChecks.Check((await service.StatusAsync(owner, library, retry.RequestId, default)).FailureCode == "resource_limit", "A resource-limited attempt must remain visibly retryable without exposing worker details.");
         await MissingSourceIsRejectedAsync(service, owner, library, edit);

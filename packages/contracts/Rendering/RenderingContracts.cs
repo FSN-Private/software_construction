@@ -121,7 +121,7 @@ public interface IRenderWorkerCallback
 }
 
 /// <summary>Immutable SQS payload. It contains object versions, never paths, owner credentials, or database credentials.</summary>
-public sealed record RenderQueueMessage(Guid RequestId, Guid AttemptId, RenditionRequest Request, RenderInputObject Original, RenderInputObject Xmp, string DerivativeKey, RenderResourcePolicy Policy)
+public sealed record RenderQueueMessage(Guid RequestId, Guid AttemptId, RenditionRequest Request, RenderInputObject Original, RenderInputObject Xmp, string DerivativeKey, RenderResourcePolicy Policy, string? SourceFormat = null)
 {
     public void Validate()
     {

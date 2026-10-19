@@ -105,6 +105,7 @@ public sealed class ConstrainedRendererExecutor
         foreach (var argument in command.Arguments) start.ArgumentList.Add(argument);
         start.Environment.Clear();
         start.Environment["TZ"] = "UTC";
+        start.Environment["OMP_NUM_THREADS"] = Environment.ProcessorCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
         start.Environment["HOME"] = command.WorkingDirectory;
         start.Environment["XDG_CACHE_HOME"] = System.IO.Path.Combine(command.WorkingDirectory, "cache");
         start.Environment["XDG_CONFIG_HOME"] = System.IO.Path.Combine(command.WorkingDirectory, "config");

@@ -49,3 +49,8 @@ Response is `202 Accepted` for new or coalesced work and `200 OK` for an exact c
 ```
 
 The owner, library identity, and every provenance field form the cache key input. Consumers must display provenance text alongside a completed rendition and must not infer a missing field.
+
+
+## Internal source staging
+
+The private queue carries optional `SourceFormat` from the existing verified asset metadata, looked up by owner, asset and exact original hash for initial requests, exports, redispatch and retry. The worker maps only `dng`, `jpeg`, `png`, `tiff` and `raw` to fixed private filenames (`original.dng`, `.jpg`, `.png`, `.tif`, `.raw`). Unknown values fail source resolution; user filenames never become filesystem paths. Missing metadata in legacy queue messages uses the generic RAW convention; new ingest already persists supported format metadata. Source version, length, SHA-256 and selected XMP checks remain authoritative. This adds internal decode context without changing the public request, rendition identity or stored export pins.

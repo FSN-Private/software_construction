@@ -2,6 +2,10 @@ using Platform.Contracts.Rendering;
 using Platform.Contracts.VersionControl;
 using Platform.Api.Features.Rendering;
 using Platform.Render.Worker;
+using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Model;
+using System.Security.Cryptography;
 
 internal static class RenderingChecks
 {
@@ -66,8 +70,47 @@ internal static class RenderingChecks
             Check(workspace.PrivatePath("output.jpg").StartsWith(workspace.Path, StringComparison.Ordinal), "Worker paths must remain inside a private workspace.");
             AssertThrows(() => workspace.PrivatePath("../outside.jpg"), "Workspace path traversal must be rejected.");
             AssertThrows(() => new RendererCommand("darktable-cli", [], workspace.Path).Validate(), "Renderer execution must require an explicit absolute executable path.");
+            // The constrained native renderer executes only on Linux.
+            if (!OperatingSystem.IsWindows())
+            {
+                var probeOutput = workspace.PrivatePath("child-environment.txt");
+                var previousProbe = Environment.GetEnvironmentVariable("PLATFORM_RENDER_TEST_SECRET");
+                Environment.SetEnvironmentVariable("PLATFORM_RENDER_TEST_SECRET", "fixture-only-do-not-inherit");
+                try
+                {
+                    var probe = new RendererCommand("/bin/sh", ["-c", "printf '%s\\n%s\\n' \"$OMP_NUM_THREADS\" \"${PLATFORM_RENDER_TEST_SECRET-unset}\" > \"$1\"", "probe", probeOutput], workspace.Path);
+                    var result = new ConstrainedRendererExecutor().ExecuteAsync(probe, new(30, 1024, 2048, 1)).GetAwaiter().GetResult();
+                    Check(result.Succeeded && File.ReadAllLines(probeOutput).SequenceEqual([Environment.ProcessorCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "unset"]), "The actual Linux child must receive its CPU quota thread count without inheriting parent secrets.");
+                }
+                finally { Environment.SetEnvironmentVariable("PLATFORM_RENDER_TEST_SECRET", previousProbe); }
+            }
             var command = new DarktableCommandFactory().Create(new RenderJob(Guid.NewGuid(), Guid.NewGuid(), request, new(30, 1024, 2048, 1), queueMessage), new(workspace.PrivatePath("original"), workspace.PrivatePath("edit.xmp"), new string('a', 64), new string('b', 64)), workspace);
             Check(command.Arguments.SequenceEqual([workspace.PrivatePath("original"), workspace.PrivatePath("edit.xmp"), workspace.PrivatePath("output.jpg"), "--width", "512", "--height", "512", "--library", ":memory:"]), "Darktable must receive square rendition bounds and an in-memory library.");
+            using var s3 = new StagedSourceClient();
+            var original = queueMessage.Original with { Sha256 = Convert.ToHexString(SHA256.HashData(s3.Original)).ToLowerInvariant(), ByteLength = s3.Original.Length };
+            var xmp = queueMessage.Xmp with { Sha256 = Convert.ToHexString(SHA256.HashData(s3.Xmp)).ToLowerInvariant(), ByteLength = s3.Xmp.Length };
+            var sourceJob = new RenderJob(Guid.NewGuid(), Guid.NewGuid(), request, queueMessage.Policy, queueMessage with { Original = original, Xmp = xmp });
+            var resolved = new S3RenderSourceResolver(s3, "private-sources").ResolveAsync(sourceJob, workspace).GetAwaiter().GetResult();
+            Check(resolved is not null && Path.GetFileName(resolved.OriginalPath) == "original.raw", "Verified source staging must provide a decoder-supported fixed filename.");
+            Check(File.ReadAllBytes(resolved!.OriginalPath).SequenceEqual(s3.Original) && File.ReadAllBytes(resolved.XmpPath).SequenceEqual(s3.Xmp), "Staging must preserve exact original and XMP bytes.");
+            Check(s3.Requests.Select(value => value.VersionId).SequenceEqual([original.Version, xmp.Version]), "Source resolution must request exact immutable versions.");
+            Check(s3.Requests.All(value => value.BucketName == "private-sources"), "Source resolution must remain in the configured private bucket.");
+            using var corruptS3 = new StagedSourceClient();
+            corruptS3.Original[0] ^= 1;
+            var rejectedWorkspace = RenderWorkspace.Create(root);
+            try { Check(new S3RenderSourceResolver(corruptS3, "private-sources").ResolveAsync(sourceJob, rejectedWorkspace).GetAwaiter().GetResult() is null, "A supported staged suffix must not bypass source hash validation."); }
+            finally { rejectedWorkspace.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            foreach (var (format, filename) in new (string?, string)[] { (null, "original.raw"), ("raw", "original.raw"), ("dng", "original.dng"), ("jpeg", "original.jpg"), ("png", "original.png"), ("tiff", "original.tif"), ("../../outside", "") })
+            {
+                var formatWorkspace = RenderWorkspace.Create(root);
+                try
+                {
+                    var formatJob = sourceJob with { Message = sourceJob.Message! with { SourceFormat = format } };
+                    var formatted = new S3RenderSourceResolver(s3, "private-sources").ResolveAsync(formatJob, formatWorkspace).GetAwaiter().GetResult();
+                    Check(filename.Length == 0 ? formatted is null : formatted is not null && Path.GetFileName(formatted.OriginalPath) == filename, "Only allowlisted verified formats may select a fixed private staging suffix.");
+                }
+                finally { formatWorkspace.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            }
         }
         finally
         {
@@ -76,6 +119,20 @@ internal static class RenderingChecks
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }
+
+    private sealed class StagedSourceClient() : AmazonS3Client(new AnonymousAWSCredentials(), new AmazonS3Config { ServiceURL = "http://127.0.0.1:1", ForcePathStyle = true })
+    {
+        public byte[] Original { get; } = [1, 2, 3, 4];
+        public byte[] Xmp { get; } = [5, 6, 7];
+        public List<GetObjectRequest> Requests { get; } = [];
+        public override Task<GetObjectResponse> GetObjectAsync(GetObjectRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            var bytes = request.VersionId == "source-v1" ? Original : Xmp;
+            return Task.FromResult(new GetObjectResponse { ContentLength = bytes.Length, ResponseStream = new MemoryStream(bytes) });
+        }
+    }
+
 
     private static void Check(bool condition, string message)
     {
