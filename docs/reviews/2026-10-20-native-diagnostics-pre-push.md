@@ -106,3 +106,46 @@ Final gate: **PASS for the bounded diagnostic follow-up only**, conditional on
 the reviewer inspecting these exact record bytes and final committed range and
 explicitly agreeing before this append is committed unchanged. Remote sample
 results remain unverified; T048 and deployment qualification remain unresolved.
+
+## Round 3: diagnostic findings and compatibility proposal, report only
+
+Reviewer: the same read-only alternate `gpt-6-astra` agent, 2026-10-20.
+Reviewed report range: `7369c1d..2fbe3d848b05ed8ade466a5f22e9df563a305ec5`.
+Pending publication: those report/evidence commits plus this unchanged append
+to `origin/fix/011-deployment-bootstrap`, within the approved diagnostic scope.
+There is no active reference, renderer, corpus or deployment code change.
+
+Actual diagnostic39439825637 completed: AMD samples1/3 pass baseline, repeat
+and libc-disabled cases; Intel samples2/4 reproduce the exact deployment
+mismatch and report identical full eight-candidate manifests. T055 proposes
+additional exact per-fixture hashes; the owner decision is pending. The report
+does not claim a particular machine instruction was isolated, universal
+cross-platform determinism, live acceptance or successful deployment.
+
+The reviewer independently compared the raw retained manifest with both sample
+manifests and its published SHA43171fcfbdee04acd2ce1629234f612a46e2ae320eb53020fa191f333ed77107;
+recomputed all eight sample2 PFM hashes, dimensions, lengths, finite checks,
+XMP hashes and every numerical analysis metric against the original references;
+checked all eight proposal table hashes; checked the six first-mismatch records
+against the actual deployment and the two AMD host/results records; and viewed
+all four meaningful exposure display comparisons. All checks pass. Sample4
+agreement is verified through its retrieved manifest, not a second full PFM
+download; the report does not claim otherwise. PNGs are display aids with equal
+sRGB mapping, not JPEG qualification.
+
+No blocking provenance, accuracy, privacy, scope or quality-evidence-limit issue
+was found. The prior exact owner approval remains intact and the additional
+values remain explicitly unapproved. All active references and execution code
+are unchanged. No new blocking finding requires remediation or waiver.
+
+The generated analysis initially had Windows CRLF retained as binary-safe JSON;
+the staged whitespace check reported those CRs. Commit2fbe3d8 canonicalizes this
+generated report to LF without changing numerical values or the raw candidate
+manifest. The final complete report diff passes whitespace validation. No
+functional suite rerun is claimed for this documentation-only slice; the prior
+diagnostic code's full validation remains recorded above.
+
+Final gate: **PASS for publishing this diagnostic report/proposal only**, after
+the reviewer inspects these exact final record bytes and explicitly agrees
+before commit. This is not approval to accept the proposed hashes. T048/T055,
+live performance, deployment and fixture qualification remain unresolved.
