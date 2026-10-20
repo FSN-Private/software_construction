@@ -12,6 +12,7 @@ assert.ok(workflow.includes('actions/runs/$RELEASE_RUN_ID') && workflow.includes
 try {
   mkdirSync(join(workspace, 'bin'));
   mkdirSync(join(workspace, 'tests/rendering/corpus'), { recursive: true });
+  mkdirSync(join(workspace, 'scripts'));
   writeFileSync(join(workspace, 'diagnose.sh'), readFileSync('scripts/diagnose-native-renderer.sh'));
   writeFileSync(join(workspace, 'bin/docker'), `#!/usr/bin/env bash
 printf '%s|%s\\n' "\${NATIVE_VARIANT:-setup}" "$*" >> calls.txt
@@ -20,6 +21,9 @@ if test "$1" = image; then printf 'sha256:diagnostic-fixture\\n'; fi
   writeFileSync(join(workspace, 'tests/rendering/corpus/run-native.sh'), `#!/usr/bin/env bash
 docker run --rm renderer
 test "\${ALL_PASS:-0}" = 1 || test "$NATIVE_VARIANT" = libc-baseline
+`);
+  writeFileSync(join(workspace, 'scripts/collect-native-renderer-candidate.sh'), `#!/usr/bin/env bash
+printf '%s' "$NATIVE_VARIANT" > collector-called.txt
 `);
   const command = process.platform === 'win32'
     ? 'export PATH="$(cygpath -u "$DIAGNOSTIC_BIN"):$PATH"; bash diagnose.sh'
@@ -35,8 +39,11 @@ test "\${ALL_PASS:-0}" = 1 || test "$NATIVE_VARIANT" = libc-baseline
   assert.match(calls, /baseline-repeat\|run --rm renderer/);
   assert.match(calls, /libc-baseline\|run --env GLIBC_TUNABLES=.*-SSE4_1.* --rm renderer/);
   assert.equal(readFileSync(join(workspace, 'artifacts/native-renderer-diagnostics/results.txt'), 'utf8'), 'baseline FAIL\nbaseline-repeat FAIL\nlibc-baseline PASS\n');
+  assert.equal(readFileSync(join(workspace, 'collector-called.txt'), 'utf8'), 'baseline', 'Candidate collection must use baseline arithmetic rather than the last experiment.');
+  rmSync(join(workspace, 'collector-called.txt'));
   const passed = run({ ALL_PASS: '1' });
   assert.equal(passed.status, 0, passed.stderr);
+  assert.throws(() => readFileSync(join(workspace, 'collector-called.txt')));
   assert.equal(run({ SOURCE_REVISION: 'invalid' }).status, 2);
 } finally {
   rmSync(workspace, { recursive: true, force: true });

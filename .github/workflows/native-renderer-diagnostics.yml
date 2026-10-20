@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/native-renderer-diagnostics.yml
       - scripts/diagnose-native-renderer.sh
+      - scripts/collect-native-renderer-candidate.sh
   workflow_dispatch:
     inputs:
       release_run_id:
@@ -23,6 +24,10 @@ permissions:
 
 jobs:
   diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -63,7 +68,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-renderer-diagnostics
+          name: native-renderer-diagnostics-${{ matrix.sample }}
           path: artifacts/native-renderer-diagnostics
           if-no-files-found: ignore
           retention-days: 14
