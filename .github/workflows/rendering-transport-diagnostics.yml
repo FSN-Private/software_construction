@@ -1,0 +1,28 @@
+name: Diagnose rendering transport
+
+on:
+  push:
+    branches: [fix/011-render-cache-qualification]
+    paths:
+      - .github/workflows/rendering-transport-diagnostics.yml
+      - scripts/diagnose-rendering-transport.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/diagnose-rendering-transport.mjs
