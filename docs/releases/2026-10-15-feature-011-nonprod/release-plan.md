@@ -1,5 +1,20 @@
 # Feature 011 non-production deployment
 
+2026-10-20 bootstrap follow-up: owner explicitly approved dispatch of release
+39397523975/revision acc789ca0a7f16fc140b97a69418a42d84909dbd and persistence
+of fixture IDs only after rendering/ingest acceptance. Run39433716049 passed
+manifest/configuration/database checks and published the exact scanned renderer
+as sha256:903152c152debb8b4ae802a15ad345244cc66f46c6c95f1ee21054d9d7490ede,
+then failed historical-v1.pfm native equality at13:53:38UTC before task
+registration/migration/startup. Services remain desired/running0 onAPI6/
+ingest4/renderer1; no fixture variable was written. Archive and registry config
+binding and fresh0critical/high/exact accepted46medium26low checks passed;
+they do not qualify deployment. T048 remains blocking. See the
+[incident and controlled runner diagnosis](../../incidents/2026-10-20-nonprod-deployment-bootstrap.md).
+No reference, pixel tolerance or deployment gate is relaxed. Read-only runner
+diagnostics require a separately authorized branch push after alternate review;
+they cannot deploy, activate or qualify fixtures.
+
 Owner: platform maintainer; execution by the repository agent under the owner's 2026-10-15 instruction to push and deploy. Production promotion and independent recovery-account provisioning remain outside this release.
 
 Source: packaging fix PR #33, merged as 74c39725392c6eb38f44a542c919a690c6c48ccf, plus the T025 native-readiness follow-up. Use the final merged SHA and exact run-bound artifacts reported by GitHub; never substitute an earlier failed release. Feature scope and limitations remain in [the plan](../../features/011-backup-disaster-recovery/plan.md) and [numbered tasks](../../features/011-backup-disaster-recovery/tasks.md).
