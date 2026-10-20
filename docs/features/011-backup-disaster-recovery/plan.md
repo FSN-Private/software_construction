@@ -9,16 +9,16 @@
 
 ## Summary
 
-T048/T055 maintenance extension proposed2026-10-20: controlled same-image
+T048/T055 maintenance extension approved2026-10-20: controlled same-image
 comparisons establish stable AMD/Intel corpus differences in the measured
 runner samples. The [exact reference extension proposal](reviews/intel-renderer-reference-proposal.md)
-requires owner compatibility approval before implementation. The bounded design
+records the owner's exact compatibility approval. The bounded design
 keeps the current byte-equal primary references and accepts only eight named
 additional exact hashes, with finite/dimension validation unchanged and no
 pixel tolerance, runtime change or automatically learned baseline. Existing
 performance/security/live qualification remains mandatory. This proposal does
-not activate a compatibility record; its numbered work is T055 and approval
-remains pending.
+not activate a runtime compatibility record; its numbered work is T055 and
+source-bound native/live verification remains required.
 
 Use a separately administered recovery account in ap-southeast-2 for the current primary region ap-southeast-1. Capture a transactionally consistent PostgreSQL logical snapshot every 15 minutes. A recovery-side worker pulls the dump and its exact referenced S3 object versions, checks its purge journal before each write, and advances the healthy recovery watermark only after independent verification and signing. Rebuild the app from preserved configuration and exact image digests into an isolated recovery environment.
 

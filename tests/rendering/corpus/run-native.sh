@@ -48,8 +48,10 @@ for xmp in historical-v1.xmp historical-v2.xmp historical-v3.xmp current.xmp; do
   test -s "$workspace/$pixels"
   node "$root/check-pfm.mjs" "$workspace/$pixels" "$size"
   node "$root/check-pfm.mjs" "$root/reference/$pixels" "$size"
-  # The size bounds preserve aspect ratio; the approved PFM binds dimensions and pixels.
-  if ! cmp --silent "$workspace/$pixels" "$root/reference/$pixels"; then
+  # Both references bind the entire file exactly; no pixel tolerance is accepted.
+  if ! cmp --silent "$workspace/$pixels" "$root/reference/$pixels" && ! (
+    test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod && node "$root/check-additional-reference.mjs" "$workspace/$pixels"
+  ); then
     printf 'Pixel reference mismatch: %s\n' "$pixels" >&2
     if test -n "${DARKTABLE_FAILURE_DIR:-}"; then
       node - "$workspace/$pixels" "$root/reference/$pixels" "$DARKTABLE_IMAGE" "$DARKTABLE_FAILURE_DIR" <<'NODE'
@@ -60,12 +62,14 @@ const os = require('node:os');
 const [candidate, reference, image, directory] = process.argv.slice(2);
 const actual = fs.readFileSync(candidate);
 const expected = fs.readFileSync(reference);
+const additional = JSON.parse(fs.readFileSync(path.join(path.dirname(reference), 'intel-reference-hashes.json'), 'utf8'));
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 fs.mkdirSync(directory, { recursive: true });
 fs.copyFileSync(candidate, path.join(directory, path.basename(candidate)));
 fs.writeFileSync(path.join(directory, 'mismatch.json'), JSON.stringify({
   status: 'FAILED exact native comparison; diagnostic only, never qualification',
   image, file: path.basename(candidate), candidateSHA256: hash(actual), referenceSHA256: hash(expected),
+  additionalReferenceSHA256: additional[path.basename(candidate)] ?? null,
   candidateBytes: actual.length, referenceBytes: expected.length,
   firstDifferentByte: actual.findIndex((value, index) => value !== expected[index]),
   host: { architecture: os.arch(), cpuModel: os.cpus()[0]?.model, logicalCPUs: os.cpus().length, availableParallelism: os.availableParallelism() },

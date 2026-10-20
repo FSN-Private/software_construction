@@ -7,6 +7,7 @@ on:
       - .github/workflows/native-renderer-diagnostics.yml
       - scripts/diagnose-native-renderer.sh
       - scripts/collect-native-renderer-candidate.sh
+      - tests/rendering/corpus/**
   workflow_dispatch:
     inputs:
       release_run_id:
@@ -31,6 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
+      DEPLOYMENT_ENVIRONMENT: nonprod
       RELEASE_RUN_ID: ${{ inputs.release_run_id || '39397523975' }}
       SOURCE_REVISION: ${{ inputs.source_revision || 'acc789ca0a7f16fc140b97a69418a42d84909dbd' }}
     steps:

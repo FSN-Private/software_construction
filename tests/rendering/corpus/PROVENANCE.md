@@ -1,5 +1,16 @@
 # Corpus provenance
 
+The owner approved [eight additional exact Intel output hashes](../../../docs/features/011-backup-disaster-recovery/reviews/intel-renderer-reference-proposal.md)
+on2026-10-20 after controlled same-image AMD/Intel comparisons. The original
+PFMs remain the primary references. `reference/intel-reference-hashes.json`
+contains only those eight additional per-fixture hashes, without tolerance.
+`reference/intel-historical-v1.pfm.gz` losslessly stores the exact512px public
+Canon/XMP candidate from run39439825637/sample2 for executable acceptance and
+corruption regression tests; decompressed SHA-256 is
+`1d370508d24a73c406cced938ed83b7bd64ee0207d61dc16458bcb5d49b58ed6`.
+Its source image remains CC0-1.0 and project-authored historical-v1 XMP; the
+candidate manifest and approval retain the source/image/XMP/output bindings.
+
 | Input | Source | License | SHA-256 |
 |---|---|---|---|
 | `IMG_9406.CR2` | raw.pixls.us `Canon/EOS 1000D/IMG_9406.CR2` | CC0-1.0 | `08b0843a7968315b68bd3c71a96c952ebf275d5b5eba4b6094ae8b103522584c` |

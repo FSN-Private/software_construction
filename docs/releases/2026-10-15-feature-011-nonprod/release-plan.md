@@ -1,5 +1,13 @@
 # Feature 011 non-production deployment
 
+2026-10-20 T055 owner decision: explicitly approved the exact Intel reference
+extension. The maintenance gate retains original PFM byte equality and permits
+only the eight approved per-fixture additional hashes in explicit nonprod scope.
+Production/missing scope rejects the additional hashes. Local regression covers
+both valid sets and corruption/finite/size failures; source-bound runner and
+delivery validation remain in progress. Runtime binaries, existing reference
+PFMs, source inputs and latency/security criteria are unchanged.
+
 2026-10-20 controlled CPU diagnosis: independently reviewed/published diagnostic
 run39439825637 shows AMD samples1/3 pass existing pixels and Intel samples2/4
 produce the same eight alternate hashes for the exact release. T055 proposes
