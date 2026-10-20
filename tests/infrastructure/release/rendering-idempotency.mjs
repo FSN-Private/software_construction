@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createServer as createHttp2Server } from 'node:http2';
 import { join } from 'node:path';
 
 const operations = new Map();
 const submissions = [];
 const rejected = [];
 let pauseAttempts = 0;
-const server = createServer(async (req, res) => {
+const handler = async (req, res) => {
   try {
     assert.equal(req.headers.authorization, 'Bearer test-owner');
     if (req.method === 'POST') assert.match(req.headers['idempotency-key'] ?? '', /^[A-Za-z0-9_-]{16,128}$/);
@@ -40,7 +41,11 @@ const server = createServer(async (req, res) => {
     rejected.push(error.message);
     res.writeHead(400); res.end();
   }
-});
+};
+const server = createServer(handler);
+const smokeServer = createHttp2Server(handler);
+smokeServer.listen(0, '127.0.0.1');
+await once(smokeServer, 'listening');
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -67,12 +72,13 @@ try {
   assert.equal(new Set(operations.values()).size, 6, 'Separate mutations must use separate keys.');
   assert.equal(pauseAttempts, 2, 'Exercise a real curl retry.');
   const fixtures = Array.from({ length: 5 }, () => ({ libraryId: 'main', assetId: randomUUID(), editId: randomUUID() }));
-  await run(process.execPath, ['scripts/smoke-rendering.mjs', baseUrl], { INGEST_SMOKE_TOKEN: 'test-owner', RENDERING_ACCEPTANCE_FIXTURES: JSON.stringify(fixtures) });
+  await run(process.execPath, ['scripts/smoke-rendering.mjs', `http://127.0.0.1:${smokeServer.address().port}`], { INGEST_SMOKE_TOKEN: 'test-owner', RENDERING_ACCEPTANCE_FIXTURES: JSON.stringify(fixtures) });
   assert.equal(submissions.length, 5);
   assert.equal(new Set(submissions.map(item => item.key)).size, 5);
   assert.equal(rejected.length, 0);
   console.log('Rendering control retries and smoke submissions satisfy the mutation key contract.');
 } finally {
+  smokeServer.close();
   server.closeAllConnections();
   server.close();
 }
