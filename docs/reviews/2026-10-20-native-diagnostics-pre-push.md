@@ -186,3 +186,28 @@ after the reviewer inspects this exact record and committed range and explicitly
 agrees before this append is committed unchanged. Remote updated-gate results,
 source-bound CI/release/security, live HTTP/ingest/latency acceptance and qualified
 fixture IDs remain pending. T048/T054/T055 are not closed by local validation.
+
+## Round 5: publish successful native qualification evidence
+
+Reviewer: read-only alternate `gpt-6-astra`, 2026-10-20.
+Scope: `b97d90f..a62a3e5` and this pending append, destination
+`origin/fix/011-deployment-bootstrap` under the existing diagnostic publication
+authorization. Only task, incident and release evidence paragraphs change.
+
+Run39478819138 at harness b97d90f completed successfully: samples1/2 Intel
+Xeon8573C, sample3 AMD EPYC9V74, sample4 AMD EPYC9V45. Each passes baseline,
+repeat and libc-disabled full corpus. All96 logged pixel hashes match their
+respective exact approved Intel or primary references. Host records bind the
+same verified release39397523975/sourceacc789c/image config683e2ba097ecd79b3a01472f8b30f7d77db3f9499efda31907f16cea0c6446ea.
+
+The reviewer independently inspects retained host/results/log evidence and the
+publication diff. No runtime, approval scope, dependency or deployment change is
+included. Prior R1 remains valid-and-fixed. Whitespace checks pass; no new code
+test rerun is claimed for this evidence-only publication.
+
+Final gate: **PASS for publishing this native qualification evidence**, subject
+to the reviewer's explicit agreement after inspecting the exact final range and
+these record bytes before unchanged commit. No unresolved blocking finding may
+remain. Master integration still requires separate owner authorization, followed
+by source-bound CI/release/security and actual live acceptance. No successful
+deployment, qualified fixture IDs or production approval is claimed.
