@@ -161,10 +161,12 @@ approved deployment attempt reproduced T048 before testing the merged cache fix.
 The subsequently approved diagnostic branch was published after both independent
 reviews passed. Controlled run39439825637 now shows two AMD samples matching the
 existing references and two Intel samples returning an identical alternate
-eight-file set. This supports the exact reference-extension proposal under T055;
-owner compatibility approval is pending. No additional hash is active and no
-deployment, fixture qualification, production promotion or disaster-recovery
-success is claimed.
+eight-file set. The owner approved the exact reference extension under T055
+on2026-10-20. Its maintenance implementation retains the original comparison
+and permits only the eight approved additional hashes in explicit nonprod scope.
+Source-bound runner verification and delivery remain in progress. No runtime
+activation, deployment, fixture qualification, production promotion or
+disaster-recovery success is claimed.
 
 ## First controlled diagnostic and cross-host follow-up
 

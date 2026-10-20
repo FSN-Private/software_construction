@@ -1,5 +1,22 @@
 # Rendering compatibility matrix
 
+## 2026-10-20 exact Intel corpus reference approval
+
+The owner explicitly approved the [eight additional Intel hashes](features/011-backup-disaster-recovery/reviews/intel-renderer-reference-proposal.md)
+for controlled non-production qualification. Existing reference PFMs remain
+unchanged; the gate also accepts only the fixture-specific exact SHA-256 in
+`tests/rendering/corpus/reference/intel-reference-hashes.json`. Finite/size
+validation remains mandatory and every other output fails. There is no numeric
+tolerance or learned baseline. The approved candidate manifest, two independent
+Intel captures, AMD comparisons and display evidence remain linked in the
+proposal. The compressed historical-v1 test fixture is one of those exact
+approved candidates, not a new renderer input or dependency.
+
+This reference decision does not activate a runtime compatibility row, approve
+new vulnerabilities or qualify a deployment. Exact-source CI/artifact/security,
+complete native checks and real HTTP/ingest/latency acceptance are still required.
+Production eligibility and all existing isolation/provenance rules are unchanged.
+
 No renderer image or profile is approved until this record contains a reviewed immutable artifact digest, SBOM, license result, vulnerability result, corpus evidence, and named owner approval.
 
 | Matrix | darktable release | Artifact digest | Profile | Corpus evidence | Status |

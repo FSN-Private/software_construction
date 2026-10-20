@@ -3,11 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import './rendering-fixture-bootstrap.mjs';
 import './rendering-idempotency.mjs';
 import './rendering-http2.mjs';
 import './rendering-operator.mjs';
 import './native-renderer-diagnostics.mjs';
+import './corpus-additional-references.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
@@ -21,39 +23,55 @@ const immutableAction = /uses: [\w-]+\/[\w-]+@[a-f0-9]{40} # v[\d.]+/g;
 const pixelWorkspace = mkdtempSync(join(tmpdir(), 'rendering-pixels-'));
 try {
   const pixels = 'historical-v1.pfm';
-  const reference = readFileSync(`tests/rendering/corpus/reference/${pixels}`);
-  assert.equal(reference.toString('ascii', 0, 11), 'PF\n512 341\n');
-  const pixelCheck = renderingCorpus.slice(renderingCorpus.indexOf('  test -s "$workspace/$pixels"'), renderingCorpus.indexOf('  output_hash='));
-  for (const corruption of ['none', 'byte', 'nan', 'infinity', 'truncated', 'dimensions', 'header']) {
-    let candidate = Buffer.from(reference);
-    if (corruption === 'byte') candidate[candidate.length - 1] ^= 1;
-    if (corruption === 'nan') candidate.writeFloatLE(NaN, candidate.length - 4);
-    if (corruption === 'infinity') candidate.writeFloatLE(Infinity, candidate.length - 4);
-    if (corruption === 'truncated') candidate = candidate.subarray(0, -1);
-    if (corruption === 'dimensions') candidate.write('513', 3, 'ascii');
-    if (corruption === 'header') candidate[0] = 88;
-    writeFileSync(join(pixelWorkspace, pixels), candidate);
-    const checked = spawnSync(bash, ['-c', `set -e; ${pixelCheck}`], { encoding: 'utf8',
-      env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'), pixels, size: '512',
-        DARKTABLE_FAILURE_DIR: corruption === 'byte' ? join(pixelWorkspace, 'mismatch-diagnostics').replaceAll('\\', '/') : '',
-        DARKTABLE_IMAGE: `registry.invalid/renderer@sha256:${'a'.repeat(64)}` } });
-    assert.equal(checked.status, corruption === 'none' ? 0 : 1, checked.stdout + checked.stderr);
-    if (corruption === 'byte') {
-      assert.match(checked.stderr, /Pixel reference mismatch: historical-v1\.pfm/);
-      const diagnostic = JSON.parse(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', 'mismatch.json')));
-      assert.match(diagnostic.status, /^FAILED/);
-      assert.equal(diagnostic.referenceSHA256, '9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80');
-      assert.equal(diagnostic.firstDifferentByte, candidate.length - 1);
-      assert.equal(diagnostic.file, pixels);
-      assert.equal(diagnostic.candidateBytes, candidate.length);
-      assert.notEqual(diagnostic.candidateSHA256, diagnostic.referenceSHA256);
-      assert.deepEqual(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', pixels)), candidate);
-      assert.ok(diagnostic.host.availableParallelism > 0);
+  for (const [variant, reference] of [
+    ['primary', readFileSync(`tests/rendering/corpus/reference/${pixels}`)],
+    ['intel', gunzipSync(readFileSync('tests/rendering/corpus/reference/intel-historical-v1.pfm.gz'))],
+  ]) {
+    assert.equal(reference.toString('ascii', 0, 11), 'PF\n512 341\n');
+    const pixelCheck = renderingCorpus.slice(renderingCorpus.indexOf('  test -s "$workspace/$pixels"'), renderingCorpus.indexOf('  output_hash='));
+    for (const corruption of ['none', 'byte', 'nan', 'infinity', 'truncated', 'dimensions', 'header']) {
+      let candidate = Buffer.from(reference);
+      if (corruption === 'byte') candidate[candidate.length - 1] ^= 1;
+      if (corruption === 'nan') candidate.writeFloatLE(NaN, candidate.length - 4);
+      if (corruption === 'infinity') candidate.writeFloatLE(Infinity, candidate.length - 4);
+      if (corruption === 'truncated') candidate = candidate.subarray(0, -1);
+      if (corruption === 'dimensions') candidate.write('513', 3, 'ascii');
+      if (corruption === 'header') candidate[0] = 88;
+      writeFileSync(join(pixelWorkspace, pixels), candidate);
+      const checked = spawnSync(bash, ['-c', `set -e; ${pixelCheck}`], { encoding: 'utf8',
+        env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'), pixels, size: '512',
+          DEPLOYMENT_ENVIRONMENT: 'nonprod',
+          DARKTABLE_FAILURE_DIR: corruption === 'byte' ? join(pixelWorkspace, 'mismatch-diagnostics').replaceAll('\\', '/') : '',
+          DARKTABLE_IMAGE: `registry.invalid/renderer@sha256:${'a'.repeat(64)}` } });
+      assert.equal(checked.status, corruption === 'none' ? 0 : 1, checked.stdout + checked.stderr);
+      if (corruption === 'byte') {
+        assert.match(checked.stderr, /Pixel reference mismatch: historical-v1\.pfm/);
+        const diagnostic = JSON.parse(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', 'mismatch.json')));
+        assert.match(diagnostic.status, /^FAILED/);
+        assert.equal(diagnostic.referenceSHA256, '9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80');
+        assert.equal(diagnostic.additionalReferenceSHA256, '1d370508d24a73c406cced938ed83b7bd64ee0207d61dc16458bcb5d49b58ed6');
+        assert.equal(diagnostic.firstDifferentByte, variant === 'primary' ? candidate.length - 1 : 204);
+        assert.equal(diagnostic.file, pixels);
+        assert.equal(diagnostic.candidateBytes, candidate.length);
+        assert.notEqual(diagnostic.candidateSHA256, diagnostic.referenceSHA256);
+        assert.deepEqual(readFileSync(join(pixelWorkspace, 'mismatch-diagnostics', pixels)), candidate);
+        assert.ok(diagnostic.host.availableParallelism > 0);
+      }
+      if (corruption === 'nan' || corruption === 'infinity') assert.match(checked.stderr, /Non-finite PFM pixel/);
+      if (corruption === 'truncated') assert.match(checked.stderr, /PFM pixel length mismatch/);
+      if (corruption === 'dimensions') assert.match(checked.stderr, /PFM exceeds its size bound/);
+      if (corruption === 'header') assert.match(checked.stderr, /Expected a three-channel PFM/);
     }
-    if (corruption === 'nan' || corruption === 'infinity') assert.match(checked.stderr, /Non-finite PFM pixel/);
-    if (corruption === 'truncated') assert.match(checked.stderr, /PFM pixel length mismatch/);
-    if (corruption === 'dimensions') assert.match(checked.stderr, /PFM exceeds its size bound/);
-    if (corruption === 'header') assert.match(checked.stderr, /Expected a three-channel PFM/);
+    if (variant === 'intel') {
+      writeFileSync(join(pixelWorkspace, pixels), reference);
+      for (const scope of ['production', '']) {
+        const rejected = spawnSync(bash, ['-c', `set -e; ${pixelCheck}`], { encoding: 'utf8',
+          env: { ...process.env, workspace: pixelWorkspace.replaceAll('\\', '/'), root: resolve('tests/rendering/corpus').replaceAll('\\', '/'),
+            pixels, size: '512', DEPLOYMENT_ENVIRONMENT: scope, DARKTABLE_FAILURE_DIR: '' } });
+        assert.equal(rejected.status, 1, 'Additional references require explicit nonprod scope.');
+        assert.match(rejected.stderr, /Pixel reference mismatch/);
+      }
+    }
   }
 } finally {
   rmSync(pixelWorkspace, { recursive: true, force: true });

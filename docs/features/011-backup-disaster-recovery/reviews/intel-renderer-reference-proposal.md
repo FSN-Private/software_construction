@@ -1,6 +1,6 @@
 # Exact Intel pixel-reference extension
 
-Status: **PROPOSED — owner compatibility approval required before implementation**.
+Status: **APPROVED — exact additional references for controlled non-production**.
 Scope: Feature 011 T048/T055; Feature 008 FR-015/FR-016 and AC-008/AC-009.
 This is a maintenance proposal for the existing 5.6.1/render-v1 corpus.
 
@@ -121,5 +121,10 @@ It is a broader change than acknowledging the two measured exact outputs.
 
 ## Approval
 
-Pending owner decision. No additional reference is active and no implementation
-of T055 is authorized by this document alone.
+The owner explicitly replied **"Approve the exact Intel reference extension"**
+on2026-10-20 to the question identifying these eight additional hashes and this
+proposal. This authorizes T055 implementation with all stated gates unchanged.
+It accepts no numerical tolerance, other hash, new security finding, production
+promotion or unverified deployment. The original candidate manifest remains
+unaltered as the record of its unapproved capture; this decision approves only
+its eight exact output values for the stated controlled-nonprod purpose.
