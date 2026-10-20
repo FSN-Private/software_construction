@@ -163,3 +163,35 @@ experiments have not reproduced that result. The prepared diagnostic branch
 must pass independent pre-push review and obtain explicit push/dispatch
 authorization before running on GitHub. No deployment, fixture qualification,
 production promotion or disaster-recovery success is claimed.
+
+## First controlled diagnostic and cross-host follow-up
+
+The owner explicitly approved diagnostic branch publication and execution.
+Reviewed commit `97b1faf` was pushed to the named maintenance branch.
+[Diagnostic 39438298299](https://github.com/FSN-Private/software_construction/actions/runs/39438298299)
+verified the same release archive and passed baseline, baseline-repeat and
+libc-baseline. This does not reproduce or invalidate the failed deployment:
+the initial successful-run artifact did not record CPU identity (the existing
+mismatch report records identity only on failure).
+
+The upstream [cross-machine test discussion](https://github.com/darktable-org/darktable/issues/22589)
+reports output differences between AMD and Intel generic builds and extra
+differences from Release fast-math. That supports measuring CPU dependence;
+it does not establish this deployment failure's cause or authorize a reference
+change.
+
+The bounded follow-up samples four independent GitHub runners, records CPU
+vendor/model and exact source/image identity even on success, and retains
+separate sample artifacts. If a comparison fails, it additionally renders all
+eight finite public-corpus PFM candidates using baseline arithmetic, with the
+same non-root/read-only/one-CPU/two-GiB/one-thread settings. Candidate collection
+never turns the failed comparison green, and its manifest explicitly labels
+the pixels unapproved. Eight dimension-bounded RGB PFMs total about143MB per
+failing sample; retention remains fourteen days. No reference, runtime image,
+deployment workflow, compatibility gate or latency criterion changes.
+
+The real collector was exercised locally with the exact trusted release: all
+eight dimension-bounded finite candidates matched the approved reference
+hashes, totaling142467264bytes. Only Windows mount paths and checksum-file CR
+handling were adapted for that local run. Script regression, full release
+workflow suite, CI contracts, both shell syntax checks and whitespace pass.

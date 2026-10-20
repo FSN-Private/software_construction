@@ -296,6 +296,17 @@ contracts and shell syntax pass. Independent review corrected the push-event
 artifact run-ID binding; final exact-record agreement and explicit push/run
 authorization are required before remote execution. T048 stays open.
 
+T048 runner follow-up: owner approved diagnostic publication; actual run
+39438298299 passes all three comparisons for the exact failed release but
+does not reproduce the deployment mismatch or capture successful CPU identity.
+The next bounded diagnostic records host identity on every sample, compares
+four independent runners and collects all eight finite baseline PFMs only
+after a failed comparison. Candidates remain unapproved; no failed comparison
+is converted to acceptance. The existing diagnostic regression covers baseline
+collection rather than leaked experiment settings and failure preservation.
+Upstream cross-vendor observations are context, not a root-cause or reference
+approval. Independent review remains required before the follow-up push.
+
 - [x] T049 Repair renderer callback SigV4 request construction (T025/T038 deployment blocker; local implementation complete, cloud qualification pending). Deployment39040406133 passed strict native comparison, owner resolution, migration, steady state and genuine bootstrap, but actual worker claim returned403 and rendering exceeded30seconds. Preserve IAM callback authorization and exact acceptance thresholds. Independently verify the real process's wire signatures for basic and temporary credentials, sign the actual path once, include the resolved session token before signing, and require backend/release validation, independent review, exact-source CI/release/security/native/live acceptance. Maintenance branch fix/011-renderer-callback-signing starts clean at710468c with zero divergence; prior branch2ahead/2behind has identical trees after rebase merge and is preserved. T048 remains open despite this native pass.
 
 2026-10-17 T047 local implementation complete: real AWS CLI against a loopback Cognito fixture plus the real task-definition jq expression preserves an email login (including comma/quote/backslash password characters), installs the distinct authenticated canonical operator, and fails closed before task registration on missing ID token/access token/username. Explicit guard fixes the shell AND-list empty-identity escape found by this test. Full test:release-evidence and test:ci-contract PASS. A temporary configuration-only canonical-login experiment was restored after confirming UsernameAttributes=email; original login/password are preserved. The current fix resolves the identities separately, adds no IAM permission, and still requires actual cloud authentication/acceptance.
