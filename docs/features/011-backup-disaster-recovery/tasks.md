@@ -278,6 +278,24 @@ T035 R10-002 follow-up adds historical ingest/renderer build pins and archived s
 
 - [ ] T048 Diagnose and fix repeatability of exact native pixel qualification (T038 blocker). Same immutable renderer f65235bf passed run39034319005 but retry39035107775 failed the historical-v1.pfm exact comparison before task registration. Preserve all eight owner-approved references, finite/bounded checks and exact comparison; retain separate candidates and measure same-artifact repeated/thread/CPU behavior before choosing a fix. A reference change or tolerance waiver still requires explicit owner approval; do not hide nondeterminism with retries. Maintenance fix/011-renderer-qualification starts clean at mergedaaa42c45 with zero divergence, prior branch2ahead/2behind has identical trees after rebase merge and remains preserved. Require independent review, current-source CI/release/security/native/live validation after supported remediation.
 
+2026-10-20 T048 maintenance diagnosis: owner-approved bootstrap39433716049 of
+release39397523975 reproduced the exact native mismatch before migration or
+service startup; fixtures remain unqualified and unset. The first retained
+candidate and Intel runner identity are analyzed in the
+[incident record](../../incidents/2026-10-20-nonprod-deployment-bootstrap.md).
+Local AMD reproductions, libc-feature and memory variants do not reproduce
+the captured mismatch; no root-cause fix, new reference or tolerance is approved.
+The bounded read-only native-renderer-diagnostics workflow is prepared on
+maintenance branch fix/011-deployment-bootstrap, initially clean from current
+master with zero divergence. Its branch-only push trigger and future manual
+inputs select the same successful default-branch release for metadata,
+artifact and provenance verification. Baseline/repeat/libc cases retain all
+comparison failures and bounded public-corpus evidence, with no AWS/OIDC or
+deployment access. Actual script regression, release workflow suite, CI
+contracts and shell syntax pass. Independent review corrected the push-event
+artifact run-ID binding; final exact-record agreement and explicit push/run
+authorization are required before remote execution. T048 stays open.
+
 - [x] T049 Repair renderer callback SigV4 request construction (T025/T038 deployment blocker; local implementation complete, cloud qualification pending). Deployment39040406133 passed strict native comparison, owner resolution, migration, steady state and genuine bootstrap, but actual worker claim returned403 and rendering exceeded30seconds. Preserve IAM callback authorization and exact acceptance thresholds. Independently verify the real process's wire signatures for basic and temporary credentials, sign the actual path once, include the resolved session token before signing, and require backend/release validation, independent review, exact-source CI/release/security/native/live acceptance. Maintenance branch fix/011-renderer-callback-signing starts clean at710468c with zero divergence; prior branch2ahead/2behind has identical trees after rebase merge and is preserved. T048 remains open despite this native pass.
 
 2026-10-17 T047 local implementation complete: real AWS CLI against a loopback Cognito fixture plus the real task-definition jq expression preserves an email login (including comma/quote/backslash password characters), installs the distinct authenticated canonical operator, and fails closed before task registration on missing ID token/access token/username. Explicit guard fixes the shell AND-list empty-identity escape found by this test. Full test:release-evidence and test:ci-contract PASS. A temporary configuration-only canonical-login experiment was restored after confirming UsernameAttributes=email; original login/password are preserved. The current fix resolves the identities separately, adds no IAM permission, and still requires actual cloud authentication/acceptance.

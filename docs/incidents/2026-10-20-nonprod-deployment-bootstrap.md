@@ -87,9 +87,79 @@ consolidated bundle, all workflow logs/run history, and the existing
 artifacts totaling 10,804,277,327 bytes. Local before/after evidence and deleted
 IDs are under ignored `artifacts/deployment-diagnosis/`.
 
+## Approved bootstrap execution and reproduced T048 blocker
+
+The owner approved bootstrap deployment and persistence of qualified fixture IDs.
+At 13:49 UTC the agent dispatched
+[deployment 39433716049](https://github.com/FSN-Private/software_construction/actions/runs/39433716049)
+for the exact approved release. Manifest verification, bootstrap configuration,
+database availability and image publication passed. ECR renderer digest
+`sha256:903152c152debb8b4ae802a15ad345244cc66f46c6c95f1ee21054d9d7490ede`
+binds the scanned archive's exact image configuration hash.
+
+At 13:53:38 UTC native qualification failed `historical-v1.pfm` before task
+registration, migration, service startup or fixture creation. The retained
+`rendering-native-failure` artifact is ID 12269393053 (14-day retention).
+No fixture-variable write was made; acceptance did not run. AWS inspection
+confirmed services remained stopped on task definitions 6/4/1.
+
+The captured candidate SHA-256 is
+`1d370508d24a73c406cced938ed83b7bd64ee0207d61dc16458bcb5d49b58ed6`;
+the approved reference is
+`9a36b8507a7e6c6186e9ea85b168eaeb57e1eb4faa6ed0aa416c18617dd45e80`.
+Both are 512 by 341 finite RGB PFMs, 2095120 bytes. Of 523776 floats, 15942
+differ; maximum absolute difference is approximately 0.0000429153. This is
+diagnostic measurement, not an accepted tolerance. The first different byte
+is 204. The host was an Intel Xeon 6973P-C with two logical CPUs.
+
+The exact failed image locally reproduces the approved reference on an AMD
+Ryzen 4700U. Disabling several libc CPU features, changing reported host memory
+from 2 to 32 GiB, and selecting default/AVX2/AVX-512 clones of the two color
+conversion functions and highlight interpolation all still reproduce that
+reference. The darktable CLI, core library, libc, libm, libjpeg and liblcms2
+bytes match the previous release. No changed executable or those libraries
+explains the new failure.
+
+Pinned upstream source and released-binary inspection show compiler CPU clones
+despite the generic package option, and approximate reciprocal instructions in
+demosaicing. Neither observation establishes the failed comparison's cause.
+A diagnostic native rebuild lacked the production build's OpenEXR exclusion
+and could not execute in the hardened runtime; it is not qualification evidence.
+A reciprocal-control demosaicing rebuild changes the local hash but does not
+establish a stable cross-host result. These experiments remain ignored local
+artifacts and are never proposed for deployment. References, finite checks,
+full-file equality, latency limits and live services are unchanged.
+
+## Prepared controlled runner diagnosis
+
+`native-renderer-diagnostics.yml` is a read-only diagnostic workflow,
+not a deployment or acceptance waiver. A push of its workflow/script to the
+exact maintenance branch runs diagnosis of release 39397523975. This permits
+the experiment without merging a new workflow into the default branch, which
+GitHub requires for manual dispatch of a new workflow. The workflow also defines
+manual inputs for use if it is subsequently retained on the default branch.
+It verifies the selected run is a
+successful default-branch `build-release.yml` workflow for the requested SHA,
+then verifies the complete manifest and provenance before loading that exact
+renderer archive. It runs baseline twice and once with libc CPU optimizations
+disabled, using the real unchanged native corpus. Darktable's compiler clones
+are separate from that libc setting. Every mismatch remains a workflow failure;
+all cases run so their logs and first mismatching public-corpus PFM can be compared.
+Only the bounded diagnostic directory is uploaded, for fourteen days.
+
+The workflow has contents/actions read permissions, no protected environment,
+no AWS credentials, no OIDC token, no deployment and no repository write. It
+cannot qualify or activate a candidate or configure acceptance fixtures.
+The script regression verifies all cases execute after a baseline failure,
+only the intended case receives the libc tunable, a mismatch keeps a nonzero
+result, all passing cases return zero and invalid revision input is rejected.
+
 ## Current status
 
-Diagnosis, archive/security verification and artifact cleanup are complete.
-Bootstrap deployment and qualified fixture-variable persistence await the
-explicit approval requested in this session. No successful deployment,
-production promotion or disaster-recovery qualification is claimed.
+Bootstrap configuration is understood and artifact cleanup is complete. The
+approved deployment attempt reproduced T048 before it could test the merged
+cache fix. Controlled testing on the failing CPU class is now required; local
+experiments have not reproduced that result. The prepared diagnostic branch
+must pass independent pre-push review and obtain explicit push/dispatch
+authorization before running on GitHub. No deployment, fixture qualification,
+production promotion or disaster-recovery success is claimed.

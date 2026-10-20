@@ -7,6 +7,7 @@ import './rendering-fixture-bootstrap.mjs';
 import './rendering-idempotency.mjs';
 import './rendering-http2.mjs';
 import './rendering-operator.mjs';
+import './native-renderer-diagnostics.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
