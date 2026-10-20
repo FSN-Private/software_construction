@@ -208,3 +208,5 @@ eight outputs have approved dimensions/lengths and finite pixels. The
 contains the candidate hashes, provenance, differences and display comparisons.
 T055 requires an owner decision before changing accepted outputs; accepting
 an observed small numerical difference automatically would violate that gate.
+
+2026-10-20 updated-gate qualification: [run39478819138](https://github.com/FSN-Private/software_construction/actions/runs/39478819138), harness b97d90f, passes all four samples (two Intel Xeon Platinum8573C, AMD EPYC9V74 and AMD EPYC9V45) and baseline/repeat/libc-disabled full-corpus cases on each. Intel logs match all eight approved additional hashes; AMD retains the original set. Verified image/source are unchanged. The native blocker is reproduced and repaired on these hosts; master integration, source-bound CI/release/security and live bootstrap/latency/ingest acceptance are still pending. No qualified fixture IDs are saved.
