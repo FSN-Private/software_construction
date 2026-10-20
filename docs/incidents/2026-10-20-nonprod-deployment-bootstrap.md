@@ -157,12 +157,14 @@ result, all passing cases return zero and invalid revision input is rejected.
 ## Current status
 
 Bootstrap configuration is understood and artifact cleanup is complete. The
-approved deployment attempt reproduced T048 before it could test the merged
-cache fix. Controlled testing on the failing CPU class is now required; local
-experiments have not reproduced that result. The prepared diagnostic branch
-must pass independent pre-push review and obtain explicit push/dispatch
-authorization before running on GitHub. No deployment, fixture qualification,
-production promotion or disaster-recovery success is claimed.
+approved deployment attempt reproduced T048 before testing the merged cache fix.
+The subsequently approved diagnostic branch was published after both independent
+reviews passed. Controlled run39439825637 now shows two AMD samples matching the
+existing references and two Intel samples returning an identical alternate
+eight-file set. This supports the exact reference-extension proposal under T055;
+owner compatibility approval is pending. No additional hash is active and no
+deployment, fixture qualification, production promotion or disaster-recovery
+success is claimed.
 
 ## First controlled diagnostic and cross-host follow-up
 
@@ -195,3 +197,12 @@ eight dimension-bounded finite candidates matched the approved reference
 hashes, totaling142467264bytes. Only Windows mount paths and checksum-file CR
 handling were adapted for that local run. Script regression, full release
 workflow suite, CI contracts, both shell syntax checks and whitespace pass.
+
+Run39439825637 completed all four samples: AMD samples1/3 pass all three cases;
+Intel samples2/4 fail all three first comparisons with the actual deployment's
+same first candidate hash. Both complete Intel manifests are identical, and all
+eight outputs have approved dimensions/lengths and finite pixels. The
+[reviewable exact-reference proposal](../features/011-backup-disaster-recovery/reviews/intel-renderer-reference-proposal.md)
+contains the candidate hashes, provenance, differences and display comparisons.
+T055 requires an owner decision before changing accepted outputs; accepting
+an observed small numerical difference automatically would violate that gate.

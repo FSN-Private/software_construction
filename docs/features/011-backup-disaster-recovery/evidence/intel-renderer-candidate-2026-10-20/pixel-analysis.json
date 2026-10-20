@@ -1,0 +1,121 @@
+{
+  "runId": 39439825637,
+  "samples": [
+    2,
+    4
+  ],
+  "source": {
+    "sourceRevision": "acc789ca0a7f16fc140b97a69418a42d84909dbd",
+    "image": "sha256:683e2ba097ecd79b3a01472f8b30f7d77db3f9499efda31907f16cea0c6446ea",
+    "cpuModel": "Intel(R) Xeon(R) 6973P-C",
+    "logicalCPUs": 2,
+    "availableParallelism": 2,
+    "cpuVendor": "GenuineIntel"
+  },
+  "files": [
+    {
+      "file": "historical-v1.pfm",
+      "bytes": 2095120,
+      "sha256": "1d370508d24a73c406cced938ed83b7bd64ee0207d61dc16458bcb5d49b58ed6",
+      "xmpSHA256": "ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef",
+      "floatCount": 523776,
+      "differentFloatCount": 15942,
+      "maxAbsoluteDifference": 4.291534423828125e-05,
+      "meanAbsoluteDifference": 7.614275418496887e-10,
+      "rmsDifference": 7.187718843379287e-08,
+      "minimum": 0.009778945706784725,
+      "maximum": 0.7183738946914673
+    },
+    {
+      "file": "historical-v1-2048.pfm",
+      "bytes": 33521696,
+      "sha256": "5bb313a7ebb52a014b59daf776db017cdd5454a3d46438a7c844e29136ab9725",
+      "xmpSHA256": "ef26ab13fa24119801441f9499178ae5d36ac14a27c72b6d6d151f5b195b1cef",
+      "floatCount": 8380416,
+      "differentFloatCount": 239216,
+      "maxAbsoluteDifference": 0.0008328258991241455,
+      "meanAbsoluteDifference": 7.161727982673182e-10,
+      "rmsDifference": 3.121761763774311e-07,
+      "minimum": -0.026470480486750603,
+      "maximum": 0.7551082968711853
+    },
+    {
+      "file": "historical-v2.pfm",
+      "bytes": 2095120,
+      "sha256": "5fdbd9a6876e4c7be421a41dad6bb77e2cac891d124040ad2354061b4b132258",
+      "xmpSHA256": "b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60",
+      "floatCount": 523776,
+      "differentFloatCount": 14538,
+      "maxAbsoluteDifference": 4.9561262130737305e-05,
+      "meanAbsoluteDifference": 8.743346856774094e-10,
+      "rmsDifference": 8.304844727192447e-08,
+      "minimum": 0.01352638192474842,
+      "maximum": 0.8385195732116699
+    },
+    {
+      "file": "historical-v2-2048.pfm",
+      "bytes": 33521696,
+      "sha256": "b164269968cbeb6313f4d322c35be25ef2dd08221500ddcf98782d2a563156d4",
+      "xmpSHA256": "b441d5aa57cdf26b8061a376fd7d5f4a37cb1dd7893bd68b44c0d51648807d60",
+      "floatCount": 8380416,
+      "differentFloatCount": 224364,
+      "maxAbsoluteDifference": 0.0009621381759643555,
+      "meanAbsoluteDifference": 8.206929442539454e-10,
+      "rmsDifference": 3.6065688885240974e-07,
+      "minimum": -0.030870607122778893,
+      "maximum": 0.8809609413146973
+    },
+    {
+      "file": "historical-v3.pfm",
+      "bytes": 2095120,
+      "sha256": "bf130f76d388dc4df9a6a7266dd95168287a97c44fb5df15205466d5d95ea72d",
+      "xmpSHA256": "487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08",
+      "floatCount": 523776,
+      "differentFloatCount": 14238,
+      "maxAbsoluteDifference": 6.61611557006836e-05,
+      "meanAbsoluteDifference": 1.174608406629905e-09,
+      "rmsDifference": 1.108794166544992e-07,
+      "minimum": 0.024499451741576195,
+      "maximum": 1.138495922088623
+    },
+    {
+      "file": "historical-v3-2048.pfm",
+      "bytes": 33521696,
+      "sha256": "f6eafc0970f6ef7475deb554713aadeb0bfad9e59fff4d3c00b0fb2057fe8e4e",
+      "xmpSHA256": "487df61f0f1bb2f2d152a645e664ff8ee22a1ddeb2cef57858a9739d3c5f6e08",
+      "floatCount": 8380416,
+      "differentFloatCount": 216458,
+      "maxAbsoluteDifference": 0.0012843012809753418,
+      "meanAbsoluteDifference": 1.1068859499008602e-09,
+      "rmsDifference": 4.81419561416222e-07,
+      "minimum": -0.04270171374082565,
+      "maximum": 1.1951829195022583
+    },
+    {
+      "file": "current.pfm",
+      "bytes": 2095120,
+      "sha256": "b6ac548990e1e547e8f86c07016342f4adc4c81beae931dfbec63e7e16c9cbca",
+      "xmpSHA256": "cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092",
+      "floatCount": 523776,
+      "differentFloatCount": 14049,
+      "maxAbsoluteDifference": 7.641315460205078e-05,
+      "meanAbsoluteDifference": 1.387453282057132e-09,
+      "rmsDifference": 1.2805646357854828e-07,
+      "minimum": 0.032036297023296356,
+      "maximum": 1.3264188766479492
+    },
+    {
+      "file": "current-2048.pfm",
+      "bytes": 33521696,
+      "sha256": "daad2bf1886242bda1d12b7b62943a5111235ada957b005b209b247813533a7c",
+      "xmpSHA256": "cd71530681a25f901f146021c9b3b324c6261c791ca1221fd510f8de17dba092",
+      "floatCount": 8380416,
+      "differentFloatCount": 212718,
+      "maxAbsoluteDifference": 0.0014837980270385742,
+      "meanAbsoluteDifference": 1.3131627745653214e-09,
+      "rmsDifference": 5.562082570087509e-07,
+      "minimum": -0.049904610961675644,
+      "maximum": 1.3918691873550415
+    }
+  ]
+}
