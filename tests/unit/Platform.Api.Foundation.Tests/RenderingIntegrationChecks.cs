@@ -57,6 +57,8 @@ internal static class RenderingIntegrationChecks
         IngestChecks.Check(completed.State == RenderState.Completed && Matches(provenance, completed.Provenance), "A completed private derivative must expose exact current-preview provenance.");
         var locator = await service.LocateAsync(owner, library, created.RequestId, default);
         IngestChecks.Check(locator.Locator == "https://derivative.example/private" && Matches(provenance, locator.Provenance), "A completed rendition must return only an owner-authorized private locator and provenance.");
+        var concurrentLocators = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => service.LocateAsync(owner, library, created.RequestId, default)));
+        IngestChecks.Check(concurrentLocators.All(value => value.Locator == locator.Locator && Matches(provenance, value.Provenance)), "Concurrent cached reads must retain exact authorized publication/provenance without exhausting database connections.");
         await RejectCrossLibraryLocatorAsync(service, created.RequestId);
         await RejectSameOwnerCrossLibraryRenderAsync(service, owner, input);
         IngestChecks.Check(cacheHit.CacheHit && Matches(provenance, cacheHit.Provenance), "An exact completed current-preview request must reuse the cached derivative and provenance.");

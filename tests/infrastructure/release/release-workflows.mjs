@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import './rendering-fixture-bootstrap.mjs';
 import './rendering-idempotency.mjs';
+import './rendering-http2.mjs';
 import './rendering-operator.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
