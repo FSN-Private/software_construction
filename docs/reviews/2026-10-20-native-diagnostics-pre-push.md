@@ -149,3 +149,40 @@ Final gate: **PASS for publishing this diagnostic report/proposal only**, after
 the reviewer inspects these exact final record bytes and explicitly agrees
 before commit. This is not approval to accept the proposed hashes. T048/T055,
 live performance, deployment and fixture qualification remain unresolved.
+
+## Round 4: owner-approved exact Intel reference extension (T055)
+
+Reviewer: the same read-only alternate `gpt-6-astra` agent, 2026-10-20.
+Reviewed implementation range: `a22803a..94f0700` plus this pending append.
+Destination: `origin/fix/011-deployment-bootstrap`, under the existing diagnostic
+branch push/run authorization and explicit exact Intel extension approval.
+This push runs four read-only native qualification samples; it grants no merge,
+AWS, production or live-deployment authority.
+
+Owner approval and its exact eight hashes are recorded in the reference
+proposal. The original byte comparison and references remain intact. Only a
+nonprod mismatch can pass the respective fixed whole-file SHA256 extension.
+Finite/dimension validation precedes both comparisons; every other value fails.
+Failure evidence includes both expected hashes. No tolerance, runtime arithmetic,
+dependency, privilege, latency, security or provenance gate changes.
+
+The reviewer independently checked the complete approved map against retained
+evidence and all eight actual Intel PFMs, the compressed real Intel fixture,
+scope guard, helper ownership checks and failure diagnostics. It passed the
+complete release-workflows suite, including the actual extracted shell gate:
+primary/Intel acceptance, corrupt/malformed/truncated/dimension/NaN/infinity
+refusal, and Intel production/missing-scope refusal. It also passed CI contracts,
+Bash syntax and whitespace checks. Implementer passed the same checks plus the
+exact trusted image's complete eight-reference and accepted-format native run
+locally on AMD, and all eight actual Intel exact-hash checks. Windows-only path
+and checksum CR adaptation applies to that local native run.
+
+Independent conclusions: no unresolved blocking functional/failure handling,
+approved-scope, security/privacy/provenance, test/reliability or documentation
+issue. Prior R1 remains valid-and-fixed. No new finding or waiver is needed.
+
+Final gate: **PASS for this reviewed branch push and native qualification run**,
+after the reviewer inspects this exact record and committed range and explicitly
+agrees before this append is committed unchanged. Remote updated-gate results,
+source-bound CI/release/security, live HTTP/ingest/latency acceptance and qualified
+fixture IDs remain pending. T048/T054/T055 are not closed by local validation.
