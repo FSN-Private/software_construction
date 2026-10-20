@@ -1,5 +1,13 @@
 # Feature 011 non-production deployment
 
+2026-10-20 controlled CPU diagnosis: independently reviewed/published diagnostic
+run39439825637 shows AMD samples1/3 pass existing pixels and Intel samples2/4
+produce the same eight alternate hashes for the exact release. T055 proposes
+adding only those exact outputs alongside existing references; the
+[compatibility decision](../../features/011-backup-disaster-recovery/reviews/intel-renderer-reference-proposal.md)
+is pending owner approval. No tolerance or alternate reference is active.
+Cache/live/ingest acceptance and fixture persistence remain unverified.
+
 2026-10-20 bootstrap follow-up: owner explicitly approved dispatch of release
 39397523975/revision acc789ca0a7f16fc140b97a69418a42d84909dbd and persistence
 of fixture IDs only after rendering/ingest acceptance. Run39433716049 passed
