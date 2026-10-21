@@ -92,3 +92,40 @@ reviewer explicitly confirms no unresolved blocking findings and agrees to these
 exact record bytes before unchanged commit. This is not deployment acceptance
 or permission for a later application/architecture change. Remote comparison
 results and final T054 remediation remain pending.
+
+## Round 3: publish measured findings and pending geography decision
+
+Reviewer: independent read-only `gpt-6-astra`, 2026-10-21.
+Scope: `b911896..db8f18c` plus this pending append, same diagnostic publication
+destination. Only the location proposal and task/evidence documentation change.
+
+Reviewer independently parses paired run39544365704 logs: exact22.23.3 then
+24.20.0 on each runner; twenty35byte500 responses per series; p95485.3/455.5ms
+and421.3/401.1ms, with all published PING ranges matching. Fixed-order/small-sample
+limits, no healthy-latency or lower-bound proof and no demonstrated Node-only
+repair are explicit. No specific runner location or packet cause is inferred.
+
+No blocking evidence/requirements/functional issue. The proposal explicitly
+requires an owner decision for a material nominal-client geography change; it
+retains the external500ms option and describes regional acceptance as a changed
+interpretation, not proof of remote-user performance. No current specification,
+application, acceptance or resource change is included.
+
+No blocking proposed security/privacy/provenance issue. Token handling is
+restricted, event/body/raw-error logging excluded, exact version/code/source
+bindings and scoped invoke/log IAM required, and invocation failures fail closed.
+These are proposal constraints, not implemented controls. ADR/specification,
+implementation, IAM/error-path validation, provisioning and final approval are
+still required. Reviewer verifies512MiB*300s=150GB-seconds; pricing/retention and
+budget confirmation remain required before apply. Official AWS documentation
+supports the proposed runtime and synchronous-invocation design.
+
+No blocking documentation/scope/test issue or substantive nonblocking note.
+Whitespace checks pass independently; no code test rerun is claimed for this
+report-only publication. Prior R1/N2 remain fixed and unaffected.
+
+Final gate: **PASS for publishing these diagnostic findings and proposal only**,
+after explicit reviewer inspection/agreement to this exact pending record before
+unchanged commit. No unresolved blocking issue may remain. This does not approve
+either geography option or authorize regional resources, code/spec changes,
+deployment or fixture qualification. The owner decision remains pending.
