@@ -53,3 +53,12 @@ export function latencyFailure(stderr) {
   }
   return undefined;
 }
+
+export function validateResult(value, request, expectedArn) {
+  require(value?.passed === true && value.region === 'ap-southeast-1' && value.functionArn === expectedArn && /^v24\.\d+\.\d+$/.test(value.runtime ?? ''));
+  const expected = bindings(request);
+  require(Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue));
+  require(Object.keys(value).every(key => Object.hasOwn(expected, key) || ['passed', 'region', 'functionArn', 'runtime', 'rendering', 'ingest'].includes(key)));
+  return { ...expected, region: value.region, functionArn: value.functionArn, runtime: value.runtime, passed: true,
+    rendering: renderingMetrics(value.rendering), ingest: ingestMetrics(value.ingest) };
+}

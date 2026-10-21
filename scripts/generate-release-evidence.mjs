@@ -13,7 +13,8 @@ const artifacts = readdirSync(outputDirectory, { withFileTypes: true }).filter((
 const expectedArtifacts = ['api.tar', 'ingest-worker.tar', 'render-worker.tar', 'web.tar', 'infrastructure.tar', 'platform-api-win-x64.zip'];
 const names = artifacts.map((path) => basename(path)).sort();
 const recoveryArtifact = names.includes('recovery-worker.tar');
-if (JSON.stringify(names) !== JSON.stringify([...expectedArtifacts, ...(recoveryArtifact ? ['recovery-worker.tar'] : [])].sort()))
+const regionalArtifact = names.includes('regional-acceptance-client.zip');
+if (JSON.stringify(names) !== JSON.stringify([...expectedArtifacts, ...(recoveryArtifact ? ['recovery-worker.tar'] : []), ...(regionalArtifact ? ['regional-acceptance-client.zip'] : [])].sort()))
   throw new Error('Release evidence requires the exact API, workers, web, infrastructure, and Windows artifact set.');
 const digest = (path) => `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
 const buildType = `https://github.com/${repository}/blob/master/docs/contracts/release-provenance-v1.md`;

@@ -16,8 +16,10 @@ const names = manifest.artifacts.map(({ name }) => name).sort();
 const legacy = ['api.tar', 'infrastructure.tar', 'platform-api-win-x64.zip', 'web.tar'];
 const current = [...legacy, 'ingest-worker.tar', 'render-worker.tar'].sort();
 const recovery = [...current, 'recovery-worker.tar'].sort();
+const regional = [...current, 'regional-acceptance-client.zip'].sort();
+const regionalRecovery = [...recovery, 'regional-acceptance-client.zip'].sort();
 const isLegacyArtifactSet = JSON.stringify(names) === JSON.stringify(legacy);
-if (![JSON.stringify(current), JSON.stringify(recovery)].includes(JSON.stringify(names)) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
+if (![current, recovery, regional, regionalRecovery].map(set => JSON.stringify(set)).includes(JSON.stringify(names)) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
 if (mode === '--require-worker' && (!names.includes('ingest-worker.tar') || !names.includes('render-worker.tar'))) throw new Error('Release manifest does not contain the required ingest and renderer worker artifacts.');
 if (mode === '--require-recovery' && (!names.includes('recovery-worker.tar') || manifest.compatibility?.recoveryRequired !== true))
   throw new Error('Release manifest does not contain the required recovery worker artifact and qualification contract.');
