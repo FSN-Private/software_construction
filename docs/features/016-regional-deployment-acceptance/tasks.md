@@ -27,7 +27,7 @@ Approved user design2026-10-21. External publication/provisioning still gated.
 
 ## User Story 1: infrastructure and delivery (M3-M4)
 
-- [ ] T005 [US1] Add isolated regional-acceptance-app.ts/stack.ts, published code
+- [x] T005 [US1] Add isolated regional-acceptance-app.ts/stack.ts, published code
   version, role/log/timeout/concurrency/region/production guards; test synthesized
   exact zip/code/IAM scope, no function URL/events/VPC/NAT/main stack changes and
   bounded logs/compute. Map FR003/004, AC004/005, NFR001-006, SC001/003.
@@ -90,3 +90,13 @@ cleanup and secret suppression. Restricted response file is precreated too.
 Regional zip is a checksummed SBOM/provenance subject with/without recovery;
 tampered bytes/subjects and unknown artifact sets fail. Historical release formats
 still verify. No actual Lambda invocation or healthy cloud result is claimed.
+
+M3 validation2026-10-21: TypeScript build/check, isolated regional synthesis and
+negative contexts, staged ZIP byte equality, code-bound retained version, exact
+512MiB/300s/concurrency1/7day controls and scoped log/invoke IAM tests PASS.
+Full infrastructure validation also passes existing main-stack assertions,
+vendor integrity, secret scan, dependency-tree and license checks. Registry
+vulnerability audit remains pending under T007: restricted network failed, then
+automatic approval review rejected exporting dependency metadata without specific
+authorization. Owner audit approval requested; no bypass or PASS claim. No new
+dependency, cloud resource/apply, app stack or data mutation.

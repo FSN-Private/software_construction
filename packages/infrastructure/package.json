@@ -15,12 +15,13 @@
     "synth:exports": "npm run build && cdk synth --no-lookups --context offline=true --context environment=nonprod --context region=ap-southeast-1 --context exportTransport=true --output cdk.out-exports --quiet",
     "assert:exports": "node ../../tests/infrastructure/exports/transport-contract.mjs cdk.out-exports/PlatformFoundation-nonprod.template.json",
     "assert": "node scripts/assert-template.mjs",
+    "assert:regional": "node ../../tests/infrastructure/regional-acceptance/contract.mjs",
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "validate:dependencies": "npm ls --all",
     "validate:licenses": "node scripts/validate-licenses.mjs",
     "validate:vendor": "node scripts/validate-vendor.mjs",
     "validate:vulnerabilities": "node ../../scripts/audit-dependencies.mjs . --omit=dev",
-    "validate": "npm run validate:vendor && npm run check && npm run synth && npm run assert && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
+    "validate": "npm run validate:vendor && npm run check && npm run synth && npm run assert && npm run assert:regional && npm run scan:secrets && npm run validate:dependencies && npm run validate:licenses && npm run validate:vulnerabilities"
   },
   "dependencies": {
     "aws-cdk-lib": "file:vendor/aws-cdk-lib-2.267.0-brace-expansion-5.0.12.tgz",
