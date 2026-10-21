@@ -52,9 +52,14 @@ Nonprod verifies the client before database startup and again before deployment 
 
 On failure, retain logs and existing state/evidence; never store tokens/raw events/locators in diagnostics. Client logs retain7days. For compatible rollback, select the prior application release and matching published client ZIP/version; changing version alone cannot qualify a different bundle. Missing client or disabling it must fail closed. Production/recovery findings and remote-user performance limitations remain open. Cleanup removes client/role policy/log resources explicitly without touching originals, RDS or application services.
 
-Post-activation evidence failure invokes `scripts/rollback-unqualified-nonprod.sh`
-from the protected workflow. It validates same-source/current candidate tasks and
-same-account prior definitions before restoring all three prior task/count pairs,
-then verifies stable desired/running counts. Any recovery failure remains failed;
-inspect actual ECS state before another deployment. Missing evidence never
-qualifies fixture IDs, even if both smokes had passed locally.
+After smokes, retain JSON-only acceptance evidence before activation, then retain
+the existing final deployment evidence. Failed/skipped evidence or activation
+invokes `scripts/rollback-unqualified-nonprod.sh`. Validate current/same-account
+tasks and prior running API/renderer digests. The operator-only server-authored
+receipt restores the exact prior database approval with intake closed, then all
+prior task/count pairs are restored and stable counts verified. Resume only after
+prior API stability; a stopped prior API remains closed for the next qualified
+deployment. A missing/stale receipt or unconfirmed database restore must not
+trigger incompatible ECS replacement. Any recovery failure remains failed;
+inspect actual state before another deployment. Ambiguous admission attempts abort
+before restoring services. Missing evidence never qualifies fixture IDs.

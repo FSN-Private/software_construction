@@ -10,3 +10,11 @@ Validated safe proof joins existing deployment evidence; all samples are kept.
 Payload/result temp files are removed in finally. Client logs retain7days.
 Published versions are preserved for attributable rollback; no user assets or
 credentials are retained in client infrastructure.
+
+Review remediation adds operational rollback receipts in existing render_events
+reason_code JSON under reserved rollback:<matrix> audit library markers. Receipts
+contain server-read prior approval fields and configured candidate/evidence, not
+owner tokens or user content. Admission returns only the receipt UUID. No new
+schema, dependency, key store, application content or data permission. Latest
+matrix receipt and exact current state guard replay; rollback restores approvals
+and closes intake transactionally before task replacement.

@@ -35,3 +35,14 @@ explicit client/IAM cleanup; absence fails nonprod closed rather than bypassing.
 Implement/test/independently review per Feature016 tasks; obtain final concrete
 push/merge/provisioning approval. Success requires fresh CI/release/security and
 real regional rendering/ingest/evidence gates before fixture persistence.
+
+T007 independent review remediation: operator-audit rollback receipts now restore
+the full prior compatibility tuple under row locks before ECS replacement. This
+corrects the task-only rollback gap after activation/lost response. No new schema,
+caller-selected approval data, secret store, dependency or IAM permission. Latest
+receipt/config/current-state guards and actual task digest checks reject stale
+rollback. Intake stays closed through service restoration; stopped prior API stays
+closed until next qualified deployment. Separate small JSON-only acceptance proof
+is retained before activation; final existing evidence follows activation. Failed/
+skipped uploads or activation attempt guarded recovery. Production direct path
+remains; existing legacy abort semantics are retained for preactivation failures.

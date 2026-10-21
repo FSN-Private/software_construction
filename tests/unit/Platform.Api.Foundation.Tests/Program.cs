@@ -85,6 +85,7 @@ Assert(IngestDatabaseConfiguration.ResolveConnectionString(null, _ => null) is n
 RenderingChecks.Run();
 GalleryMetadataChecks.Run();
 await RecoveryQueueWorkerChecks.RunAsync();
+await RenderingRollbackChecks.RunAsync();
 
 try { await IngestChecks.RunAsync(); }
 catch (Exception error) { Console.Error.WriteLine(error); Environment.Exit(1); }

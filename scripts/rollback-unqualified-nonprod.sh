@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# The main script already handles failures before activation. This handles a
-# successful activation followed by a workflow/evidence failure, under the same
-# serialized deployment job and credentials. Never restore from a stale record.
+# Recover after smokes if evidence/final activation failed. Restore database
+# compatibility using its server-authored receipt before changing task versions.
 test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod && test "${AWS_REGION:-}" = ap-southeast-1
 for NAME in DEPLOYMENT_RECORD SOURCE_REVISION ECR_REGISTRY ECS_CLUSTER ECS_SERVICE WORKER_SERVICE RENDERER_SERVICE; do
   test -n "${!NAME:-}" || { echo "Missing recovery setting: $NAME"; exit 1; }
@@ -27,6 +26,20 @@ for INDEX in 0 1 2; do
   test "$ACTUAL" = "$EXPECTED" || { echo 'Refusing recovery from a stale deployment record.'; exit 1; }
 done
 
+PREVIOUS_RENDERER_DIGEST=''
+for INDEX in 0 2; do
+  if test "${COUNTS[$INDEX]}" != 0; then
+    if test "$INDEX" = 0; then CONTAINER="$ECS_API_CONTAINER"; else CONTAINER="$ECS_RENDERER_CONTAINER"; fi
+    DEFINITION="$(aws ecs describe-task-definition --task-definition "${PREVIOUS[$INDEX]}" --query taskDefinition --output json)"
+    DIGEST="$(printf '%s' "$DEFINITION" | jq -er --arg container "$CONTAINER" '.containerDefinitions[] | select(.name == $container) | .environment[] | select(.name == "Rendering__DeployedArtifactDigest") | .value | select(test("^sha256:[a-f0-9]{64}$"))')"
+    test -z "$PREVIOUS_RENDERER_DIGEST" || test "$PREVIOUS_RENDERER_DIGEST" = "$DIGEST" || { echo 'Prior API/renderer compatibility digests differ.'; exit 1; }
+    PREVIOUS_RENDERER_DIGEST="$DIGEST"
+  fi
+done
+export PREVIOUS_RENDERER_DIGEST
+node scripts/rendering-deployment-control.mjs rollback
+# A stopped prior API leaves intake closed. Never open intake on an unqualified
+# candidate while its stop request could still fail; next accepted deploy resumes.
 STATUS=0
 for INDEX in 0 1 2; do
   aws ecs update-service --cluster "$ECS_CLUSTER" --service "${SERVICES[$INDEX]}" --task-definition "${PREVIOUS[$INDEX]}" --desired-count "${COUNTS[$INDEX]}" --force-new-deployment >/dev/null || STATUS=1
@@ -38,4 +51,5 @@ for INDEX in 0 1 2; do
     '(.failures | length) == 0 and (.services | length) == 1 and (.services[0] | .taskDefinition == $task and .desiredCount == $count and .runningCount == $count and .pendingCount == 0)' >/dev/null || STATUS=1
 done
 test "$STATUS" -eq 0 || { echo 'Recovery failed; inspect all three ECS services before further deployment.'; exit 1; }
+if test "${COUNTS[0]}" != 0; then node scripts/rendering-deployment-control.mjs resume; fi
 echo 'Previous task definitions and desired/running counts restored; this release remains unqualified.'

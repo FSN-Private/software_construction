@@ -3,7 +3,7 @@ using static Platform.Storage.IngestDb;
 
 namespace Platform.Api.Features.Rendering;
 
-public sealed record RenderOperationsView(bool Paused, int Pending, int Cancelled, int Recovered);
+public sealed record RenderOperationsView(bool Paused, int Pending, int Cancelled, int Recovered, Guid? RollbackReceiptId = null);
 
 public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfiguration configuration)
 {
@@ -34,10 +34,13 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
         if (!string.Equals(operatorName, configuration["Rendering:OperationsUsername"], StringComparison.Ordinal)) throw new RenderingProblem("render_operation_forbidden", 403);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await RenderPromotionRollback.LockAsync(connection, configuration, cancellationToken);
+        Guid? rollbackReceipt = null;
         var paused = action is "pause" or "drain" or "cancel";
         var acceptanceOwner = (string?)null;
         if (action == "admit")
         {
+            rollbackReceipt = await RenderPromotionRollback.CaptureAsync(connection, configuration, operatorName, cancellationToken);
             var digest = configuration["Rendering:DeployedArtifactDigest"];
             var corpusEvidenceId = configuration["Rendering:PromotionEvidenceId"];
             if (digest is null || corpusEvidenceId is null || !corpusEvidenceId.StartsWith("trusted-linux-", StringComparison.Ordinal)) throw new RenderingProblem("invalid_render_promotion", 400);
@@ -45,7 +48,6 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
             if (admitted != 1) throw new RenderingProblem("render_promotion_rejected", 409);
             paused = true;
             acceptanceOwner = owner;
-            await EventAsync(connection, operatorName, "compatibility_admitted", cancellationToken);
         }
         if (action == "activate")
         {
@@ -73,7 +75,7 @@ public sealed class RenderOperationsService(NpgsqlDataSource dataSource, IConfig
         var cancelled = action == "cancel" ? await CancelAsync(connection, cancellationToken) : 0;
         await transaction.CommitAsync(cancellationToken);
         var pending = Convert.ToInt32(await ScalarAsync(connection, "SELECT count(*) FROM render_attempts WHERE state IN ('pending','running')", cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
-        return new(paused, pending, cancelled, 0);
+        return new(paused, pending, cancelled, 0, rollbackReceipt);
     }
 
     private static Task EventAsync(NpgsqlConnection connection, string operatorName, string eventType, CancellationToken cancellationToken) =>

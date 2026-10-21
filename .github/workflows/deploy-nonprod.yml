@@ -121,12 +121,26 @@ jobs:
       - name: Restore version-control heartbeat notifications
         run: aws cloudwatch enable-alarm-actions --alarm-names "$VERSION_CONTROL_HEARTBEAT_ALARM"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: acceptance_evidence
+        with:
+          name: nonprod-acceptance-evidence
+          path: |
+            artifacts/release/nonprod-deployment.json
+            artifacts/release/rendering-smoke.json
+            artifacts/release/ingest-smoke.json
+            artifacts/release/regional-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Activate only after regional acceptance evidence was retained
+        id: activate_release
+        run: node scripts/rendering-deployment-control.mjs activate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: deployment_evidence
         with:
           name: nonprod-deployment-evidence
           path: artifacts/release
           if-no-files-found: error
           retention-days: 90
-      - name: Restore previous services if final evidence was not retained
-        if: ${{ always() && steps.deploy_release.outcome == 'success' && steps.deployment_evidence.outcome != 'success' }}
+      - name: Restore prior compatibility and services if qualification failed
+        if: ${{ always() && steps.deploy_release.outcome == 'success' && (steps.acceptance_evidence.outcome != 'success' || steps.activate_release.outcome != 'success' || steps.deployment_evidence.outcome != 'success') }}
         run: timeout --foreground 720 bash scripts/rollback-unqualified-nonprod.sh
