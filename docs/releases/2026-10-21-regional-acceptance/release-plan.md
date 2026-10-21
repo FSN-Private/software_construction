@@ -92,7 +92,11 @@ Assistant stops at unexpected material state and owner decides unsafe recovery.
 
 Existing deployment error trap aborts acceptance and restores previous API,
 ingest and renderer task definitions/counts; confirm desired/running state and
-record actual outcome. DB migrations retain existing compatibility/recovery
+record actual outcome. After successful activation, failed/skipped final evidence
+upload invokes the workflow-level recovery script, which rejects stale/foreign
+records before writes and restores/verifies all previous tasks/counts. If any
+restore fails, the workflow remains failed and the owner inspects actual state.
+DB migrations retain existing compatibility/recovery
 requirements; task rollback does not undo persistent writes. Bootstrap and ingest
 may create records/objects before failure; retain failure evidence and reconcile
 only known operation IDs under existing cleanup policy, never broad deletion.

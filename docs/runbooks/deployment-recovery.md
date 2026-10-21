@@ -51,3 +51,10 @@ Before provisioning, require reviewed code/IAM/template, CI and source-bound rel
 Nonprod verifies the client before database startup and again before deployment writes. Bootstrap/admission stay under workflow control. The regional client runs the original rendering then ingest scripts through the public API and returns source/invocation-bound safe results. Caller rejects any error, mismatch, nonfinite/count/threshold failure or ambiguous execution with no automatic retry, and normal rollback applies. Activation follows complete smoke/proof assembly. Successful evidence upload is required before saving qualified fixture IDs. Inspect actual uploaded source/function/runtime/region, all5/20samples and ingest checks; a local PASS, HTTP500 diagnostic, Lambda HTTP200 or successful merge is insufficient.
 
 On failure, retain logs and existing state/evidence; never store tokens/raw events/locators in diagnostics. Client logs retain7days. For compatible rollback, select the prior application release and matching published client ZIP/version; changing version alone cannot qualify a different bundle. Missing client or disabling it must fail closed. Production/recovery findings and remote-user performance limitations remain open. Cleanup removes client/role policy/log resources explicitly without touching originals, RDS or application services.
+
+Post-activation evidence failure invokes `scripts/rollback-unqualified-nonprod.sh`
+from the protected workflow. It validates same-source/current candidate tasks and
+same-account prior definitions before restoring all three prior task/count pairs,
+then verifies stable desired/running counts. Any recovery failure remains failed;
+inspect actual ECS state before another deployment. Missing evidence never
+qualifies fixture IDs, even if both smokes had passed locally.
