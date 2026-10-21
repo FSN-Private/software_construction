@@ -1,0 +1,30 @@
+# Regional acceptance invocation v1
+
+Protected caller uses exact numeric ARN
+`arn:aws:lambda:ap-southeast-1:<account>:function:platform-nonprod-acceptance:<version>`.
+Reject aliases/$LATEST, wrong account/region/name, wrong codeSHA or runtime/config.
+Client zip must be in the checksummed source-bound release manifest. Fixed
+configuration target is the expected public HTTPS execute-api origin, no
+credentials/path/query/fragment or caller-supplied arbitrary endpoint.
+
+Request: schemaVersion1; invocationId UUID; sourceRevision40hex; releaseRunId
+digits; manifestSHA256 and bundleSHA25664hex; origin; five distinct nonempty
+{libraryId,assetId,editId} triples; transient bounded token without CR/LF.
+All other data are untrusted; no user-supplied code, command or path.
+
+Response: same schema/invocation/source/release/manifest/bundle/origin bindings,
+region=ap-southeast-1, qualified functionARN/version, process.version, passed
+boolean and rendering/ingest data on success. Failed results expose safe stage
+and optionally strictly selected duration/count metrics, not raw child output.
+Rendering metrics retain transport=http2, cacheConcurrency20, fixtureCount5,
+five uncached start samples, twenty cache samples and p95 values independently
+recomputed within rounding precision, thresholds2000/500. Existing smoke process
+success establishes actual30s completion. Ingest IDs/hash use existing output.
+
+Caller rejects FunctionError even if Invoke HTTP200, wrong ExecutedVersion,
+missing/oversized/malformed result, wrong bindings, nonfinite/missing/extra samples
+or failed thresholds. No automatic retry after uncertain execution. Children
+run real static scripts with120s timeout,64KiB outputs and minimal environment;
+token in environment only during execution, no inherited AWS credentials.
+Client total300s, caller read330s/process340s. Safe proof excludes token and
+locators; preserve every admitted sample, do not turn errors into qualification.
