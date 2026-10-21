@@ -19,7 +19,7 @@ Approved user design2026-10-21. External publication/provisioning still gated.
   Test real child order/success/failure/timeout/bounds/environment/token privacy,
   fixed target/region/version/input rejection and exact zip contents/checksum.
   Map FR001/004/005/006, AC001/003/005, NFR001-004/007, SC001/003.
-- [ ] T004 [US2] Add source-bound artifact/provenance support in release generator/
+- [x] T004 [US2] Add source-bound artifact/provenance support in release generator/
   verifier and scripts/invoke-regional-acceptance.mjs. Test real CLI seam:
   tampering/wrong config/version/code/source/result/region/counts/NaN, FunctionError,
   transport ambiguity/no retry/temp cleanup and zero secret disclosure. Recompute
@@ -81,3 +81,12 @@ failure diagnostics; malformed inputs/counts/nonfinite/over-limit values reject.
 These are fixture child programs, not real cloud performance qualification.
 Node syntax and whitespace pass. Windows uses existing Windows PowerShell5.1;
 Ubuntu runner has pwsh. No tool installation or package dependency added.
+
+M2 validation2026-10-21: regional-invoker and regional-release-evidence checks
+PASS, along with existing generate-release-evidence and complete release-workflow
+suite. Real CLI fixture processes cover code/config/version/source/result drift,
+FunctionError, transport/no retry, malformed/nonfinite/over-limit data, payload
+cleanup and secret suppression. Restricted response file is precreated too.
+Regional zip is a checksummed SBOM/provenance subject with/without recovery;
+tampered bytes/subjects and unknown artifact sets fail. Historical release formats
+still verify. No actual Lambda invocation or healthy cloud result is claimed.
