@@ -12,9 +12,9 @@ destination refs/heads/feature/016-regional-deployment-acceptance.
 Base/default1130d9cf7930cf6c1433930f8cf0129eaeb622e9, verified again with
 `git ls-remote origin refs/heads/master`2026-10-21, no divergence behind.
 Complete implementation range1130d9c..0c83864 (eight coherent milestones).
-Exact proposed push scope: those eight commits plus a final dedicated record
-commit containing this reviewed file unchanged. Record-only commit must have
-parent0c83864 and change only this file. No push authority yet; no remote write,
+Original proposed push scope: those eight commits plus record commitf6930dbe
+with parent0c83864 and only this file. Follow-up canonical-byte correction
+is recorded in Round3 below. Original pre-publication state: no remote write,
 merge, provision, protected setting, live acceptance or production operation.
 
 ## Scope and evidence provided
@@ -145,3 +145,38 @@ record commit with parent0c83864. **Final gate PASS takes effect only upon that
 reviewer's explicit confirmation of these exact bytes.** Commit unchanged after
 confirmation; verify clean tree, parent and only-record scope before any push.
 External user authority, CI/release and real T008 qualification remain separate.
+
+## Round3: canonical record-byte correction after publication
+
+User explicitly approved gated branch publication, PR creation/CI merge and the
+bounded nonprod rollout. Reviewed branch f6930dbe was pushed and PR46 created:
+https://github.com/FSN-Private/software_construction/pull/46. No merge/deploy/apply
+has occurred. Required CI is pending. T007/T008 remain open for their final gates.
+
+R3-01 **blocking, procedural**, T007 review record only. Reviewer post-commit
+verification found that Git normalized three CRLFs: agreed raw file SHA256
+2899F9A11C063BA59706CFDA91CE2B6A6DA3D2C85E8BE2ECBC1AF50ED14A6EF3,
+9531 bytes, versus committed f6930dbe blob SHA256
+AA9EEF56CC8D81277D1FB486CA2295CB91A9A0C3742E2BE3FD87E0DD0D39DB8F,
+9528 bytes. Text/source/parent/sole-path scope match; exact committed-byte
+agreement did not. Gate temporarily BLOCKED on procedure, no new source issue.
+
+Disposition: **valid and fixed with renewed exact-byte agreement**. Preserve
+published history; prepare this follow-up record with LF-only UTF8/no BOM, compare
+raw bytes with Git's clean-filter canonical output before agreement. Reviewer
+must independently inspect this full record and confirm those exact canonical
+bytes, all prior dispositions and unchanged source range. Commit it unchanged as
+a sole-path follow-up with parentf6930dbe04aa1ac624cd936246a3477de0bcd8a3,
+then verify committed blob SHA256 equals agreed raw SHA256 before pushing. No
+amend/rebase/force push. Revised publication scope: base1130d9c..f6930dbe plus
+this one canonical-record correction commit. Merge/apply held until gate PASS.
+
+Final explicit reviewer agreement, gpt-5.6-sol: I inspected the complete LF-only
+canonical record and independently verified its exact raw SHA256 and Git blob
+identity. I agree to these exact pending canonical bytes, confirm all prior
+blocking dispositions fixed and no valid unresolved source or record blocker.
+Commit unchanged as the sole correction path with parentf6930dbe; verify the
+committed blob equals my independently confirmed pending-byte hash before push.
+Final gate: **PASS**. This prewritten agreement is independently confirmed by
+the reviewer before commit; hashes are verified out of band to avoid a self-hash.
+All implementation findings remain fixed in0c83864; real qualification is T008.
