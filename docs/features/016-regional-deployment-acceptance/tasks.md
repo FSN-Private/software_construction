@@ -14,7 +14,7 @@ Approved user design2026-10-21. External publication/provisioning still gated.
 
 ## User Story 1/2: regional client and trust (M1-M2)
 
-- [ ] T003 [US1] Implement scripts/regional-acceptance/handler.mjs and
+- [x] T003 [US1] Implement scripts/regional-acceptance/handler.mjs and
   scripts/package-regional-acceptance.ps1; reuse both smoke scripts and PNG.
   Test real child order/success/failure/timeout/bounds/environment/token privacy,
   fixed target/region/version/input rejection and exact zip contents/checksum.
@@ -72,3 +72,12 @@ SC001 -> T003-T008; SC002 -> T007/T008; SC003 -> T003-T008.
 M0 analysis: requirements/plan/tasks consistent, every ID mapped, approved
 geography versus remote-user limitation explicit, no constitution conflict,
 unmapped requirement, unresolved clarification or hidden failed-run acceptance.
+
+M1 validation2026-10-21: `node tests/infrastructure/release/regional-client.mjs`
+PASS. Standard ZIP packaging produces repeated identical local bytes, exact
+canonical source entries and unchanged PNG. Real fixture child processes verify
+order, minimal environment/token isolation, timeout/output bounds and sanitized
+failure diagnostics; malformed inputs/counts/nonfinite/over-limit values reject.
+These are fixture child programs, not real cloud performance qualification.
+Node syntax and whitespace pass. Windows uses existing Windows PowerShell5.1;
+Ubuntu runner has pwsh. No tool installation or package dependency added.
