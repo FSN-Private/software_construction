@@ -112,3 +112,34 @@ vendor integrity, secret scan, dependency tree and license checks PASS. Updated
 Feature008 geography, Feature011 linkage, runbook, infrastructure/provenance docs
 and coordinated release plan including public Singapore cost calculation.
 No cloud writes, live qualification, fixture save or publication performed.
+
+T007 review remediation2026-10-21: gpt-6-astra identified a valid high blocking
+AC003/FR006 gap: final upload failure occurred after activation/trap removal,
+leaving the candidate running without retained evidence. Mapped to existing T007
+review-remediation scope. Added workflow-level failed/skipped-upload recovery,
+source/current-state/same-account validation before writes, restoration of all
+three prior tasks/counts even if one update fails, stable-state verification and
+real Bash fixture tests. Targeted test PASS; complete relevant rerun pending.
+Reviewer hit model usage limit before completing; explicitly different
+model gpt-5.6-sol is reviewing the full diff and disposition independently.
+
+Registry audit2026-10-21: owner explicitly approved dependency metadata export to
+registry.npmjs.org. Existing `npm --prefix packages/infrastructure run
+validate:vulnerabilities` PASS; no packages installed/changed. Prior automatic
+review denial is resolved by that explicit authorization, not a bypass.
+
+Cross-artifact analysis/convergence2026-10-21:6FR,5AC,7NFR,3SC,8 planned
+components and5constitution principles checked. Every requirement maps to the
+existing T001-T008 ledger; no unmapped task, contradictory geography/threshold,
+missing build component or unrelated dependency change. Local implementation
+converges after upload-failure remediation; no additional unplanned code gap and
+no duplicate convergence task. Audit is now PASS. Independent review/final authority
+remain T007, real source-bound release/regional qualification/observation remain
+T008; neither is represented as completed by local fixture results. No extension
+hooks configured. Publication draft is local reviews/pr-draft.md only.
+
+T007 remediation validation2026-10-21: full `npm run test:release-evidence`
+PASS after the post-activation recovery addition, including stale/source/account/
+count rejection before writes, desired-count0/2 restoration, all-service attempts
+after one update failure and stable-state rejection. `npm run test:ci-contract`,
+new Bash syntax and whitespace checks PASS. No remote/resource mutation.

@@ -54,6 +54,11 @@ hooks configured. Clarification finds no unresolved material question.
   bootstrap/admission, preserving native/readiness/security checks. Production
   retains direct existing smokes. Merge safe regional proof into existing
   deployment evidence; original activation/error trap remains authoritative.
+- `scripts/rollback-unqualified-nonprod.sh`: workflow-level recovery after
+  successful activation but failed/skipped evidence upload. Validate source,
+  same-account tasks and all current candidate definitions before any mutation;
+  restore all prior tasks/counts and verify stable actual state. A failed restore
+  remains an explicit failure; never treat local smoke results as retained proof.
 
 ## Security, data and failure behavior
 
