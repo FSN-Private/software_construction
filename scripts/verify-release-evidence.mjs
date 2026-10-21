@@ -5,7 +5,7 @@ import { recoveryVerificationConfiguration, verifyRecoveryEvidence } from './rec
 
 const [manifestPath, expectedSourceRevision, mode, expectedRepository, expectedReleaseRunId] = process.argv.slice(2);
 if (!manifestPath || !/^[a-f0-9]{40}$/.test(expectedSourceRevision) || (expectedRepository && !/^[\w.-]+\/[\w.-]+$/.test(expectedRepository)) || (expectedReleaseRunId && !/^\d+$/.test(expectedReleaseRunId))) {
-  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker|--require-recovery] [owner/repository] [release-run-id]');
+  throw new Error('Usage: verify-release-evidence.mjs <manifest-path> <full-source-sha> [--require-worker|--require-regional|--require-recovery] [owner/repository] [release-run-id]');
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -20,7 +20,8 @@ const regional = [...current, 'regional-acceptance-client.zip'].sort();
 const regionalRecovery = [...recovery, 'regional-acceptance-client.zip'].sort();
 const isLegacyArtifactSet = JSON.stringify(names) === JSON.stringify(legacy);
 if (![current, recovery, regional, regionalRecovery].map(set => JSON.stringify(set)).includes(JSON.stringify(names)) && !isLegacyArtifactSet) throw new Error('Release manifest contains an unsupported artifact set.');
-if (mode === '--require-worker' && (!names.includes('ingest-worker.tar') || !names.includes('render-worker.tar'))) throw new Error('Release manifest does not contain the required ingest and renderer worker artifacts.');
+if (['--require-worker', '--require-regional'].includes(mode) && (!names.includes('ingest-worker.tar') || !names.includes('render-worker.tar'))) throw new Error('Release manifest does not contain the required ingest and renderer worker artifacts.');
+if (mode === '--require-regional' && !names.includes('regional-acceptance-client.zip')) throw new Error('Release manifest does not contain the required regional acceptance client.');
 if (mode === '--require-recovery' && (!names.includes('recovery-worker.tar') || manifest.compatibility?.recoveryRequired !== true))
   throw new Error('Release manifest does not contain the required recovery worker artifact and qualification contract.');
 verifyReleaseManifest(manifest, dirname(resolve(manifestPath)));

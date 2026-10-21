@@ -13,6 +13,7 @@ import './corpus-additional-references.mjs';
 import './regional-client.mjs';
 import './regional-invoker.mjs';
 import './regional-release-evidence.mjs';
+import './regional-deployment.mjs';
 
 const workflows = Object.fromEntries(['build-release.yml', 'deploy-nonprod.yml', 'nonprod-lifecycle.yml', 'release.yml', 'rollback.yml'].map((file) => [file, readFileSync(`.github/workflows/${file}`, 'utf8')]));
 const deployScript = readFileSync('scripts/deploy-ecs-release.sh', 'utf8');
@@ -122,8 +123,8 @@ assert.ok(readFileSync('scripts/generate-release-evidence.mjs', 'utf8').includes
 assert.ok(workflows['deploy-nonprod.yml'].includes('environment: nonprod'), 'Non-production deployment must use its protected environment.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('id-token: write'), 'Non-production deployment must use short-lived OIDC credentials.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('verify-release-evidence.mjs'), 'Non-production deployment must reject a mismatched manifest.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker'), 'Non-production deployment must reject legacy evidence without a worker artifact.');
-assert.ok(workflows['deploy-nonprod.yml'].includes('--require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('--require-regional'), 'Non-production deployment must require worker and regional-client artifacts.');
+assert.ok(workflows['deploy-nonprod.yml'].includes('--require-regional "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"'), 'Non-production deployment must bind provenance to the trusted repository and downloaded release run.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('Validate deployment configuration') && workflows['deploy-nonprod.yml'].includes('Missing required deployment setting'), 'Non-production deployment must report missing protected configuration before AWS authentication.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('scripts/deploy-ecs-release.sh'), 'Non-production deployment must use the coordinated deployment path.');
 assert.ok(workflows['deploy-nonprod.yml'].includes('AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURES') && workflows['deploy-nonprod.yml'].includes('RENDERING_ACCEPTANCE_FIXTURES'), 'Non-production deployment must require protected distinct rendering acceptance fixture identities.');

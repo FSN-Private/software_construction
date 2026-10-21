@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { verifyReleaseManifest } from '../packages/release-tools/release-manifest.mjs';
+import { bindings, functionArn, validateResult } from './regional-acceptance/contract.mjs';
 
 const [manifestPath, deploymentPath, expectedSourceRevision, expectedReleaseRunId] = process.argv.slice(2);
 if (!manifestPath || !deploymentPath || !/^[a-f0-9]{40}$/.test(expectedSourceRevision) || !/^\d+$/.test(expectedReleaseRunId)) {
@@ -27,6 +28,16 @@ if (!/^.+@sha256:[a-f0-9]{64}$/.test(deployment.rendererImage ?? '')) {
 }
 if (!deployment.taskDefinition || !deployment.workerTaskDefinition || !deployment.rendererTaskDefinition || !deployment.migrationTask || !deployment.smoke?.assetId) {
   throw new Error('Non-production evidence does not prove the coordinated migration, deployment, and smoke test.');
+}
+const regional = manifest.artifacts.find(item => item.name === 'regional-acceptance-client.zip');
+if (regional) {
+  const proof = deployment.regionalAcceptance;
+  const arn = functionArn.exec(proof?.functionArn ?? '');
+  if (!proof || !arn || arn[1] !== deployment.apiImage.split('.')[0]) throw new Error('Non-production evidence lacks the same-account regional client proof.');
+  validateResult({ ...bindings(proof), passed: proof.passed, region: proof.region, functionArn: proof.functionArn, runtime: proof.runtime,
+    rendering: deployment.renderingSmoke, ingest: deployment.smoke },
+  { schemaVersion: 1, invocationId: proof.invocationId, sourceRevision: expectedSourceRevision, releaseRunId: expectedReleaseRunId,
+    manifestSHA256: manifestDigest.slice(7), bundleSHA256: regional.digest.slice(7), origin: proof.origin }, proof.functionArn);
 }
 verifyReleaseManifest(manifest, dirname(resolve(manifestPath)));
 console.log(`Verified non-production promotion evidence for ${expectedSourceRevision}.`);

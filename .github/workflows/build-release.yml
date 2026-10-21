@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Package the regional acceptance client from the validated revision
+        shell: pwsh
+        run: ./scripts/package-regional-acceptance.ps1
       - run: docker build --file apps/api/Dockerfile --tag platform-api:${{ github.event.workflow_run.head_sha }} .
       - run: docker build --file apps/ingest-worker/Dockerfile --tag platform-ingest-worker:${{ github.event.workflow_run.head_sha }} .
       - run: docker build --file apps/render-worker/Dockerfile --tag platform-render-worker:${{ github.event.workflow_run.head_sha }} .

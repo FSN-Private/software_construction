@@ -1,6 +1,7 @@
 # Local verification and gated rollout
 
-Run `pwsh -NoProfile -File scripts/package-regional-acceptance.ps1`, then the
+Run `pwsh -NoProfile -File scripts/package-regional-acceptance.ps1` (or existing
+`powershell.exe -NoProfile -File scripts/package-regional-acceptance.ps1` on Windows), then the
 regional client/packaging/invoker tests through `npm run test:release-evidence`.
 Run infrastructure type/build and regional synthesis/IAM contract checks using
 the generated zip. These use local fixtures; never claim cloud qualification.

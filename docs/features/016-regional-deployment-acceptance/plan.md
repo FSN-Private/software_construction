@@ -76,7 +76,8 @@ Set the protected numeric versionARN only after metadata/code validation. Existi
 automatic nonprod deploy fails closed until this setting exists. Rerun authorized
 bootstrap with all gates; save fixture IDs only after success/evidence upload.
 
-The configured compute cap is150GB-seconds/invocation, no recurring compute.
+The configured execution budget is150GB-seconds/invocation plus initialization,
+with no recurring compute.
 Confirm Singapore prices/budget before apply; logs retain7days. Preserve previous
 published client versions for attributable rollback. Existing app paired rollback
 is unchanged. Disabling/removing the client cannot qualify a release: nonprod

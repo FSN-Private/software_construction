@@ -12,6 +12,10 @@ for NAME in RELEASE_DIR DEPLOYMENT_RECORD SOURCE_REVISION RELEASE_RUN_ID AWS_REG
   test -n "${!NAME:-}" || MISSING+=("$NAME")
 done
 test "${#MISSING[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${MISSING[@]}"; exit 1; }
+if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
+  test "$AWS_REGION" = ap-southeast-1 && test -n "${REGIONAL_ACCEPTANCE_FUNCTION_VERSION:-}" || { echo 'Set the approved Singapore regional acceptance function version.'; exit 1; }
+  node scripts/invoke-regional-acceptance.mjs --verify-client "$RELEASE_DIR/release-manifest.json"
+fi
 RENDER_OPERATION_ID="$(node -p 'require("node:crypto").randomUUID()')"
 
 docker load --input "$RELEASE_DIR/api.tar"
@@ -154,10 +158,18 @@ fi
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-pause" "$HEALTH_URL/v1/rendering/operations/pause" >/dev/null
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-admit" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
 ACCEPTANCE_ACTIVE=1
+if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
+  timeout 360 env INGEST_SMOKE_TOKEN="$ID_TOKEN" RENDERING_ACCEPTANCE_FIXTURES="$RENDERING_ACCEPTANCE_FIXTURES" node scripts/invoke-regional-acceptance.mjs "$RELEASE_DIR/release-manifest.json"
+else
 timeout 900 env INGEST_SMOKE_TOKEN="$ID_TOKEN" RENDERING_ACCEPTANCE_FIXTURES="$RENDERING_ACCEPTANCE_FIXTURES" node scripts/smoke-rendering.mjs "$HEALTH_URL" > "$RELEASE_DIR/rendering-smoke.json"
 timeout 120 env INGEST_SMOKE_TOKEN="$ID_TOKEN" node scripts/smoke-ingest.mjs "$HEALTH_URL" > "$RELEASE_DIR/ingest-smoke.json"
+fi
 jq --slurpfile smoke "$RELEASE_DIR/ingest-smoke.json" --slurpfile rendering "$RELEASE_DIR/rendering-smoke.json" '. + {smoke:$smoke[0],renderingSmoke:$rendering[0]}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
 mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
+if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
+  jq --slurpfile regional "$RELEASE_DIR/regional-acceptance.json" '. + {regionalAcceptance:$regional[0]}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
+  mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
+fi
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-activate" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
 ACCEPTANCE_ACTIVE=0
 ROLLBACK_REQUIRED=0

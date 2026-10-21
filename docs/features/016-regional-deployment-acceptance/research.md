@@ -24,6 +24,9 @@ References checked2026-10-21:
 - https://docs.aws.amazon.com/lambda/latest/dg/lambda-nodejs.html
 - https://aws.amazon.com/lambda/pricing/ (confirm Singapore rate before apply).
 
-No unresolved material clarification. Cost ceiling150GB-seconds per configured
-invocation, not a zero-cost guarantee. No new dependencies or actions; existing
+No unresolved material clarification. Configured execution budget150GB-seconds
+per invocation plus initialization, not a total cost ceiling. Singapore catalog
+checked2026-10-21: USD0.0000166667/GB-second first tier and USD0.0000002/request.
+See the coordinated release plan for calculation and additional costs.
+No new dependencies or actions; existing
 vendored CDK and pinned action risks/controls remain.

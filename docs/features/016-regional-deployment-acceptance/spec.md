@@ -99,7 +99,8 @@ authoritative application data or credential storage.
 ### Non-functional Requirements
 
 - **NFR-001 Performance**: FR001 limits unchanged; first real API request includes
-  HTTP/2 setup. Client512MiB/300s/concurrency1, maximum150GB-seconds/invocation.
+  HTTP/2 setup. Client512MiB/300s/concurrency1, configured execution budget
+  150GB-seconds/invocation; separately billed initialization is additional.
 - **NFR-002 Reliability/availability**: timeout/error/malformed/ambiguous paths
   fail closed;64KiB output bounds; no invocation retry or recurring availability
   dependency outside deployment acceptance.
