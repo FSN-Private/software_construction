@@ -61,3 +61,34 @@ unchanged commit. No unresolved blocking finding may remain. The review grants
 no push, merge, deployment or acceptance authority. Obtain explicit authorization
 for the proposed branch push; remote results and final T054 remediation remain
 pending. No application code, fixture variable or deployment threshold changes.
+
+## Round 2: control Node version before interpreting transport
+
+Reviewer: same independent read-only `gpt-6-astra`, 2026-10-21.
+Scope: `d822b9d..f8e509b` plus this pending append, destination unchanged
+`origin/fix/011-render-cache-qualification`. The owner explicitly approved the
+diagnostic branch push/run; this bounded same-branch follow-up uses that scope.
+
+First run39543960738 completes both samples under .nvmrc Node24.20.0. PING is
+207.6-221.1ms; twenty public35byte gateway500 responses have p95425.7/502.3ms.
+The deployment used installed Node22.23.3. Preserve that mismatch as an evidence
+limit: neither a particular network cause nor healthy application latency is
+proved. Compare exact22.23.3 followed by .nvmrc on each of the same two runners,
+using separate sessions and the unchanged script. All results remain visible.
+
+Only existing SHA-pinned setup-node/runtime execution and plan/task evidence
+change. Token permissions, timeout, runner count, fixed public endpoint,
+TLS/PING/burst bounds, qualification:false, no AWS/secrets/artifacts/deployment
+writes and unchanged500ms acceptance remain intact. No runtime or application
+fix is claimed and no region/resource/nominal-load change is implemented.
+
+Implementer passes CI contracts and whitespace checks. The unchanged script's
+actual local TLS/H2/PING/burst validation remains applicable. No application
+test rerun is claimed. Independent review assesses first-run logs, full revised
+range and record; prior R1 and N2 remain fixed and unaffected.
+
+Final gate: **PASS for this controlled diagnostic follow-up only**, after the
+reviewer explicitly confirms no unresolved blocking findings and agrees to these
+exact record bytes before unchanged commit. This is not deployment acceptance
+or permission for a later application/architecture change. Remote comparison
+results and final T054 remediation remain pending.
