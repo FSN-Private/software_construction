@@ -1,0 +1,74 @@
+# Tasks: Regional deployment acceptance
+
+Authoritative ledger. Branch `feature/016-regional-deployment-acceptance` starts
+clean at1130d9c,0divergence from master; diagnostic branch/history preserved.
+Approved user design2026-10-21. External publication/provisioning still gated.
+
+## Setup and foundation (M0)
+
+- [x] T001 Specify approved scope, stories, ACs/NFRs and checklist in spec.md;
+  clarify material questions against owner decision. Commit ed1d175.
+- [x] T002 Plan/research/contracts/data model/quickstart, ADR0020 and traceability;
+  analyze consistency/constitution before implementation. No unresolved material
+  questions, no top-level specs/ directory, no new dependency or delegation.
+
+## User Story 1/2: regional client and trust (M1-M2)
+
+- [ ] T003 [US1] Implement scripts/regional-acceptance/handler.mjs and
+  scripts/package-regional-acceptance.ps1; reuse both smoke scripts and PNG.
+  Test real child order/success/failure/timeout/bounds/environment/token privacy,
+  fixed target/region/version/input rejection and exact zip contents/checksum.
+  Map FR001/004/005/006, AC001/003/005, NFR001-004/007, SC001/003.
+- [ ] T004 [US2] Add source-bound artifact/provenance support in release generator/
+  verifier and scripts/invoke-regional-acceptance.mjs. Test real CLI seam:
+  tampering/wrong config/version/code/source/result/region/counts/NaN, FunctionError,
+  transport ambiguity/no retry/temp cleanup and zero secret disclosure. Recompute
+  all samples/thresholds. Map FR003/005/006, AC003-005, NFR002-005, SC001/003.
+
+## User Story 1: infrastructure and delivery (M3-M4)
+
+- [ ] T005 [US1] Add isolated regional-acceptance-app.ts/stack.ts, published code
+  version, role/log/timeout/concurrency/region/production guards; test synthesized
+  exact zip/code/IAM scope, no function URL/events/VPC/NAT/main stack changes and
+  bounded logs/compute. Map FR003/004, AC004/005, NFR001-006, SC001/003.
+- [ ] T006 [US1] Integrate bundle build/CI and nonprod invocation into build-release,
+  deploy-nonprod and deploy-ecs-release.sh. Preserve production/direct path and
+  native/readiness/bootstrap/admit/activate/error trap/evidence ordering. Test real
+  extracted workflow/script failure paths and update spec008 interpretation,
+  Feature011 task linkage, runbook and release plan. Map FR001-006, AC001-005,
+  NFR001-007, SC001-003. No new action/package or token permission.
+
+## Cross-cutting verification and delivery (M5)
+
+- [ ] T007 Run complete relevant release-evidence, infrastructure/security,
+  syntax/whitespace checks; analyze/converge spec/plan/tasks against implementation,
+  remediate gaps, record alternate-model pre-push PASS and milestone commits.
+  Prepare concrete PR/template/IAM/cost/rollback review package and obtain final
+  publication/integration/provisioning authority. Map every FR/AC/NFR/SC.
+- [ ] T008 After explicit authority: source-bound PR/master CI/release/security,
+  exact zip/source/version/template verification, priced scoped client apply,
+  protected numeric version config, bootstrap real regional rendering/ingest/
+  activation/evidence upload and only then qualified fixture IDs. Record actual
+  results and clean superseded redundant artifacts proportionally. Failure is
+  not completion; remediate safe in-scope defects and repeat review as required.
+  Map all FR/AC/NFR/SC; cloud work requires available credentials/authority.
+
+## Dependencies, validation and strategy
+
+T001 -> T002 -> T003 -> T004 -> T005 -> T006 -> T007 -> T008. Stories share a
+single trusted client, so shipping US1 without US2 would be unsafe; complete
+locally before publication. No agent delegation except required read-only
+alternate-model pre-push review. Unit tests are not applicable to docs/ADR;
+cross-artifact analysis and actual code tests validate their claims instead.
+Package/handler tests and infra synthesis can run independently once client code
+exists; use ordinary batched local commands, not extra agents.
+
+Traceability: FR001/AC001/NFR001 -> T003/T006/T008;
+FR002/AC002 -> T006/T008; FR003/AC004/NFR005 -> T004/T005/T006/T008;
+FR004/NFR003/006 -> T003/T005/T007/T008; FR005/AC005 -> T003/T004/T005/T007;
+FR006/AC003/NFR002 -> T003/T004/T006/T008; NFR004/007 -> T003/T006/T007;
+SC001 -> T003-T008; SC002 -> T007/T008; SC003 -> T003-T008.
+
+M0 analysis: requirements/plan/tasks consistent, every ID mapped, approved
+geography versus remote-user limitation explicit, no constitution conflict,
+unmapped requirement, unresolved clarification or hidden failed-run acceptance.
