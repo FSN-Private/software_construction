@@ -7,6 +7,12 @@ Client zip must be in the checksummed source-bound release manifest. Fixed
 configuration target is the expected public HTTPS execute-api origin, no
 credentials/path/query/fragment or caller-supplied arbitrary endpoint.
 
+Metadata-only preflight verifies the version and exact release zip before database
+startup and again before direct-script mutation. No workload or owner token is
+needed. Invocation verifies metadata again before and after work, including
+runtime version drift. New nonprod release verification requires both worker
+artifacts and the regional zip; historical bundles remain independently readable.
+
 Request: schemaVersion1; invocationId UUID; sourceRevision40hex; releaseRunId
 digits; manifestSHA256 and bundleSHA25664hex; origin; five distinct nonempty
 {libraryId,assetId,editId} triples; transient bounded token without CR/LF.
@@ -28,3 +34,8 @@ run real static scripts with120s timeout,64KiB outputs and minimal environment;
 token in environment only during execution, no inherited AWS credentials.
 Client total300s, caller read330s/process340s. Safe proof excludes token and
 locators; preserve every admitted sample, do not turn errors into qualification.
+
+Deployment retains passed=true with the proof. Offline promotion verification
+requires the proof for releases containing a regional zip, recomputes metrics and
+checks exact source/release/manifest/bundle and same-account numeric function ARN.
+This records nonprod qualification and does not authorize production promotion.

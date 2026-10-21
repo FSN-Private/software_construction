@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { awsCli, invokeRegionalAcceptance } from '../../../scripts/invoke-regional-acceptance.mjs';
+import { awsCli, invokeRegionalAcceptance, verifyRegionalClient } from '../../../scripts/invoke-regional-acceptance.mjs';
 
 const directory = mkdtempSync(join(tmpdir(), 'regional-invoker-test-'));
 const secret = 'private-owner-token-in-payload-only';
@@ -80,6 +80,10 @@ if(operation==='get-function-configuration') {
     }
     assert.ok(calls().filter(item => item.operation === 'invoke').length <= 1, 'No automatic reinvocation.');
   };
+  reset('success');
+  assert.equal(verifyRegionalClient(options, aws).bundleSHA256, digest);
+  assert.equal(calls().length, 1);
+  assert.ok(calls().every(item => item.operation === 'get-function-configuration'), 'Preflight must not invoke the workload.');
   reset('success');
   const proof = invokeRegionalAcceptance(options, aws);
   assert.equal(proof.region, 'ap-southeast-1');

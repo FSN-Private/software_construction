@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { functionArn, renderingMetrics, validateRequest, validateResult } from './regional-acceptance/contract.mjs';
+import { functionArn, renderingMetrics, validateOrigin, validateRequest, validateResult } from './regional-acceptance/contract.mjs';
 
 const check = condition => { if (!condition) throw new Error('Regional acceptance verification failed.'); };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -21,20 +21,19 @@ export function awsCli(args, command = 'aws', prefix = []) {
   try { return JSON.parse(result.stdout); } catch { throw new Error('Regional acceptance AWS response was invalid.'); }
 }
 
-export function invokeRegionalAcceptance(options, aws = awsCli) {
-  const { manifestPath, sourceRevision, releaseRunId, origin, versionArn, account, token, fixtures } = options;
+export function verifyRegionalClient(options, aws = awsCli) {
+  const { manifestPath, sourceRevision, origin, versionArn, account } = options;
   const arn = functionArn.exec(versionArn ?? '');
   check(arn && /^\d{12}$/.test(account ?? '') && arn[1] === account);
   const manifestBytes = readFileSync(manifestPath);
   const manifest = JSON.parse(manifestBytes);
-  check(manifest.sourceRevision === sourceRevision);
+  check(/^[a-f0-9]{40}$/.test(sourceRevision ?? '') && manifest.sourceRevision === sourceRevision);
+  validateOrigin(origin);
   const artifacts = manifest.artifacts.filter(item => item.name === 'regional-acceptance-client.zip');
   check(artifacts.length === 1 && /^sha256:[a-f0-9]{64}$/.test(artifacts[0].digest));
   const bundle = readFileSync(join(dirname(resolve(manifestPath)), 'regional-acceptance-client.zip'));
   const bundleSHA256 = hash(bundle);
   check(artifacts[0].digest === `sha256:${bundleSHA256}` && artifacts[0].bytes === bundle.length);
-  const request = validateRequest({ schemaVersion: 1, invocationId: randomUUID(), sourceRevision, releaseRunId,
-    manifestSHA256: hash(manifestBytes), bundleSHA256, origin, token, fixtures });
   const configuration = () => aws(['lambda', 'get-function-configuration', '--function-name', versionArn, '--region', 'ap-southeast-1', '--cli-connect-timeout', '10', '--cli-read-timeout', '15', '--output', 'json']);
   const verifyConfiguration = config => {
     check(config.Version === arn[2] && config.FunctionArn?.replace(/:\d+$/, '') === versionArn.replace(/:\d+$/, ''));
@@ -44,7 +43,16 @@ export function invokeRegionalAcceptance(options, aws = awsCli) {
     check(config.Environment && !config.Environment.Error && Object.keys(config.Environment.Variables ?? {}).length === 1 && config.Environment.Variables.TARGET_ORIGIN === origin);
     return { CodeSha256: config.CodeSha256, RuntimeVersionArn: config.RuntimeVersionConfig?.RuntimeVersionArn ?? null };
   };
-  const before = verifyConfiguration(configuration());
+  const verified = verifyConfiguration(configuration());
+  return { manifestSHA256: hash(manifestBytes), bundleSHA256, codeSHA256: verified.CodeSha256, runtimeVersionArn: verified.RuntimeVersionArn };
+}
+
+export function invokeRegionalAcceptance(options, aws = awsCli) {
+  const { manifestPath, sourceRevision, releaseRunId, origin, versionArn, token, fixtures } = options;
+  const before = verifyRegionalClient(options, aws);
+  const request = validateRequest({ schemaVersion: 1, invocationId: randomUUID(), sourceRevision, releaseRunId,
+    manifestSHA256: before.manifestSHA256, bundleSHA256: before.bundleSHA256, origin, token, fixtures });
+  const version = functionArn.exec(versionArn)[2];
   const directory = mkdtempSync(join(tmpdir(), 'regional-invoke-'));
   try {
     const payload = join(directory, 'request.json');
@@ -56,7 +64,7 @@ export function invokeRegionalAcceptance(options, aws = awsCli) {
     // The token is only in a restricted file, never a command argument or log.
     const metadata = aws(['lambda', 'invoke', '--function-name', versionArn, '--region', 'ap-southeast-1', '--invocation-type', 'RequestResponse',
       '--log-type', 'None', '--cli-binary-format', 'raw-in-base64-out', '--payload', `fileb://${payload}`, '--cli-connect-timeout', '10', '--cli-read-timeout', '330', response]);
-    check(metadata.StatusCode === 200 && !metadata.FunctionError && !metadata.LogResult && metadata.ExecutedVersion === arn[2]);
+    check(metadata.StatusCode === 200 && !metadata.FunctionError && !metadata.LogResult && metadata.ExecutedVersion === version);
     check(statSync(response).size <= 65536);
     const value = JSON.parse(readFileSync(response, 'utf8'));
     if (value?.passed === false) {
@@ -68,10 +76,10 @@ export function invokeRegionalAcceptance(options, aws = awsCli) {
       throw new Error('Regional acceptance workload failed.');
     }
     const result = validateResult(value, request, versionArn);
-    check(JSON.stringify(verifyConfiguration(configuration())) === JSON.stringify(before));
-    const proof = { schemaVersion: 1, invocationId: result.invocationId, sourceRevision, releaseRunId,
-      manifestSHA256: result.manifestSHA256, bundleSHA256, origin, region: result.region, functionArn: versionArn,
-      runtime: result.runtime, runtimeVersionArn: before.RuntimeVersionArn };
+    check(JSON.stringify(verifyRegionalClient(options, aws)) === JSON.stringify(before));
+    const proof = { schemaVersion: 1, passed: true, invocationId: result.invocationId, sourceRevision, releaseRunId,
+      manifestSHA256: result.manifestSHA256, bundleSHA256: before.bundleSHA256, origin, region: result.region, functionArn: versionArn,
+      runtime: result.runtime, runtimeVersionArn: before.runtimeVersionArn };
     const output = dirname(resolve(manifestPath));
     for (const [name, data] of [['rendering-smoke.json', result.rendering], ['ingest-smoke.json', result.ingest], ['regional-acceptance.json', proof]])
       writeFileSync(join(output, name), `${JSON.stringify(data)}\n`, { mode: 0o600 });
@@ -84,8 +92,10 @@ export function invokeRegionalAcceptance(options, aws = awsCli) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    invokeRegionalAcceptance({ manifestPath: process.argv[2], sourceRevision: process.env.SOURCE_REVISION, releaseRunId: process.env.RELEASE_RUN_ID,
+    const preflight = process.argv[2] === '--verify-client';
+    const options = { manifestPath: process.argv[preflight ? 3 : 2], sourceRevision: process.env.SOURCE_REVISION, releaseRunId: process.env.RELEASE_RUN_ID,
       origin: process.env.HEALTH_URL, versionArn: process.env.REGIONAL_ACCEPTANCE_FUNCTION_VERSION, account: process.env.ECR_REGISTRY?.split('.')[0],
-      token: process.env.INGEST_SMOKE_TOKEN, fixtures: JSON.parse(process.env.RENDERING_ACCEPTANCE_FIXTURES ?? 'null') });
+      token: process.env.INGEST_SMOKE_TOKEN, fixtures: preflight ? undefined : JSON.parse(process.env.RENDERING_ACCEPTANCE_FIXTURES ?? 'null') };
+    if (preflight) verifyRegionalClient(options); else invokeRegionalAcceptance(options);
   } catch { console.error('Regional acceptance failed; no deployment qualification.'); process.exitCode = 1; }
 }

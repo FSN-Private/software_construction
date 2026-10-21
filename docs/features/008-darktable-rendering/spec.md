@@ -105,7 +105,7 @@ As a photographer, I can see why a preview failed and retry after correcting a s
 
 ## Non-Functional Requirements
 
-- **NFR-001 Performance**: For an already available rendition, 95% of requests MUST become viewable within 500 ms under the approved nominal load.
+- **NFR-001 Performance**: For an already available rendition, 95% of requests MUST become viewable within 500 ms under the approved nominal load. On2026-10-21 the owner approved Singapore as the controlled non-production reference-client region, through the same public HTTPS API, with the existing workload and deadlines; see [Feature016](../016-regional-deployment-acceptance/spec.md). This changes benchmark geography, not the500ms threshold, and does not establish500ms for remote users or production.
 - **NFR-002 Performance**: For a supported image at or below the documented reference size, 95% of uncached preview requests MUST start within 2 seconds and finish within 30 seconds under nominal load.
 - **NFR-003 Availability**: Failed render workers MUST not make existing valid renditions unavailable.
 - **NFR-004 Reliability**: A completed rendition MUST be atomically associated with its provenance or be treated as unavailable.

@@ -10,10 +10,15 @@ export function validateOrigin(origin) {
   return origin;
 }
 
-export function validateRequest(value) {
+export function validateBindings(value) {
   require(value?.schemaVersion === 1 && uuid.test(value.invocationId ?? '') && /^[a-f0-9]{40}$/.test(value.sourceRevision ?? '') && /^[1-9]\d{0,19}$/.test(value.releaseRunId ?? ''));
   require(hex.test(value.manifestSHA256 ?? '') && hex.test(value.bundleSHA256 ?? ''));
   validateOrigin(value.origin);
+  return bindings(value);
+}
+
+export function validateRequest(value) {
+  validateBindings(value);
   require(typeof value.token === 'string' && value.token.length > 0 && value.token.length <= 16384 && !/[\r\n]/.test(value.token));
   require(Array.isArray(value.fixtures) && value.fixtures.length === 5);
   require(value.fixtures.every(item => item && text(item.libraryId) && uuid.test(item.assetId ?? '') && uuid.test(item.editId ?? '')));
@@ -55,6 +60,7 @@ export function latencyFailure(stderr) {
 }
 
 export function validateResult(value, request, expectedArn) {
+  validateBindings(request);
   require(value?.passed === true && value.region === 'ap-southeast-1' && value.functionArn === expectedArn && /^v24\.\d+\.\d+$/.test(value.runtime ?? ''));
   const expected = bindings(request);
   require(Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue));

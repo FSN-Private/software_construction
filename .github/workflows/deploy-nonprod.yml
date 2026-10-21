@@ -63,6 +63,7 @@ jobs:
       COGNITO_OWNER_USERNAME: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_USERNAME }}
       COGNITO_OWNER_PASSWORD: ${{ secrets.AWS_NONPROD_COGNITO_OWNER_PASSWORD }}
       RENDERING_ACCEPTANCE_FIXTURES: ${{ vars.AWS_NONPROD_RENDERING_ACCEPTANCE_FIXTURES }}
+      REGIONAL_ACCEPTANCE_FUNCTION_VERSION: ${{ vars.AWS_NONPROD_ACCEPTANCE_FUNCTION_VERSION }}
       RELEASE_DIR: artifacts/release
       DEPLOYMENT_RECORD: artifacts/release/nonprod-deployment.json
       DEPLOYMENT_ENVIRONMENT: nonprod
@@ -71,27 +72,33 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.release_run_id || github.event.workflow_run.id }}
           name: release-evidence
           path: artifacts/release
-      - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-worker "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
+      - run: node scripts/verify-release-evidence.mjs artifacts/release/release-manifest.json "$SOURCE_REVISION" --require-regional "$GITHUB_REPOSITORY" "$RELEASE_RUN_ID"
       - name: Validate deployment configuration
         run: |
           missing=()
-          for name in AWS_REGION AWS_ROLE_ARN ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY RENDERER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE DATABASE_INSTANCE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER RENDERER_SERVICE RENDERER_TASK_DEFINITION ECS_RENDERER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD RENDERING_ACCEPTANCE_FIXTURES VERSION_CONTROL_HEARTBEAT_ALARM; do
+          for name in AWS_REGION AWS_ROLE_ARN ECR_REGISTRY API_REPOSITORY WORKER_REPOSITORY RENDERER_REPOSITORY ECS_CLUSTER ECS_SERVICE ECS_TASK_DEFINITION ECS_API_CONTAINER WORKER_SERVICE DATABASE_INSTANCE WORKER_TASK_DEFINITION ECS_WORKER_CONTAINER RENDERER_SERVICE RENDERER_TASK_DEFINITION ECS_RENDERER_CONTAINER MIGRATION_TASK_DEFINITION ECS_MIGRATION_CONTAINER HEALTH_URL COGNITO_AUTHORITY COGNITO_CLIENT_ID COGNITO_OWNER_USERNAME COGNITO_OWNER_PASSWORD RENDERING_ACCEPTANCE_FIXTURES REGIONAL_ACCEPTANCE_FUNCTION_VERSION VERSION_CONTROL_HEARTBEAT_ALARM; do
             if test "$name" = RENDERING_ACCEPTANCE_FIXTURES && test "$BOOTSTRAP_RENDERING_FIXTURES" = true; then continue; fi
             test -n "${!name:-}" || missing+=("$name")
           done
           test "${#missing[@]}" -eq 0 || { printf 'Missing required deployment setting: %s\n' "${missing[@]}"; exit 1; }
+          test "$AWS_REGION" = ap-southeast-1 || { echo 'Regional nonprod acceptance requires Singapore.'; exit 1; }
       - name: Authenticate to AWS for database startup
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ vars.AWS_NONPROD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: nonprod-start-${{ github.run_id }}
+      - name: Verify the published regional client before database startup
+        run: node scripts/invoke-regional-acceptance.mjs --verify-client artifacts/release/release-manifest.json
       - name: Start the non-production database
         run: bash scripts/manage-nonprod-lifecycle.sh start-database
       - name: Refresh AWS credentials for deployment and rollback

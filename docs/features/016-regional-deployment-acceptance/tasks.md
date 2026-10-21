@@ -31,7 +31,7 @@ Approved user design2026-10-21. External publication/provisioning still gated.
   version, role/log/timeout/concurrency/region/production guards; test synthesized
   exact zip/code/IAM scope, no function URL/events/VPC/NAT/main stack changes and
   bounded logs/compute. Map FR003/004, AC004/005, NFR001-006, SC001/003.
-- [ ] T006 [US1] Integrate bundle build/CI and nonprod invocation into build-release,
+- [x] T006 [US1] Integrate bundle build/CI and nonprod invocation into build-release,
   deploy-nonprod and deploy-ecs-release.sh. Preserve production/direct path and
   native/readiness/bootstrap/admit/activate/error trap/evidence ordering. Test real
   extracted workflow/script failure paths and update spec008 interpretation,
@@ -100,3 +100,15 @@ vulnerability audit remains pending under T007: restricted network failed, then
 automatic approval review rejected exporting dependency metadata without specific
 authorization. Owner audit approval requested; no bypass or PASS claim. No new
 dependency, cloud resource/apply, app stack or data mutation.
+
+M4 validation2026-10-21: complete `npm run test:release-evidence` and
+`npm run test:ci-contract` PASS. Real extracted deployment tail covers successful
+regional proof/activation, failure/missing proof rollback and unchanged direct
+production path. New preflight precedes database startup; direct script also
+checks before mutation. Historical bundles remain readable but new nonprod
+requires the regional client. Offline promotion checks source-bound regional
+proof and recomputes metrics. TypeScript build/check, isolated synthesis/IAM,
+vendor integrity, secret scan, dependency tree and license checks PASS. Updated
+Feature008 geography, Feature011 linkage, runbook, infrastructure/provenance docs
+and coordinated release plan including public Singapore cost calculation.
+No cloud writes, live qualification, fixture save or publication performed.
