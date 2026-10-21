@@ -75,7 +75,8 @@ migration/backup/recovery prerequisites remain in the deployment runbook.
    Exact published client runs both real scripts through same public origin.
 6. Require five uncached renders each within30s/start p95<=2000ms and twenty
    concurrent cached bodies p95<=500ms, then complete ingest checks. Both pass
-   before activation. Require final evidence upload and workflow success before
+   before activation. Retain the JSON-only acceptance evidence, activate, then
+   upload the existing final deployment evidence. Require workflow success before
    saving qualified fixture IDs. Record all samples, source, function/runtime,
    manifest/code hashes and activation/evidence/fixture qualification timestamps.
 7. Observe API/ingest/renderer desired=running=1, no ECS deployment failure,
@@ -92,10 +93,16 @@ Assistant stops at unexpected material state and owner decides unsafe recovery.
 
 Existing deployment error trap aborts acceptance and restores previous API,
 ingest and renderer task definitions/counts; confirm desired/running state and
-record actual outcome. After successful activation, failed/skipped final evidence
-upload invokes the workflow-level recovery script, which rejects stale/foreign
-records before writes and restores/verifies all previous tasks/counts. If any
-restore fails, the workflow remains failed and the owner inspects actual state.
+record actual outcome. Ambiguous admission attempts abort before task recovery.
+Failed/skipped preliminary evidence, final activation or final evidence invokes
+workflow recovery. It validates source/current task ARNs and prior running API/
+renderer digests, then restores the server-authored full compatibility receipt
+transactionally with intake closed before ECS replacement. Stale/foreign receipts,
+wrong configured candidate/evidence or third compatibility states mutate nothing.
+Restore/verify all prior tasks/counts, then resume only if prior API was running.
+A stopped prior API leaves intake closed for the next qualified deployment. If
+compatibility restore is unconfirmed, do not change ECS. If any restore fails,
+keep the workflow failed and inspect actual state; never claim rollback complete.
 DB migrations retain existing compatibility/recovery
 requirements; task rollback does not undo persistent writes. Bootstrap and ingest
 may create records/objects before failure; retain failure evidence and reconcile
@@ -105,8 +112,9 @@ Client rollback pairs previous source release with its matching retained numeric
 client version and protected ARN. A stale version cannot qualify new client bytes.
 If disabling new deployment, leave stopped/previously verified application state;
 there is no silent external-runner fallback. Explicitly remove only regional stack
-and caller policy/log group when retired; retained versions require separate scoped
-cleanup approval after evidence retention needs. Never delete app data resources.
+and caller policy/log group when retired. Retained versions survive ordinary
+in-place replacement, but explicit retirement deletes the parent function and its
+versions together; that cleanup approval must cover both. Never delete app data resources.
 
 Cleanup already reclaimed6,604,954,068 bytes from14 duplicate/superseded Actions
 artifacts; consolidated release, latest intermediate bundles, diagnostics and

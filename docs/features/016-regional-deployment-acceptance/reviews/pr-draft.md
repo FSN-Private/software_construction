@@ -1,38 +1,39 @@
-# PR draft: Run nonprod acceptance from the approved Singapore client
+# PR draft: Qualify nonprod rendering from the approved Singapore client
 
-The last bootstrap passed native rendering but failed cached response p95 at647ms.
-Controlled GitHub-runner stopped-gateway error probes measured401-502ms p95;
-they do not establish healthy-response lower bounds. The owner
-approved Singapore as the controlled nonprod nominal-client location; this change
-implements that decision through the same public HTTPS API with unchanged
-500ms/2s/30s thresholds and full existing rendering/ingest scripts.
+The last bootstrap passed native rendering but failed cache p95 at647ms. The
+owner approved Singapore as the controlled nonprod nominal-client location.
+This runs the unchanged rendering/ingest scripts through the same public HTTPS
+API with unchanged500ms/2s/30s limits. Stopped-gateway transport diagnostics are
+not healthy performance evidence; remote-user and production remain unqualified.
 
-Packages a source-bound client zip in release evidence and runs it as a numeric
-published Lambda version. Metadata preflight rejects stale code/config before
-database startup. Sanitized, independently checked results gate activation; failures
-use existing rollback. The isolated client stack has bounded compute and log-only
-execution IAM. Production retains its existing smoke path. No new dependencies,
-application allocations or schema changes.
+Release evidence includes the exact source-bound client zip. Published numeric
+Lambda version/code/config checks precede database startup. Strict result checks
+gate activation. The isolated client stack has bounded compute and log-only IAM;
+no dependencies, schema changes or application allocation changes.
 
-Specification: docs/features/016-regional-deployment-acceptance/spec.md
-Plan/ledger: docs/features/016-regional-deployment-acceptance/{plan,tasks}.md
-Branch: feature/016-regional-deployment-acceptance
-Implementation: T001-T006 complete; T007 security/review and T008 live rollout
-remain separately recorded. Follow-up to Feature011 T054 / PR45; no issue closure.
+JSON-only acceptance evidence is retained, then activation runs, then final
+deployment evidence is retained. Any failure invokes guarded recovery. Admission
+creates a server-authored receipt in existing operator audit storage; recovery
+restores the full prior approval transactionally with intake closed before old
+ECS tasks/counts. Latest-receipt/operator/config/current-state and task-digest
+guards prevent stale or incompatible rollback. Ambiguous admission aborts before
+service replacement. Stopped prior API leaves intake closed. Production retains
+its direct smoke path and all existing promotion/security restrictions.
 
-Validation: complete release-evidence suite, CI contracts, infrastructure
-TypeScript/build, isolated synthesis/IAM/byte equality, vendored archive integrity,
-secret scan, dependency tree, licenses, Bash syntax and whitespace checks PASS.
-Registry audit and final independent-review status must be updated from the ledger
-before publication. Registry audit subsequently PASS with explicit metadata-export
-approval. Post-activation failed/skipped evidence upload restores previous tasks/
-counts using a source/current-state guarded recovery script; its real Bash failure
-tests PASS. Final independent review is still pending. Local fixtures do not
-qualify cloud performance.
+Specification/ledger: docs/features/016-regional-deployment-acceptance/{spec,plan,tasks}.md
+Branch: feature/016-regional-deployment-acceptance; follow-up Feature011T054/PR45.
+T001-T006 complete; T007 final review/authority and T008 real rollout remain open.
+No issue closure is claimed.
 
-Risk/rollout: no production or remote-user latency claim. Require explicit approved
-client apply and protected numeric-version configuration after merged-source CI and
-exact release verification, then bootstrap. Keep native/security/readiness/latency/
-ingest/activation/evidence gates; save fixture IDs only after successful upload.
-Application rollback and paired release/client version rollback are documented in
-docs/releases/2026-10-21-regional-acceptance/release-plan.md and deployment runbook.
+Validation PASS: full release-evidence and CI contracts; infrastructure build,
+synthesis/IAM/ZIP byte equality, vendor integrity, secret/dependency/license checks
+and authorized registry audit; migrated PostgreSQL approval/receipt/concurrency
+regressions; full existing PostgreSQL/S3 ingest/HTTP/rendering/recovery integration;
+Bash syntax and whitespace. Final alternate-model review pending. Local fixtures
+never qualify real performance.
+
+Rollout requires explicit publication, gated merge and isolated client apply
+approval after source-bound release/template/cost checks. Save fixture IDs only
+after native/security/readiness/regional latency/ingest/activation/final upload and
+workflow success. Detailed cost, observation, recovery and cleanup procedure:
+docs/releases/2026-10-21-regional-acceptance/release-plan.md.

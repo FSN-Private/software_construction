@@ -39,3 +39,18 @@ Deployment retains passed=true with the proof. Offline promotion verification
 requires the proof for releases containing a regional zip, recomputes metrics and
 checks exact source/release/manifest/bundle and same-account numeric function ARN.
 This records nonprod qualification and does not authorize production promotion.
+
+T007 rollback receipt contract: admission returns rollbackReceiptId. Existing
+operator-only audit storage captures the exact prior approved compatibility row,
+server-side and under matrix/intake locks. POST operations/rollback/{receiptId}
+requires the authenticated configured operator, latest receipt, matching configured
+candidate/evidence and exact prior or activated-candidate state. Optional
+previousDigest must equal the captured prior digest; caller never supplies approval
+metadata. Restore the full tuple/reject candidate/close intake atomically. Prior
+running API/renderer task configuration must match this digest before ECS recovery.
+Resume after verified old API stability; a stopped prior API remains closed.
+Lost admission response attempts abort before service recovery. Small JSON-only
+nonprod-acceptance-evidence is retained before activation; existing final
+nonprod-deployment-evidence follows confirmed activation. A failed/skipped upload
+or activation invokes receipt recovery. Transport ambiguity cannot qualify fixtures;
+unconfirmed receipt restore must not trigger incompatible task replacement.

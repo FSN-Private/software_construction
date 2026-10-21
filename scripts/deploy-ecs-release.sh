@@ -156,8 +156,13 @@ if test "${BOOTSTRAP_RENDERING_FIXTURES:-false}" = true; then
   RENDERING_ACCEPTANCE_FIXTURES="$(jq -ce .fixtures "$RELEASE_DIR/rendering-fixtures.json")"
 fi
 curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-pause" "$HEALTH_URL/v1/rendering/operations/pause" >/dev/null
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-admit" "$HEALTH_URL/v1/rendering/operations/admit" >/dev/null
 ACCEPTANCE_ACTIVE=1
+ADMISSION="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-admit" "$HEALTH_URL/v1/rendering/operations/admit")"
+if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
+  RECEIPT="$(printf '%s' "$ADMISSION" | jq -er '.rollbackReceiptId | select(type == "string" and test("^[a-fA-F0-9-]{36}$"))')"
+  jq --arg receipt "$RECEIPT" --arg operation "$RENDER_OPERATION_ID" '. + {renderingRollbackReceiptId:$receipt,renderingOperationId:$operation}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
+  mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
+fi
 if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
   timeout 360 env INGEST_SMOKE_TOKEN="$ID_TOKEN" RENDERING_ACCEPTANCE_FIXTURES="$RENDERING_ACCEPTANCE_FIXTURES" node scripts/invoke-regional-acceptance.mjs "$RELEASE_DIR/release-manifest.json"
 else
@@ -170,7 +175,9 @@ if test "${DEPLOYMENT_ENVIRONMENT:-}" = nonprod; then
   jq --slurpfile regional "$RELEASE_DIR/regional-acceptance.json" '. + {regionalAcceptance:$regional[0]}' "$DEPLOYMENT_RECORD" > "$DEPLOYMENT_RECORD.tmp"
   mv "$DEPLOYMENT_RECORD.tmp" "$DEPLOYMENT_RECORD"
 fi
-curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-activate" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
+if test "${DEPLOYMENT_ENVIRONMENT:-}" != nonprod; then
+  curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 15 --request POST --header "Authorization: Bearer $ID_TOKEN" --header "Idempotency-Key: $RENDER_OPERATION_ID-activate" "$HEALTH_URL/v1/rendering/operations/activate" >/dev/null
+fi
 ACCEPTANCE_ACTIVE=0
 ROLLBACK_REQUIRED=0
 trap - ERR INT TERM

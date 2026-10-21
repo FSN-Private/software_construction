@@ -143,3 +143,32 @@ PASS after the post-activation recovery addition, including stale/source/account
 count rejection before writes, desired-count0/2 restoration, all-service attempts
 after one update failure and stable-state rejection. `npm run test:ci-contract`,
 new Bash syntax and whitespace checks PASS. No remote/resource mutation.
+
+T007 second review remediation2026-10-21: gpt-5.6-sol found valid HIGH persistent
+compatibility mismatch after task-only recovery, HIGH ambiguous-admission abort
+flag ordering, and fail-closed zero-count recovery gap. All map to T007/AC003/
+FR002/FR006/NFR002; no requirement waiver. Added server-authored full-approval
+receipt in existing audit storage, row locks/latest-receipt/config/operator/current
+state guards and atomic restore/reject/close-intake before ECS changes. Prior
+running task digests constrain restore. Resume only after verified prior API;
+zero-count restoration leaves intake closed. Abort-required flag precedes admit.
+Small JSON-only acceptance evidence precedes activation; final evidence follows.
+
+Validation: actual migrated PostgreSQL checks PASS for pre/postactivation/lost
+response, exact tuple/approval restoration, wrong role/receipt/digest/stale/third
+state no-mutation rejection, replay, real RenderingService compatibility and five
+concurrent activation/rollback races. Existing full PostgreSQL/S3 ingest/HTTP/
+rendering/recovery integration PASS using existing localhost54329/19000 services
+and isolated test schema/bucket; no containers stopped or cloud touched. Full
+release-evidence and CI contract suites, new control bounds/privacy/target tests,
+real Bash recovery/order tests and actual lost-admission trap test PASS. Final
+format/independent rereview pending; earlier local convergence record was before
+these newly identified gaps and is superseded by this remediation record.
+
+T007 final local verification: full API format verification PASS after scoped
+formatting; new control/Bash syntax and whitespace checks PASS. Plan/spec/contracts/
+ADR/data model/runbook/release plan now describe guarded compatibility receipts,
+preliminary versus final evidence, admission ambiguity and stopped-intake recovery.
+New code is additive to existing authenticated operator controls; no schema or
+permission migration. Final independent review and publication authority still
+pending, so T007/T008 remain unchecked.

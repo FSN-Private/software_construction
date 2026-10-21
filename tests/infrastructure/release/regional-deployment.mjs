@@ -14,7 +14,7 @@ assert.ok(workflow.includes('--require-regional') && workflow.includes('AWS_NONP
 assert.ok(workflow.indexOf('--verify-client') > workflow.indexOf('role-session-name: nonprod-start-') && workflow.indexOf('--verify-client') < workflow.indexOf('- name: Start the non-production database'));
 assert.ok(deploy.lastIndexOf('scripts/invoke-regional-acceptance.mjs') > deploy.indexOf('operations/admit'));
 assert.ok(deploy.indexOf('scripts/invoke-regional-acceptance.mjs --verify-client') < deploy.indexOf('RENDER_OPERATION_ID='));
-const tail = deploy.slice(deploy.indexOf('\nACCEPTANCE_ACTIVE=1\n'));
+const tail = 'ACCEPTANCE_ACTIVE=1\n' + deploy.slice(deploy.lastIndexOf('\nif test ', deploy.indexOf('timeout 360 env')));
 assert.ok(tail.includes('regional-acceptance.json') && tail.indexOf('regional-acceptance.json') < tail.indexOf('operations/activate'));
 const prefix = `set -Eeuo pipefail
 rollback() { printf 'ROLLBACK\\n' >> "$TRACE"; }
@@ -43,7 +43,7 @@ try {
     assert.equal(result.status === 0, success, `${environment}/${scenario}: ${result.stderr}`);
     const calls = readFileSync(trace, 'utf8');
     if (success) {
-      assert.ok(calls.includes('operations/activate'));
+      assert.equal(calls.includes('operations/activate'), environment === 'production', 'Nonprod activation must wait for workflow evidence upload.');
       assert.equal(calls.includes('ROLLBACK'), false);
     } else {
       assert.ok(calls.includes('ROLLBACK'));
@@ -54,6 +54,28 @@ try {
     assert.equal(calls.includes('scripts/smoke-ingest.mjs'), environment === 'production');
     if (success && environment === 'nonprod') assert.deepEqual(JSON.parse(readFileSync(record, 'utf8')).regionalAcceptance, {});
   }
+  const rollback = deploy.slice(deploy.indexOf('rollback() {'), deploy.indexOf('\ntrap rollback ERR INT TERM'));
+  const admission = deploy.slice(deploy.indexOf('\nACCEPTANCE_ACTIVE=1\n'), deploy.indexOf('\nif test ', deploy.indexOf('\nACCEPTANCE_ACTIVE=1\n')));
+  const trace = join(directory, 'ambiguous-admit.txt'); writeFileSync(trace, '');
+  const exercise = `set -Eeuo pipefail
+ROLLBACK_REQUIRED=1
+ID_TOKEN=fixture
+RENDER_OPERATION_ID=fixture
+PREVIOUS_API_TASK=old-api PREVIOUS_WORKER_TASK=old-worker PREVIOUS_RENDERER_TASK=old-renderer
+PREVIOUS_API_COUNT=0 PREVIOUS_WORKER_COUNT=0 PREVIOUS_RENDERER_COUNT=0
+ECS_CLUSTER=fixture ECS_SERVICE=api WORKER_SERVICE=worker RENDERER_SERVICE=renderer HEALTH_URL=https://fixture.invalid
+aws() { printf 'RESTORE\\n' >> "$TRACE"; }
+timeout() { shift; "$@"; }
+curl() {
+  local last=""; for last in "$@"; do :; done
+  if [[ "$last" == */admit ]]; then printf 'ADMIT_COMMITTED\\n' >> "$TRACE"; return 19; fi
+  if [[ "$last" == */abort ]]; then printf 'ABORT\\n' >> "$TRACE"; fi
+}
+` + rollback + '\ntrap rollback ERR INT TERM\n' + admission;
+  const ambiguous = spawnSync(bash, ['-c', exercise], { encoding: 'utf8', env: { ...process.env, TRACE: trace.replaceAll('\\', '/') } });
+  assert.notEqual(ambiguous.status, 0);
+  const admissionCalls = readFileSync(trace, 'utf8');
+  assert.ok(admissionCalls.includes('ADMIT_COMMITTED') && admissionCalls.indexOf('ABORT') > admissionCalls.indexOf('ADMIT_COMMITTED') && admissionCalls.indexOf('ABORT') < admissionCalls.indexOf('RESTORE'), 'Ambiguous committed admission must abort before restoring services.');
   console.log('Actual deployment tail preserves production smokes and rolls back regional failure/missing proof before activation.');
 } finally {
   assert.equal(dirname(directory), resolve(tmpdir())); assert.ok(basename(directory).startsWith('regional-deploy-'));

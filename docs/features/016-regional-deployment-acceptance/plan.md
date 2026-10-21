@@ -53,12 +53,29 @@ hooks configured. Clarification finds no unresolved material question.
 - `scripts/deploy-ecs-release.sh`: nonprod calls the regional invoker after
   bootstrap/admission, preserving native/readiness/security checks. Production
   retains direct existing smokes. Merge safe regional proof into existing
-  deployment evidence; original activation/error trap remains authoritative.
-- `scripts/rollback-unqualified-nonprod.sh`: workflow-level recovery after
-  successful activation but failed/skipped evidence upload. Validate source,
+  deployment evidence. Original pre-activation error trap remains authoritative;
+  set abort-required before ambiguous admission can commit. Nonprod defers
+  activation to the workflow; production retains the existing direct activation.
+- `scripts/rollback-unqualified-nonprod.sh`: workflow-level recovery after smoke
+  success if either evidence stage or final activation fails/is skipped. Validate source,
   same-account tasks and all current candidate definitions before any mutation;
-  restore all prior tasks/counts and verify stable actual state. A failed restore
-  remains an explicit failure; never treat local smoke results as retained proof.
+  verify prior running API/renderer task digests, restore the server-authored
+  compatibility receipt with intake closed, restore all prior tasks/counts and
+  verify stable actual state. Resume only after old API stability; a stopped prior
+  API leaves intake closed for the next accepted deployment. A failed restore
+  remains failed; never change ECS when compatibility restore is unconfirmed.
+- `apps/api/Features/Rendering/RenderPromotionRollback.cs`: capture a full prior
+  approved compatibility tuple in existing operator audit storage during admission,
+  under matrix/intake locks. Return opaque receipt UUID. Authenticated operator
+  rollback accepts only the latest matching matrix/candidate/evidence/operator
+  receipt, not caller-selected approval data. Restore only exact prior or exact
+  activated-candidate state transactionally, reject candidate and close intake.
+  No schema/secret/IAM change. Database tests use actual migrated PostgreSQL.
+- `scripts/rendering-deployment-control.mjs`: bounded sanitized authenticated
+  controls. Verify local source-bound smoke proof before activation; retain small
+  JSON-only acceptance evidence first, activate, then upload the existing final
+  deployment artifact. Workflow success is necessary for qualified fixture IDs
+  and production evidence selection. Any skipped/failed stage invokes recovery.
 
 ## Security, data and failure behavior
 
@@ -84,8 +101,9 @@ bootstrap with all gates; save fixture IDs only after success/evidence upload.
 The configured execution budget is150GB-seconds/invocation plus initialization,
 with no recurring compute.
 Confirm Singapore prices/budget before apply; logs retain7days. Preserve previous
-published client versions for attributable rollback. Existing app paired rollback
-is unchanged. Disabling/removing the client cannot qualify a release: nonprod
+published client versions for attributable rollback. App rollback now restores
+persistent compatibility through its guarded receipt before restoring services.
+Disabling/removing the client cannot qualify a release: nonprod
 fails closed; no silent fallback. Remove client/IAM/log resources explicitly when
 retired. Production and global remote-user500ms remain unqualified.
 

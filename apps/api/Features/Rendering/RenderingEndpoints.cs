@@ -19,6 +19,7 @@ public static class RenderingEndpoints
         group.MapPost("/{requestId:guid}/retry", async (Guid requestId, string library, HttpContext context, CancellationToken cancellationToken) => Results.Accepted($"/v1/renditions/{requestId:D}", Response(await Service(context).RetryAsync(VersionControlEndpoints.Owner(context), library, requestId, cancellationToken))));
         var operations = app.MapGroup("/v1/rendering/operations").RequireAuthorization().AddEndpointFilter<RenderingGuard>();
         operations.MapGet("", async (HttpContext context, CancellationToken cancellationToken) => Results.Ok(await Operations(context).GetAsync(Operator(context), cancellationToken)));
+        operations.MapPost("/rollback/{receiptId:guid}", async (Guid receiptId, string? previousDigest, HttpContext context, CancellationToken cancellationToken) => Results.Ok(await RenderPromotionRollback.RestoreAsync(context.RequestServices.GetRequiredService<Npgsql.NpgsqlDataSource>(), context.RequestServices.GetRequiredService<IConfiguration>(), receiptId, Operator(context), previousDigest, cancellationToken)));
         operations.MapPost("/{action}", async (string action, HttpContext context, CancellationToken cancellationToken) => Results.Ok(await Operations(context).SetAsync(action, VersionControlEndpoints.Owner(context), Operator(context), cancellationToken)));
 
         var callbacks = app.MapGroup("/internal/render-callbacks");

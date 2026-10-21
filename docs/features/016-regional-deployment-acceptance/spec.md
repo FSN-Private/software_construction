@@ -75,6 +75,9 @@ malformed/missing response. Activation/upload failures cannot qualify fixtures.
 - **FR-002**: The protected workflow MUST keep bootstrap/admit/activate,
   native/security/artifact/migration/readiness and rollback control. Both smokes
   and successful evidence upload are necessary before saved fixtures.
+  Rollback MUST restore compatible persistent renderer approval as well as tasks;
+  guarded server-authored receipts in existing audit storage support lost admission/
+  activation responses without schema, caller-selected approval or permission changes.
 - **FR-003**: Verify release-attributable client bundle/code checksum, numeric
   published version, source/release/manifest/invocation, region/origin, sample
   counts and recomputed result thresholds. Retain safe proof in evidence.
